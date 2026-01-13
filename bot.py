@@ -26,6 +26,13 @@ ORDER_PREFIX = "20260"
 MAX_ATTEMPTS = 2
 LOCKOUT_TIME = timedelta(hours=15)
 
+# 图片URL - 确保URL正确
+VIP_SERVICE_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
+SUCCESS_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
+
+# 备用图片URL（如果主URL失败）
+BACKUP_IMAGE_URL = "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80"
+
 # 欢迎消息
 WELCOME_MESSAGE = """
 🌟 **欢迎来到VIP中转中心！**
@@ -120,6 +127,44 @@ LOCKOUT_MESSAGE = """
 如需紧急协助，请联系客服处理
 """
 
+async def send_with_photo_fallback(chat_id, bot, photo_url, caption, reply_markup=None, fallback_url=None):
+    """发送图片消息，如果失败则使用备用URL或纯文本"""
+    try:
+        # 首先尝试主URL
+        await bot.send_photo(
+            chat_id=chat_id,
+            photo=photo_url,
+            caption=caption,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+        return True
+    except Exception as e:
+        logger.warning(f"主图片URL发送失败 ({photo_url}): {e}")
+        
+        if fallback_url:
+            try:
+                # 尝试备用URL
+                await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=fallback_url,
+                    caption=caption,
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup
+                )
+                return True
+            except Exception as e2:
+                logger.warning(f"备用图片URL也失败: {e2}")
+        
+        # 如果图片都失败，发送纯文本
+        await bot.send_message(
+            chat_id=chat_id,
+            text=caption,
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
+        return False
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理 /start 命令"""
     user_id = update.effective_user.id
@@ -147,16 +192,18 @@ async def start_verification(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     
-    # 发送VIP特权说明 - 使用回复新消息而不是编辑原消息
+    # 发送VIP特权说明（带图片）
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("💳 我已付款，开始验证", callback_data="verify_payment")
     ]])
     
-    # 直接发送新消息，而不是编辑原消息
-    await query.message.reply_text(
-        VIP_PRIVILEGES,
-        parse_mode='Markdown',
-        reply_markup=keyboard
+    await send_with_photo_fallback(
+        chat_id=query.message.chat_id,
+        bot=context.bot,
+        photo_url=VIP_SERVICE_IMAGE_URL,
+        caption=VIP_PRIVILEGES,
+        reply_markup=keyboard,
+        fallback_url=BACKUP_IMAGE_URL
     )
 
 async def verify_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -214,11 +261,13 @@ async def handle_order_number(update: Update, context: ContextTypes.DEFAULT_TYPE
             InlineKeyboardButton("🌟 加入VIP会员群", url="https://t.me/+495j5rWmApsxYzg9")
         ]])
         
-        await update.message.reply_text(
-            SUCCESS_MESSAGE,
-            parse_mode='Markdown',
+        await send_with_photo_fallback(
+            chat_id=update.message.chat_id,
+            bot=context.bot,
+            photo_url=SUCCESS_IMAGE_URL,
+            caption=SUCCESS_MESSAGE,
             reply_markup=keyboard,
-            disable_web_page_preview=True
+            fallback_url=BACKUP_IMAGE_URL
         )
     else:
         # 验证失败
@@ -263,6 +312,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 """
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理未捕获的错误"""
+    logger.error(f"更新 {update} 导致错误 {context.error}")
+    
+    try:
+        if update and update.effective_message:
+            await update.effective_message.reply_text(
+                "❌ 抱歉，出现了意外错误。\n"
+                "请稍后重试，或联系客服寻求帮助。"
+            )
+    except Exception as e:
+        logger.error(f"发送错误消息失败: {e}")
+
 def main() -> None:
     """启动机器人"""
     # 从环境变量获取Token
@@ -276,6 +338,9 @@ def main() -> None:
     
     # 创建应用
     application = Application.builder().token(BOT_TOKEN).build()
+    
+    # 添加错误处理器
+    application.add_error_handler(error_handler)
     
     # 注册处理器
     application.add_handler(CommandHandler("start", start))
