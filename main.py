@@ -10,7 +10,7 @@ from telegram.ext import Application, MessageHandler, CommandHandler, filters, C
 app = FastAPI()  # ←←← 这行必须在最前面！
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "1480512549"))
 
 WELCOME_MSG = (
     "🔐 请先完成以下步骤：\n"
