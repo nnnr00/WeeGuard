@@ -3,16 +3,14 @@ import re
 import asyncio
 import json
 from fastapi import FastAPI
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import (
-    Application, MessageHandler, CommandHandler, 
-    filters, ContextTypes, ConversationHandler
-)
+from telegram import Update
+from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
+
+# 🔴 1. 必须先创建 app！
+app = FastAPI()  # ←←← 这行必须在最前面！
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
-
-WAITING_KEYWORD, WAITING_TYPE, WAITING_CONTENT = range(3)
 
 WELCOME_MSG = (
     "🔐 请先完成以下步骤：\n"
@@ -27,18 +25,12 @@ WELCOME_MSG = (
     "➡️ 请直接发送账单订单编号："
 )
 
-# 🔴 从环境变量读取自定义命令（Railway Variables 中设置）
 def get_custom_replies():
     raw = os.environ.get("CUSTOM_COMMANDS", "{}")
     try:
         return json.loads(raw)
     except:
         return {}
-
-def save_custom_replies(replies: dict):
-    # 实际保存需调用 Railway API，这里用 print 提示
-    print("💾 请复制以下内容到 Railway Variables → CUSTOM_COMMANDS:")
-    print(json.dumps(replies, ensure_ascii=False, indent=2))
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(WELCOME_MSG)
@@ -52,12 +44,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text.strip()
     
-    if update.effective_user.id == ADMIN_ID:
-        if text == "/listcmd":
-            replies = get_custom_replies()
-            msg = "📌 当前关键词：\n" + "\n".join(f"• {k}" for k in replies.keys()) if replies else "📭 暂无"
-            await update.message.reply_text(msg)
-            return
+    if update.effective_user.id == ADMIN_ID and text == "/listcmd":
+        replies = get_custom_replies()
+        msg = "📌 当前关键词：\n" + "\n".join(f"• {k}" for k in replies.keys()) if replies else "📭 暂无"
+        await update.message.reply_text(msg)
+        return
 
     replies = get_custom_replies()
     for keyword, reply in replies.items():
@@ -80,52 +71,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ 未识别")
 
-# /a 动态添加（生成配置）
-async def addcmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⚠️ 仅管理员可用")
-        return ConversationHandler.END
-    await update.message.reply_text("🔧 输入触发词：")
-    return WAITING_KEYWORD
-
-async def receive_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["kw"] = update.message.text.strip()
-    keyboard = [["文本", "图片", "视频"]]
-    await update.message.reply_text("✅ 选类型：", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True))
-    return WAITING_TYPE
-
-async def receive_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    type_map = {"文本": "text", "图片": "photo", "视频": "video"}
-    context.user_data["type"] = type_map.get(update.message.text, "text")
-    await update.message.reply_text("3️⃣ 输入内容：")
-    return WAITING_CONTENT
-
-async def receive_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kw = context.user_data["kw"]
-    reply_type = context.user_data["type"]
-    content = update.message.text.strip()
-    
-    # 获取现有配置
-    replies = get_custom_replies()
-    replies[kw] = {"type": reply_type, "content": content}
-    
-    # 🔴 关键：打印新配置，让管理员手动更新环境变量
-    save_custom_replies(replies)
-    
-    await update.message.reply_text(
-        "🎉 添加成功！\n"
-        "📌 请按以下步骤保存：\n"
-        "1. 复制上面打印的 JSON\n"
-        "2. Railway → Variables → 编辑 CUSTOM_COMMANDS\n"
-        "3. 粘贴 → Save → Restart"
-    )
-    return ConversationHandler.END
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ 已取消")
-    return ConversationHandler.END
-
-# 启动
+# 🔴 2. startup 必须在 app 创建后定义
 @app.on_event("startup")
 async def startup():
     application = Application.builder().token(BOT_TOKEN).build()
@@ -135,22 +81,13 @@ async def startup():
         pass
     
     application.add_handler(CommandHandler("start", start_command))
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("a", addcmd_start)],
-        states={
-            WAITING_KEYWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_keyword)],
-            WAITING_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_type)],
-            WAITING_CONTENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_content)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-    application.add_handler(conv_handler)
     application.add_handler(MessageHandler(filters.TEXT, handle_message))
     
     await application.initialize()
     await application.start()
     asyncio.create_task(application.updater.start_polling())
 
+# 防休眠
 async def keep_alive():
     while True:
         await asyncio.sleep(240)
