@@ -12,10 +12,10 @@ from telegram.ext import (
     filters
 )
 
-# 配置日志 - 简化日志输出
+# 配置日志
 logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.WARNING  # 改为WARNING级别，减少日志输出
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"
 
-# 使用更可靠的图片URL（Telegram官方图片）
+# 使用你提供的Postimg图片链接
 VIP_SERVICE_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
-SUCCESS_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg""
+SUCCESS_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
 
 # 用户状态存储
 user_data_store: Dict[int, Dict] = {}
@@ -73,7 +73,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     UserState.reset_attempts(user.id)
     
-    # 简化欢迎消息
+    # 欢迎消息
     welcome_message = """
 ✨ *欢迎使用VIP验证系统* ✨
 
@@ -96,7 +96,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode='Markdown')
     except Exception as e:
-        logger.warning(f"发送欢迎消息失败: {e}")
+        logger.error(f"发送欢迎消息失败: {e}")
         await update.message.reply_text("欢迎使用VIP验证系统！", reply_markup=reply_markup)
 
 async def vip_service_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -123,28 +123,42 @@ async def vip_service_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     try:
-        # 尝试发送图片
-        await query.message.reply_photo(
+        # 直接发送消息，不尝试编辑，避免冲突
+        await context.bot.send_photo(
+            chat_id=query.message.chat_id,
             photo=VIP_SERVICE_IMAGE_URL,
             caption=vip_message,
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
-        # 删除旧消息
-        await query.message.delete()
+        
+        # 尝试删除之前的消息（不强制）
+        try:
+            await query.message.delete()
+        except:
+            pass
+            
     except Exception as e:
-        logger.warning(f"发送VIP图片失败，使用文本模式: {e}")
+        logger.error(f"发送VIP图片失败: {e}")
+        
+        # 如果图片失败，使用文本模式
         try:
             await query.edit_message_text(vip_message, reply_markup=reply_markup, parse_mode='Markdown')
         except Exception as edit_error:
-            logger.warning(f"编辑消息失败: {edit_error}")
+            logger.error(f"编辑消息也失败: {edit_error}")
+            # 如果编辑也失败，发送新消息
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=vip_message,
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
 
 async def start_verification_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """开始验证流程"""
     query = update.callback_query
     await query.answer("进入验证流程")
     
-    # 验证教程
     verification_message = """
 📋 *订单号查找步骤*
 
@@ -210,7 +224,8 @@ async def handle_order_number(update: Update, context: ContextTypes.DEFAULT_TYPE
                 parse_mode='Markdown'
             )
         except Exception as e:
-            logger.warning(f"发送成功图片失败: {e}")
+            logger.error(f"发送成功图片失败: {e}")
+            # 如果图片失败，发送文本版本
             await update.message.reply_text(success_message, reply_markup=reply_markup, parse_mode='Markdown')
             
     else:
@@ -374,6 +389,20 @@ def main():
     
     # 启动
     print("🤖 机器人启动中...")
+    print(f"VIP图片URL: {VIP_SERVICE_IMAGE_URL}")
+    print(f"成功图片URL: {SUCCESS_IMAGE_URL}")
+    
+    # 测试图片URL
+    try:
+        import requests
+        response = requests.head(VIP_SERVICE_IMAGE_URL, timeout=5)
+        print(f"VIP图片URL状态码: {response.status_code}")
+        
+        response = requests.head(SUCCESS_IMAGE_URL, timeout=5)
+        print(f"成功图片URL状态码: {response.status_code}")
+    except Exception as e:
+        print(f"测试图片URL失败: {e}")
+    
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == '__main__':
