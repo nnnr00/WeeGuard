@@ -26,7 +26,7 @@ WELCOME_MESSAGE = """👋 欢迎加入【VIP中转】！我是守门员小卫，
 
 SERVICE_TEXT = "请选择您需要的服务："
 
-VIP_CAPTION = """VIP会员特权说明：
+VIP_CAPTION = """💎 VIP会员特权说明：
 ✅ 专属中转通道
 ✅ 优先审核入群
 ✅ 7x24小时客服支持
@@ -44,8 +44,8 @@ ORDER_GUIDE_CAPTION = """1️⃣ 发送你的订单号
 
 请直接发送订单编号："""
 
-SUCCESS_TEXT = "验证成功！欢迎成为VIP会员"
-SUCCESS_BUTTON_TEXT = "立即加入专属群"
+SUCCESS_TEXT = "🎉 验证成功！点击下方按钮加入群组 👇"
+SUCCESS_BUTTON_TEXT = "🚀 立即加入专属群"
 GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"  # ← 改成你的真实群链接
 
 FAIL_TEXT = "订单识别失败，请检查是否复制完整并重试"
