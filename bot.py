@@ -24,8 +24,8 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"
 
 # 使用你提供的图片链接
-VIP_SERVICE_IMAGE_URL = "https://i.postimg.cc/zBYtqtKb/photo-2026-01-13-17-04-32.jpg"  # VIP特权图片
-TUTORIAL_IMAGE_URL = ""    # 订单号查找教程图片
+VIP_SERVICE_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"  # VIP特权图片
+TUTORIAL_IMAGE_URL = "https://i.postimg.cc/zBYtqtKb/photo-2026-01-13-17-04-32.jpg"    # 订单号查找教程图片
 
 # 用户状态存储
 user_data_store: Dict[int, Dict] = {}
