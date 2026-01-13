@@ -15,7 +15,7 @@ load_dotenv()
 
 # === 图片链接 ===
 VIP_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
-ORDER_GUIDE_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
+ORDER_GUIDE_IMAGE_URL = "https://i.postimg.cc/zBYtqtKb/photo-2026-01-13-17-04-32.jpg"
 
 # === 文本内容 ===
 WELCOME_MESSAGE = """👋 欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~
