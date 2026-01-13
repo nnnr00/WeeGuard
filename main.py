@@ -1,16 +1,17 @@
 import os
 import re
 import asyncio
+import signal
 from fastapi import FastAPI
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# 🔴 1. 安全读取 Token（加 fallback 防崩溃）
-try:
-    BOT_TOKEN = os.environ["BOT_TOKEN"]
-except KeyError:
+# 🔴 1. 安全读取 Token
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not BOT_TOKEN:
     raise RuntimeError("❌ 请在 Railway Variables 中设置 BOT_TOKEN！")
 
+# 🔴 2. 欢迎语（用真实 emoji，无 HTML）
 WELCOME_MSG = (
     "👋 欢迎加入【守门员小卫】！我是守门员小卫，你的身份验证小助手～\n\n"
     "🔐 请先完成以下步骤：\n"
@@ -27,11 +28,10 @@ WELCOME_MSG = (
 
 app = FastAPI()
 application = None
-bot_task = None  # 🔴 记录 bot 任务
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("welcomed"):
-        await update.message.reply_text(WELCOME_MSG, parse_mode="HTML")
+        await update.message.reply_text(WELCOME_MSG)
         context.user_data["welcomed"] = True
         return
 
@@ -42,25 +42,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ 未识别")
 
-# 🔴 2. 【关键】独立 bot 启动函数（不阻塞 FastAPI）
+# 🔴 3. 启动 Bot（带 webhook 清理）
 async def start_bot():
     global application
     application = Application.builder().token(BOT_TOKEN).build()
-    application.add_handler(MessageHandler(filters.TEXT, handle_message))
     
+    # 清理可能的 webhook（防冲突）
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    
+    application.add_handler(MessageHandler(filters.TEXT, handle_message))
     await application.initialize()
     await application.start()
     
-    # 🔴 3. 【关键】用 updater.start_polling() + 保存任务
-    global bot_task
-    bot_task = asyncio.create_task(
+    # 启动 polling（非阻塞）
+    asyncio.create_task(
         application.updater.start_polling(drop_pending_updates=True)
     )
-    print("✅ Bot polling started")
+    print("✅ Bot started")
 
 @app.on_event("startup")
 async def startup():
-    # 启动 bot
     asyncio.create_task(start_bot())
     # 防休眠
     asyncio.create_task(keep_alive())
@@ -70,20 +71,21 @@ async def keep_alive():
         print("🏓 Keep-alive")
         await asyncio.sleep(240)
 
-# 🔴 4. 【关键修复】Shutdown 时先 stop_polling 再 shutdown
+# 🔴 4. 【关键修复】优雅 shutdown（捕获所有异常 + 超时）
 @app.on_event("shutdown")
 async def shutdown():
-    global application, bot_task
-    if application:
-        print("🛑 Stopping bot...")
-        # 1. 先停止 polling
-        if bot_task and not bot_task.done():
-            bot_task.cancel()
-            try:
-                await bot_task
-            except asyncio.CancelledError:
-                pass
-        # 2. 再 stop & shutdown
-        await application.stop()
-        await application.shutdown()
-        print("✅ Bot stopped gracefully")
+    global application
+    if not application:
+        return
+    
+    print("🛑 Shutting down bot...")
+    try:
+        # 先 stop（不 shutdown，避免网络请求）
+        await asyncio.wait_for(application.stop(), timeout=5.0)
+        print("✅ Bot stopped")
+    except asyncio.TimeoutError:
+        print("⚠️ Bot stop timeout, forcing exit")
+    except Exception as e:
+        print(f"⚠️ Bot stop error (ignored): {e}")
+    
+    # 不调用 application.shutdown() —— Railway 会强杀，没必要
