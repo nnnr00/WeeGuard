@@ -28,7 +28,7 @@ LOCKOUT_TIME = timedelta(hours=15)
 
 # 图片URL - 确保URL正确
 VIP_SERVICE_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
-SUCCESS_IMAGE_URL = "https://i.postimg.cc/zBYtqtKb/photo-2026-01-13-17-04-32.jpg"
+TUTORIAL_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg" 
 
 # 备用图片URL（如果主URL失败）
 BACKUP_IMAGE_URL = "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80"
