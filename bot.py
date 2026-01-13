@@ -1,16 +1,17 @@
-import os
 import logging
+import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Tuple
+from typing import Dict, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, 
-    CommandHandler, 
-    MessageHandler, 
-    CallbackQueryHandler, 
-    ContextTypes, 
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
     filters
 )
+import os
 
 # 配置日志
 logging.basicConfig(
@@ -19,391 +20,282 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 从环境变量获取配置
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"
+# 用户状态管理
+user_states: Dict[int, Dict] = {}
+ORDER_PREFIX = "20260"
+MAX_ATTEMPTS = 2
+LOCKOUT_TIME = timedelta(hours=15)
 
-# 使用你提供的Postimg图片链接
+# 图片URL（请替换为你自己的图片链接）
 VIP_SERVICE_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
 SUCCESS_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
 
-# 用户状态存储
-user_data_store: Dict[int, Dict] = {}
+# 欢迎消息
+WELCOME_MESSAGE = """
+🌟 **欢迎来到VIP中转中心！**
 
-class UserState:
-    """用户状态管理"""
-    @staticmethod
-    def get_user_data(user_id: int) -> Dict:
-        if user_id not in user_data_store:
-            user_data_store[user_id] = {
-                'attempts': 0,
-                'last_attempt': None,
-                'current_state': 'start'
-            }
-        return user_data_store[user_id]
-    
-    @staticmethod
-    def reset_attempts(user_id: int):
-        data = UserState.get_user_data(user_id)
-        data['attempts'] = 0
-        data['last_attempt'] = None
-    
-    @staticmethod
-    def add_attempt(user_id: int):
-        data = UserState.get_user_data(user_id)
-        data['attempts'] += 1
-        data['last_attempt'] = datetime.now()
-    
-    @staticmethod
-    def can_retry(user_id: int) -> Tuple[bool, str]:
-        data = UserState.get_user_data(user_id)
-        
-        if data['attempts'] >= 2 and data['last_attempt']:
-            time_passed = datetime.now() - data['last_attempt']
-            if time_passed < timedelta(hours=15):
-                remaining = timedelta(hours=15) - time_passed
-                hours = int(remaining.total_seconds() // 3600)
-                minutes = int((remaining.total_seconds() % 3600) // 60)
-                return False, f"⏳ 请等待 {hours}小时{minutes}分钟后再试"
-        
-        return True, ""
+👋 你好，我是守门员**小卫**，你的专属身份验证助手！
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理/start命令"""
-    user = update.effective_user
-    UserState.reset_attempts(user.id)
+✨ **我能为你做什么？**
+• 🔒 验证VIP会员身份
+• 🚪 快速接入专属频道
+• 🛡️ 保障社群安全环境
+• 💫 提供尊贵会员体验
+
+📢 **小卫口令**：新人报到，一键验证！
+"""
+
+# VIP特权说明
+VIP_PRIVILEGES = """
+🎯 **VIP尊享特权列表**
+
+✅ **专属快速通道**
+    ⚡ 高速稳定中转服务
+    📶 优先网络资源分配
+
+✅ **优先审核入群**
+    🎫 快速身份验证
+    🚀 即时通道开通
+
+✅ **全天候客服支持**
+    🕒 7×24小时在线协助
+    💬 专属客服通道
+
+✅ **定期福利活动**
+    🎁 会员专属礼包
+    🎉 优先活动参与权
+
+💎 **升级VIP会员**，即刻尊享所有特权！
+"""
+
+# 验证教程
+VERIFICATION_TUTORIAL = """
+📋 **如何查找订单号？**
+
+请按照以下步骤操作：
+
+1️⃣ 点击右下角 **「我的」**
+2️⃣ 进入 **「账单」** 页面
+3️⃣ 选择 **「账单详情」**
+4️⃣ 点击 **「更多」** 选项
+5️⃣ 复制完整的 **「订单号」**
+
+📍 **温馨提示**：
+• 请确保复制完整的订单号
+• 订单号通常由数字组成
+• 如有疑问，可联系客服协助
+"""
+
+# 成功验证消息
+SUCCESS_MESSAGE = """
+✅ **身份验证成功！**
+
+🎉 恭喜你，VIP会员身份已确认！
+
+🌟 **欢迎加入VIP专属社群**
+点击下方按钮，即刻进入会员专属通道：
+
+👉 [VIP会员专属群](https://t.me/+495j5rWmApsxYzg9)
+
+✨ 期待与你在社群相见！
+"""
+
+# 失败验证消息
+FAILURE_MESSAGE = """
+❌ **验证未通过**
+
+⚠️ 未查询到对应的订单信息
+
+🔍 **请检查以下事项**：
+• 订单号是否完整复制
+• 订单状态是否有效
+• 是否已成功完成支付
+
+🔄 请重新输入订单号，或联系客服协助
+"""
+
+# 尝试次数超过限制
+LOCKOUT_MESSAGE = """
+⏳ **验证次数超限**
+
+🚫 您的验证尝试次数已达到上限
+
+⏰ 请等待 **15小时** 后重新尝试
+如需紧急协助，请联系客服处理
+"""
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /start 命令"""
+    user_id = update.effective_user.id
     
-    # 欢迎消息
-    welcome_message = """
-✨ *欢迎使用VIP验证系统* ✨
-
-🤖 我是您的验证助手小卫
-
-🚀 我将引导您完成：
-   • VIP特权查看
-   • 订单号验证
-   • VIP群组加入
-
-👇 请点击下方按钮开始：
-    """
+    # 初始化用户状态
+    user_states[user_id] = {
+        'attempts': 0,
+        'first_attempt': None,
+        'verified': False
+    }
     
-    keyboard = [
-        [InlineKeyboardButton("🚀 开始验证", callback_data='vip_service')],
-        [InlineKeyboardButton("❓ 使用帮助", callback_data='help_menu')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    try:
-        await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode='Markdown')
-    except Exception as e:
-        logger.error(f"发送欢迎消息失败: {e}")
-        await update.message.reply_text("欢迎使用VIP验证系统！", reply_markup=reply_markup)
+    # 发送欢迎消息
+    await update.message.reply_text(
+        WELCOME_MESSAGE,
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🚪 进入验证流程", callback_data="start_verification")
+        ]])
+    )
 
-async def vip_service_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """VIP服务说明"""
-    query = update.callback_query
-    await query.answer("正在加载VIP信息...")
-    
-    # VIP特权说明
-    vip_message = """
-🏆 *VIP会员特权*
-
-✅ 专属高速通道
-✅ 优先审核服务
-✅ 24小时客服支持
-✅ 专属福利活动
-
-💎 验证成功后即可享受以上特权！
-    """
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ 开始验证", callback_data='start_verification')],
-        [InlineKeyboardButton("🔙 返回", callback_data='restart')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    try:
-        # 直接发送消息，不尝试编辑，避免冲突
-        await context.bot.send_photo(
-            chat_id=query.message.chat_id,
-            photo=VIP_SERVICE_IMAGE_URL,
-            caption=vip_message,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
-        
-        # 尝试删除之前的消息（不强制）
-        try:
-            await query.message.delete()
-        except:
-            pass
-            
-    except Exception as e:
-        logger.error(f"发送VIP图片失败: {e}")
-        
-        # 如果图片失败，使用文本模式
-        try:
-            await query.edit_message_text(vip_message, reply_markup=reply_markup, parse_mode='Markdown')
-        except Exception as edit_error:
-            logger.error(f"编辑消息也失败: {edit_error}")
-            # 如果编辑也失败，发送新消息
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=vip_message,
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-
-async def start_verification_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """开始验证流程"""
     query = update.callback_query
-    await query.answer("进入验证流程")
+    await query.answer()
     
-    verification_message = """
-📋 *订单号查找步骤*
+    # 发送VIP特权说明（带图片）
+    await query.message.reply_photo(
+        photo=VIP_IMAGE_URL,
+        caption=VIP_PRIVILEGES,
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("💳 我已付款，开始验证", callback_data="verify_payment")
+        ]])
+    )
 
-1. 打开应用，点击【我的】
-2. 进入【账单】页面
-3. 找到对应的账单记录
-4. 点击【账单详情】
-5. 点击【更多】选项
-6. 复制完整的【订单号】
-
-👇 请在下方输入您的订单号：
-    """
+async def verify_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """开始付款验证"""
+    query = update.callback_query
+    await query.answer()
     
-    await query.edit_message_text(verification_message, parse_mode='Markdown')
+    # 发送验证教程（带图片）
+    await query.message.reply_photo(
+        photo=VERIFY_IMAGE_URL,
+        caption=VERIFICATION_TUTORIAL,
+        parse_mode='Markdown'
+    )
     
-    # 设置用户状态
-    user_data = UserState.get_user_data(query.from_user.id)
-    user_data['current_state'] = 'awaiting_order'
+    # 请求输入订单号
+    await query.message.reply_text(
+        "🔢 **请输入您的订单号**\n\n"
+        "请在下方输入完整的订单号进行验证：",
+        parse_mode='Markdown'
+    )
 
-async def handle_order_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_order_number(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理订单号输入"""
     user_id = update.effective_user.id
     order_number = update.message.text.strip()
     
-    # 检查是否可以重试
-    can_retry, message = UserState.can_retry(user_id)
-    if not can_retry:
-        keyboard = [
-            [InlineKeyboardButton("🔄 重新开始", callback_data='restart')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(message, reply_markup=reply_markup)
-        return
+    # 获取或初始化用户状态
+    if user_id not in user_states:
+        user_states[user_id] = {
+            'attempts': 0,
+            'first_attempt': None,
+            'verified': False
+        }
     
-    # 验证逻辑（不向用户透露具体规则）
-    if order_number.startswith('20260'):
+    user_state = user_states[user_id]
+    
+    # 检查是否在锁定状态
+    if user_state['first_attempt']:
+        time_since_first_attempt = datetime.now() - user_state['first_attempt']
+        if user_state['attempts'] >= MAX_ATTEMPTS and time_since_first_attempt < LOCKOUT_TIME:
+            await update.message.reply_text(LOCKOUT_MESSAGE, parse_mode='Markdown')
+            return
+    
+    # 记录第一次尝试时间
+    if user_state['attempts'] == 0:
+        user_state['first_attempt'] = datetime.now()
+    
+    # 检查订单号
+    if order_number.startswith(ORDER_PREFIX):
         # 验证成功
-        UserState.reset_attempts(user_id)
+        user_state['verified'] = True
+        user_state['attempts'] = 0
         
-        success_message = f"""
-🎉 *验证成功！*
-
-✅ 订单已验证
-👤 用户：{update.effective_user.first_name}
-⏰ 时间：{datetime.now().strftime('%H:%M')}
-
-🚀 点击下方按钮加入VIP群：
-        """
+        # 发送成功消息并加入群组
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🌟 加入VIP会员群", url="https://t.me/+495j5rWmApsxYzg9")
+        ]])
         
-        keyboard = [
-            [InlineKeyboardButton("👉 加入VIP群", url=GROUP_LINK)],
-            [InlineKeyboardButton("🏠 返回主页", callback_data='restart')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        try:
-            # 发送成功图片
-            await update.message.reply_photo(
-                photo=SUCCESS_IMAGE_URL,
-                caption=success_message,
-                reply_markup=reply_markup,
-                parse_mode='Markdown'
-            )
-        except Exception as e:
-            logger.error(f"发送成功图片失败: {e}")
-            # 如果图片失败，发送文本版本
-            await update.message.reply_text(success_message, reply_markup=reply_markup, parse_mode='Markdown')
-            
+        await update.message.reply_text(
+            SUCCESS_MESSAGE,
+            parse_mode='Markdown',
+            reply_markup=keyboard,
+            disable_web_page_preview=True
+        )
     else:
         # 验证失败
-        UserState.add_attempt(user_id)
-        attempts_left = 2 - UserState.get_user_data(user_id)['attempts']
+        user_state['attempts'] += 1
         
-        if attempts_left > 0:
-            error_message = f"""
-❌ *验证失败*
-
-📝 未查询到有效订单
-🔄 剩余尝试次数：{attempts_left}次
-
-💡 请确认订单号是否正确
-👇 请重新输入：
-            """
-            
-            keyboard = [
-                [InlineKeyboardButton("📖 查看教程", callback_data='show_tutorial')],
-                [InlineKeyboardButton("🔄 重新输入", callback_data='retry_order')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await update.message.reply_text(error_message, reply_markup=reply_markup, parse_mode='Markdown')
+        if user_state['attempts'] >= MAX_ATTEMPTS:
+            # 超过尝试次数
+            await update.message.reply_text(LOCKOUT_MESSAGE, parse_mode='Markdown')
         else:
-            lock_message = """
-🔒 *验证次数已用完*
+            # 允许再次尝试
+            remaining_attempts = MAX_ATTEMPTS - user_state['attempts']
+            await update.message.reply_text(
+                f"{FAILURE_MESSAGE}\n\n"
+                f"🔄 **剩余尝试次数**：{remaining_attempts}次\n"
+                f"请重新输入订单号：",
+                parse_mode='Markdown'
+            )
 
-⏳ 请等待15小时后重试
-📞 或联系客服协助处理
-            """
-            
-            keyboard = [
-                [InlineKeyboardButton("🔄 稍后重试", callback_data='restart')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await update.message.reply_text(lock_message, reply_markup=reply_markup, parse_mode='Markdown')
-
-async def show_tutorial_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """显示教程"""
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理按钮回调"""
     query = update.callback_query
-    await query.answer("查看教程")
+    await query.answer()
     
-    tutorial = """
-📚 *订单号查找方法*
+    if query.data == "start_verification":
+        await start_verification(update, context)
+    elif query.data == "verify_payment":
+        await verify_payment(update, context)
 
-📍 查找路径：
-我的 → 账单 → 账单详情 → 更多 → 订单号
-
-💡 操作提示：
-• 确保复制完整的订单号
-• 不要手动输入，直接粘贴
-• 检查订单号是否正确
-
-👇 请重新输入订单号：
-    """
-    
-    await query.edit_message_text(tutorial, parse_mode='Markdown')
-
-async def retry_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """重新输入"""
-    query = update.callback_query
-    await query.answer("重新输入")
-    
-    await query.edit_message_text("👇 请在下方重新输入订单号：")
-
-async def help_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """帮助菜单"""
-    query = update.callback_query
-    await query.answer("帮助信息")
-    
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """显示帮助信息"""
     help_text = """
-🤖 *使用帮助*
+🤖 **使用指南**
 
-🚀 验证流程：
-1. 点击"开始验证"
-2. 查看订单号查找方法
-3. 输入订单号
-4. 验证成功后加群
+🔹 **开始流程**：发送 /start
+🔹 **验证身份**：按照提示操作
+🔹 **联系客服**：验证遇到问题时
 
-📞 需要帮助？
-请联系客服获取支持
-    """
-    
-    keyboard = [
-        [InlineKeyboardButton("🚀 开始验证", callback_data='vip_service')],
-        [InlineKeyboardButton("🔙 返回", callback_data='restart')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(help_text, reply_markup=reply_markup, parse_mode='Markdown')
+💡 **温馨提示**：
+• 请确保网络连接稳定
+• 按照指引逐步操作
+• 保存好订单信息
+"""
+    await update.message.reply_text(help_text, parse_mode='Markdown')
 
-async def restart_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """重新开始"""
-    query = update.callback_query
-    await query.answer("重新开始")
+def main() -> None:
+    """启动机器人"""
+    # 从环境变量获取Token（Railway会自动设置）
+    BOT_TOKEN = os.environ.get("BOT_TOKEN")
     
-    UserState.reset_attempts(query.from_user.id)
-    
-    welcome_message = """
-🔄 *流程已重置*
-
-✨ 欢迎回来！
-👇 请选择操作：
-    """
-    
-    keyboard = [
-        [InlineKeyboardButton("🚀 开始验证", callback_data='vip_service')],
-        [InlineKeyboardButton("❓ 使用帮助", callback_data='help_menu')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text(welcome_message, reply_markup=reply_markup, parse_mode='Markdown')
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """帮助命令"""
-    await help_menu_callback(update, context)
-
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """全局错误处理"""
-    logger.error(f"发生错误: {context.error}", exc_info=context.error)
-    
-    if update and update.effective_message:
-        try:
-            await update.effective_message.reply_text("❌ 系统暂时出现问题，请稍后再试")
-        except:
-            pass
-
-def main():
-    """主函数"""
     if not BOT_TOKEN:
-        print("❌ 错误：请设置BOT_TOKEN环境变量")
-        print("在Railway中：")
-        print("1. 进入项目")
-        print("2. 点击 Variables")
-        print("3. 添加 BOT_TOKEN")
+        logger.error("请设置 BOT_TOKEN 环境变量")
         return
     
     # 创建应用
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # 添加处理器
+    # 注册处理器
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
-    
-    # 回调处理器
-    application.add_handler(CallbackQueryHandler(vip_service_callback, pattern='^vip_service$'))
-    application.add_handler(CallbackQueryHandler(start_verification_callback, pattern='^start_verification$'))
-    application.add_handler(CallbackQueryHandler(show_tutorial_callback, pattern='^show_tutorial$'))
-    application.add_handler(CallbackQueryHandler(retry_order_callback, pattern='^retry_order$'))
-    application.add_handler(CallbackQueryHandler(help_menu_callback, pattern='^help_menu$'))
-    application.add_handler(CallbackQueryHandler(restart_callback, pattern='^restart$'))
-    
-    # 消息处理器
+    application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_order_number))
     
-    # 错误处理器
-    application.add_error_handler(error_handler)
+    # 启动机器人
+    port = int(os.environ.get("PORT", 8080))
     
-    # 启动
-    print("🤖 机器人启动中...")
-    print(f"VIP图片URL: {VIP_SERVICE_IMAGE_URL}")
-    print(f"成功图片URL: {SUCCESS_IMAGE_URL}")
-    
-    # 测试图片URL
-    try:
-        import requests
-        response = requests.head(VIP_SERVICE_IMAGE_URL, timeout=5)
-        print(f"VIP图片URL状态码: {response.status_code}")
-        
-        response = requests.head(SUCCESS_IMAGE_URL, timeout=5)
-        print(f"成功图片URL状态码: {response.status_code}")
-    except Exception as e:
-        print(f"测试图片URL失败: {e}")
-    
-    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    if "RAILWAY_ENVIRONMENT" in os.environ:
+        # 在Railway上使用Webhook
+        webhook_url = f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN')}/"
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            webhook_url=webhook_url
+        )
+    else:
+        # 本地开发使用轮询
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
