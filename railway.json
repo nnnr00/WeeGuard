@@ -2,9 +2,9 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "nixpacks",
-    "buildCommand": "mise install",          // 你本来就有的
     "env": {
-      "MISE_ASDF_USE_DOCKER": "0"
+      "MISE_ASDF_USE_DOCKER": "0",
+      "ASDF_PYTHON_PREBUILT_URL": "https://mirrors.tuna.tsinghua.edu.cn/oxalica-python/prebuilt/{version}/{filename}"
     }
   }
 }
