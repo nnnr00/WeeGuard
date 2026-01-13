@@ -1,4 +1,4 @@
 {
-  "startCommand": "python bot.py",
-  "buildCommand": "pip install python-telegram-bot==20.8"
+  "builder": "NIXPACKS",
+  "startCommand": "python bot.py"
 }
