@@ -32,7 +32,7 @@ VIP_CAPTION = """VIP会员特权说明：
 7x24小时客服支持
 定期福利活动
 
-请私信管理员开通：@YourAdminUsername"""
+请私信管理员"""
 
 PAYMENT_DONE_TEXT = "付款后请点击下方按钮开始验证"
 
