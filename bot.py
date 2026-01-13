@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -26,10 +26,6 @@ ORDER_PREFIX = "20260"
 MAX_ATTEMPTS = 2
 LOCKOUT_TIME = timedelta(hours=15)
 
-# 图片URL
-VIP_SERVICE_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
-SUCCESS_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
-
 # 欢迎消息
 WELCOME_MESSAGE = """
 🌟 **欢迎来到VIP中转中心！**
@@ -43,6 +39,8 @@ WELCOME_MESSAGE = """
 • 💫 提供尊贵会员体验
 
 📢 **小卫口令**：新人报到，一键验证！
+
+点击下方按钮开始验证流程：
 """
 
 # VIP特权说明
@@ -95,8 +93,6 @@ SUCCESS_MESSAGE = """
 🌟 **欢迎加入VIP专属社群**
 点击下方按钮，即刻进入会员专属通道：
 
-👉 [VIP会员专属群](https://t.me/+495j5rWmApsxYzg9)
-
 ✨ 期待与你在社群相见！
 """
 
@@ -136,12 +132,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     }
     
     # 发送欢迎消息
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🚪 进入验证流程", callback_data="start_verification")
+    ]])
+    
     await update.message.reply_text(
         WELCOME_MESSAGE,
         parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🚪 进入验证流程", callback_data="start_verification")
-        ]])
+        reply_markup=keyboard
     )
 
 async def start_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -149,26 +147,17 @@ async def start_verification(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     
-    try:
-        # 发送VIP特权说明（带图片）
-        await query.message.reply_photo(
-            photo=VIP_SERVICE_IMAGE_URL,
-            caption=VIP_PRIVILEGES,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("💳 我已付款，开始验证", callback_data="verify_payment")
-            ]])
-        )
-    except Exception as e:
-        logger.error(f"发送图片失败: {e}")
-        # 如果图片发送失败，发送纯文本
-        await query.message.reply_text(
-            VIP_PRIVILEGES,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("💳 我已付款，开始验证", callback_data="verify_payment")
-            ]])
-        )
+    # 发送VIP特权说明 - 使用回复新消息而不是编辑原消息
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("💳 我已付款，开始验证", callback_data="verify_payment")
+    ]])
+    
+    # 直接发送新消息，而不是编辑原消息
+    await query.message.reply_text(
+        VIP_PRIVILEGES,
+        parse_mode='Markdown',
+        reply_markup=keyboard
+    )
 
 async def verify_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """开始付款验证"""
@@ -225,24 +214,12 @@ async def handle_order_number(update: Update, context: ContextTypes.DEFAULT_TYPE
             InlineKeyboardButton("🌟 加入VIP会员群", url="https://t.me/+495j5rWmApsxYzg9")
         ]])
         
-        try:
-            # 发送成功消息（带图片）
-            await update.message.reply_photo(
-                photo=SUCCESS_IMAGE_URL,
-                caption=SUCCESS_MESSAGE,
-                parse_mode='Markdown',
-                reply_markup=keyboard,
-                disable_web_page_preview=True
-            )
-        except Exception as e:
-            logger.error(f"发送成功图片失败: {e}")
-            # 如果图片发送失败，发送纯文本
-            await update.message.reply_text(
-                SUCCESS_MESSAGE,
-                parse_mode='Markdown',
-                reply_markup=keyboard,
-                disable_web_page_preview=True
-            )
+        await update.message.reply_text(
+            SUCCESS_MESSAGE,
+            parse_mode='Markdown',
+            reply_markup=keyboard,
+            disable_web_page_preview=True
+        )
     else:
         # 验证失败
         user_state['attempts'] += 1
@@ -286,33 +263,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 """
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理未捕获的错误"""
-    logger.error(f"更新 {update} 导致错误 {context.error}")
-    
-    if update and update.effective_message:
-        try:
-            await update.effective_message.reply_text(
-                "❌ 抱歉，出现了意外错误。\n"
-                "请稍后重试，或联系客服寻求帮助。"
-            )
-        except Exception as e:
-            logger.error(f"发送错误消息失败: {e}")
-
 def main() -> None:
     """启动机器人"""
-    # 从环境变量获取Token（Railway会自动设置）
+    # 从环境变量获取Token
     BOT_TOKEN = os.environ.get("BOT_TOKEN")
     
     if not BOT_TOKEN:
         logger.error("请设置 BOT_TOKEN 环境变量")
         return
     
+    logger.info(f"启动机器人，Token: {BOT_TOKEN[:10]}...")
+    
     # 创建应用
     application = Application.builder().token(BOT_TOKEN).build()
-    
-    # 添加错误处理器
-    application.add_error_handler(error_handler)
     
     # 注册处理器
     application.add_handler(CommandHandler("start", start))
@@ -320,46 +283,45 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_order_number))
     
-    # 在 Railway 上使用 Webhook
-    # 获取 Railway 环境变量
+    # 检查是否是 Railway 环境
     port = int(os.environ.get("PORT", 8080))
     
-    # 检查是否在 Railway 环境
-    railway_environment = os.environ.get("RAILWAY_ENVIRONMENT")
-    railway_public_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
-    
-    if railway_environment:
-        # 在 Railway 上运行 - 使用 Webhook
-        logger.info(f"在 Railway 上启动，使用 Webhook，端口: {port}")
+    # 如果 RAILWAY_ENVIRONMENT 存在，使用 webhook
+    if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+        # Railway 环境
+        logger.info("检测到 Railway 环境，使用 webhook")
         
-        if railway_public_domain:
-            webhook_url = f"https://{railway_public_domain}/"
+        # 获取公共域名
+        public_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+        
+        if not public_domain:
+            # 尝试从其他环境变量获取
+            service_url = os.environ.get("RAILWAY_SERVICE_URL")
+            if service_url:
+                # 从 URL 中提取域名
+                public_domain = service_url.replace("https://", "").replace("http://", "").split("/")[0]
+        
+        if public_domain:
+            webhook_url = f"https://{public_domain}/"
+            logger.info(f"Webhook URL: {webhook_url}")
+            
+            # 启动 webhook
+            application.run_webhook(
+                listen="0.0.0.0",
+                port=port,
+                url_path="",
+                webhook_url=webhook_url,
+                secret_token=None,
+                drop_pending_updates=True
+            )
         else:
-            # 如果没有公共域名，尝试使用 service URL
-            railway_service_url = os.environ.get("RAILWAY_SERVICE_URL")
-            if railway_service_url:
-                webhook_url = railway_service_url
-            else:
-                logger.error("无法获取 Railway Webhook URL")
-                return
-        
-        logger.info(f"Webhook URL: {webhook_url}")
-        
-        # 启动 Webhook
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="",
-            webhook_url=webhook_url,
-            drop_pending_updates=True
-        )
+            logger.error("无法获取 Railway 公共域名")
+            # 回退到轮询模式
+            application.run_polling(drop_pending_updates=True)
     else:
-        # 本地开发 - 使用轮询
-        logger.info("本地开发模式，使用轮询")
-        application.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES
-        )
+        # 本地开发环境
+        logger.info("本地开发环境，使用轮询")
+        application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
