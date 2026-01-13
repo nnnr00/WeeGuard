@@ -1,3 +1,4 @@
 {
-  "startCommand": "python bot.py"
+  "startCommand": "python bot.py",
+  "buildCommand": "pip install python-telegram-bot==20.8"
 }
