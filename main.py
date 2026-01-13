@@ -11,7 +11,7 @@ from telegram.ext import (
 
 app = FastAPI()
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "1480512549"))
 
 # 状态常量
 WAITING_KEYWORD, WAITING_TYPE, WAITING_CONTENT = range(3)
