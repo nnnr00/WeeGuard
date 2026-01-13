@@ -2,7 +2,6 @@ import os
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Tuple
-from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, 
@@ -13,9 +12,6 @@ from telegram.ext import (
     filters
 )
 
-# 加载环境变量
-load_dotenv()
-
 # 配置日志
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -23,9 +19,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 常量定义
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID')
+# 从环境变量获取配置
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"  # 固定的群组链接
 
 # 用户状态存储
@@ -74,7 +69,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     UserState.reset_attempts(user.id)
     
-    # 欢迎消息 - 使用更美观的格式
+    # 欢迎消息
     welcome_message = """
 ╔══════════════════════════════════╗
 ║       👋 欢迎加入【VIP中转】      ║
@@ -105,7 +100,7 @@ async def vip_service_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
-    # VIP特权说明 - 美化格式
+    # VIP特权说明
     vip_message = """
 ┌──────────────────────────────────┐
 │        💎 VIP会员特权说明         │
@@ -177,22 +172,18 @@ async def handle_order_number(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
     
-    # 模拟验证逻辑 - 这里可以替换为实际验证逻辑
-    # 简化的验证：只要订单号长度在10-15位且包含数字
-    is_valid = (10 <= len(order_number) <= 15 and 
-                any(char.isdigit() for char in order_number))
-    
-    if is_valid:
+    # 验证逻辑：只检查是否以20260开头，不限长度
+    if order_number.startswith('20260'):
         # 验证成功
         UserState.reset_attempts(user_id)
         
         # 成功消息
         success_message = """
 ╔══════════════════════════════════╗
-║        ✅ 验证成功！             ║
+║        ✅ 订单验证成功！         ║
 ╠══════════════════════════════════╣
-║   🎫 订单号：{}                 ║
-║   👤 用户：{}                 ║
+║   🎫 订单号：{}                ║
+║   👤 用户：{}                  ║
 ║   ⏰ 时间：{}       ║
 ╚══════════════════════════════════╝
 
@@ -210,20 +201,6 @@ async def handle_order_number(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(success_message, reply_markup=reply_markup)
-        
-        # 通知管理员
-        if ADMIN_CHAT_ID:
-            admin_message = f"""
-📋 新用户验证成功
-👤 用户：{update.effective_user.first_name}
-🆔 ID：{update.effective_user.id}
-🎫 订单号：{order_number}
-⏰ 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-            """
-            await context.bot.send_message(
-                chat_id=ADMIN_CHAT_ID,
-                text=admin_message
-            )
             
     else:
         # 验证失败
@@ -253,7 +230,6 @@ async def handle_order_number(update: Update, context: ContextTypes.DEFAULT_TYPE
             """
             
             keyboard = [
-                [InlineKeyboardButton("📞 联系管理员", url=f"https://t.me/{ADMIN_CHAT_ID}" if ADMIN_CHAT_ID else "#")],
                 [InlineKeyboardButton("🔄 稍后重试", callback_data='restart')]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -311,13 +287,18 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """错误处理"""
     logger.error(f"更新 {update} 导致错误 {context.error}")
     
-    error_text = "❌ 抱歉，出现了系统错误，请稍后重试或联系管理员"
+    error_text = "❌ 抱歉，出现了系统错误，请稍后重试"
     
     if update and update.effective_message:
         await update.effective_message.reply_text(error_text)
 
 def main():
     """主函数"""
+    # 检查Token是否设置
+    if not BOT_TOKEN:
+        print("❌ 错误：请在Railway的环境变量中设置 BOT_TOKEN")
+        return
+    
     # 创建应用
     application = Application.builder().token(BOT_TOKEN).build()
     
