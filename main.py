@@ -1,20 +1,11 @@
-# main.py
 import os
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
-    ContextTypes
-)
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from datetime import datetime, timedelta
 
 load_dotenv()
 
-# === 配置 ===
 VIP_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
 ORDER_GUIDE_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
 
@@ -52,7 +43,6 @@ GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"
 MAX_FAILS = 2
 COOLDOWN_HOURS = 15
 
-# === 自动发送欢迎语 + 开通按钮 ===
 async def auto_start_and_a(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("welcome_sent"):
         return
@@ -62,7 +52,6 @@ async def auto_start_and_a(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(SERVICE_TEXT, reply_markup=reply_markup)
     context.user_data["welcome_sent"] = True
 
-# === 按钮点击处理 ===
 async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -80,7 +69,6 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data['order_guide_msg_id'] = sent.message_id
         context.user_data['awaiting'] = 'order_id'
 
-# === 重新显示订单指引 ===
 async def resend_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.edit_message_caption(
@@ -93,20 +81,17 @@ async def resend_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['order_guide_msg_id'] = sent.message_id
     context.user_data['awaiting'] = 'order_id'
 
-# === 处理订单号（输错2次封15小时 + 成功发按钮）===
 async def handle_order_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('awaiting') != 'order_id':
         return
 
     text = update.message.text.strip()
 
-    # 检查是否在冷却期
     blocked_until = context.user_data.get("blocked_until")
     if blocked_until and datetime.now() < blocked_until:
         await update.message.reply_text(BLOCK_MESSAGE)
         return
 
-    # 成功：20260开头
     if text.startswith("20260"):
         context.user_data.clear()
         keyboard = [[InlineKeyboardButton("立即加入VIP群", url=GROUP_LINK)]]
@@ -117,7 +102,6 @@ async def handle_order_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 失败计数
     fail_count = context.user_data.get("fail_count", 0) + 1
     context.user_data["fail_count"] = fail_count
 
@@ -127,17 +111,15 @@ async def handle_order_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(BLOCK_MESSAGE)
         return
 
-    # 还有机会
     remaining = MAX_FAILS - fail_count
     await update.message.reply_text(FAIL_TEXT.format(remaining))
     await resend_guide(update, context)
 
-# === 主函数 ===
 def main():
-    print("正在启动守门员小卫【最终版】...")
+    print("正在启动守门员小卫【终极无错版】...")
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     if not TOKEN:
-        print("错误：未找到 TELEGRAM_BOT_TOKEN")
+        print("错误：未找到 TOKEN")
         return
 
     app = Application.builder().token(TOKEN).build()
@@ -148,7 +130,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_button_click))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_order_id))
 
-    print("守门员小卫已上线！输错2次封15小时 + 成功发进群按钮")
+    print("守门员小卫启动成功！输错2次封15小时 + 进群按钮")
     app.run_polling(drop_pending_updates=True, timeout=20)
 
 if __name__ == '__main__':
