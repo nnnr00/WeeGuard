@@ -216,3 +216,20 @@ def main():
 
 if __name__ == "__main__":
     main()
+def main():
+    from telegram import Bot
+    from telegram.ext import Application
+    import asyncio
+
+    TOKEN = "8515162052:AAFyZu2oKv9CjgtKaA0nQHc-PydLRaV5BZI"   # ← 再次确认这里对了
+
+    async def test():
+        bot = Bot(TOKEN)
+        me = await bot.get_me()
+        print("机器人启动成功！用户名：", me.username)
+        await bot.send_message(chat_id=你的ID, text="我活了！测试成功")  # ← 改成你的数字ID
+
+    asyncio.run(test())
+
+if __name__ == "__main__":
+    main()
