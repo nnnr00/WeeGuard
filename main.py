@@ -13,7 +13,7 @@ from telegram.ext import (
 
 load_dotenv()
 
-# === 图片链接（务必换成你自己的直链）===
+# === 图片链接 ===
 VIP_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
 ORDER_GUIDE_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
 
@@ -32,7 +32,7 @@ VIP_CAPTION = """💎 VIP会员特权说明：
 ✅ 7x24小时客服支持
 ✅ 定期福利活动
 
-👉 请私信管理员"""  # ← 改成你的管理员用户名
+👉 请私信管理员"""
 
 PAYMENT_DONE_TEXT = "付款成功后，请点击下方按钮开始身份验证"
 
@@ -46,24 +46,28 @@ ORDER_GUIDE_CAPTION = """1️⃣ 发送你的订单号
 
 SUCCESS_TEXT = "🎉 验证成功！点击下方按钮加入群组 👇"
 SUCCESS_BUTTON_TEXT = "🚀 立即加入专属群"
-GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"  # ← 改成你的VIP群链接
+GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"
 
 FAIL_TEXT = "订单识别失败，请检查是否复制完整并重试"
 
-# === 支持深链参数的 /start ===
-async def deep_link_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args and context.args[0] == "vip":  # 深链参数：?start=vip
-        await command_a(update, context)  # 直接进入开通VIP流程
-    else:
-        await update.message.reply_text(WELCOME_MESSAGE)
+# === 自动发送欢迎语 + 开通按钮 ===
+async def auto_start_and_a(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 防止重复触发（比如用户手动再发 /start）
+    if context.user_data.get("welcome_sent"):
+        return
 
-# === /a 命令 ===
-async def command_a(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 第一条：欢迎语
+    await update.message.reply_text(WELCOME_MESSAGE)
+
+    # 第二条：直接显示开通按钮（相当于执行了 /a）
     keyboard = [[InlineKeyboardButton("点此开通VIP会员", callback_data="show_vip")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(SERVICE_TEXT, reply_markup=reply_markup)
 
-# === 按钮点击 ===
+    # 标记已发送，防止重复
+    context.user_data["welcome_sent"] = True
+
+# === 按钮处理 ===
 async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -79,7 +83,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data['order_guide_msg_id'] = sent.message_id
         context.user_data['awaiting'] = 'order_id'
 
-# === 重新显示订单指引（失败时用）===
+# === 失败重试 ===
 async def resend_order_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.edit_message_caption(
@@ -110,24 +114,23 @@ async def handle_order_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === 主函数 ===
 def main():
-    print("正在启动守门员小卫VIP版机器人...")
+    print("正在启动守门员小卫【自动双发版】...")
 
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     if not TOKEN:
-        print("错误：未找到 TELEGRAM_BOT_TOKEN 环境变量！")
+        print("错误：未找到 TELEGRAM_BOT_TOKEN")
         return
-
-    print(f"Bot Token 加载成功")
 
     app = Application.builder().token(TOKEN).build()
 
-    # 关键：使用支持参数的 start
-    app.add_handler(CommandHandler("start", deep_link_start))
-    app.add_handler(CommandHandler("a", command_a))
+    # 用户第一次发任何消息（包括 /start）都自动触发双发
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.TEXT & ~filters.COMMAND, auto_start_and_a))
+    app.add_handler(CommandHandler("start", auto_start_and_a))
+    app.add_handler(CommandHandler("a", auto_start_and_a))
     app.add_handler(CallbackQueryHandler(handle_button_click))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_order_id))
 
-    print("守门员小卫已就绪！支持一键深链入口")
+    print("守门员小卫已上线！用户一点击即自动发送欢迎语 + 开通按钮")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
