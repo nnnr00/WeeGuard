@@ -1,9 +1,8 @@
 # bot.py —— 自动触发 /2026 命令版（Railway 100% 可用）
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+import json
 import os
-from telegram import Update
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters
-)
 
 # ================== 改这里 ==================
 TOKEN = "8515162052:AAFyZu2oKv9CjgtKaA0nQHc-PydLRaV5BZI"                 # ← 改你的 Bot Token
