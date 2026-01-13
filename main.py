@@ -15,7 +15,7 @@ from telegram.ext import (
 load_dotenv()
 
 # === 图片链接（替换成你上传到 Telegraph 的真实图片直链）===
-VIP_IMAGE_URL = "https://telegra.ph/file/your-vip-image.jpg"          # ← 替换为你自己的图
+VIP_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"          # ← 替换为你自己的图
 ORDER_GUIDE_IMAGE_URL = "https://telegra.ph/file/your-order-guide.jpg"  # ← 替换为你自己的图
 
 # === 文本内容 ===
