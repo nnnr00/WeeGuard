@@ -18,22 +18,21 @@ VIP_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
 ORDER_GUIDE_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg"
 
 # === 文本内容 ===
-WELCOME_MESSAGE = """欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~
+WELCOME_MESSAGE = """👋 欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~
 
-小卫小卫，守门员小卫！
-- 一键入群，小卫帮你搞定！
-- 新人来报到，小卫查身份！"""
+📢 小卫小卫，守门员小卫！
+一键入群，小卫帮你搞定！
+新人来报到，小卫查身份！"""
 
 SERVICE_TEXT = "请选择您需要的服务："
 
 VIP_CAPTION = """VIP会员特权说明：
-- 专属中转通道
-- 优先审核入群
-- 7×24小时专属客服
-- 定期空投福利 & 活动
+✅ 专属中转通道
+✅ 优先审核入群
+✅ 7x24小时客服支持
+✅ 定期福利活动
 
-立即享有以上全部权益，请私信管理员开通：
-@YourAdminUsername"""  # ← 记得改成你的管理员用户名
+👉 请私信管理员"""  # ← 记得改成你的管理员用户名
 
 PAYMENT_DONE_TEXT = "付款成功后，请点击下方按钮开始身份验证"
 
@@ -71,7 +70,7 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.message.reply_photo(photo=VIP_IMAGE_URL, caption=VIP_CAPTION)
 
         # 2. 已付款按钮（加钻石符号）
-        keyboard = [[InlineKeyboardButton("我已付款，开始验证", callback_data="start_order_verify")]]
+        keyboard = [[InlineKeyboardButton("✅ 我已付款，开始验证", callback_data="start_order_verify")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text(PAYMENT_DONE_TEXT, reply_markup=reply_markup)
 
