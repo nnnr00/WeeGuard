@@ -104,7 +104,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     if not TOKEN:
-        raise ValueError("请设置环境变量 TELEGRAM_BOT_TOKEN")
+        raise ValueError("8515162052:AAFyZu2oKv9CjgtKaA0nQHc-PydLRaV5BZI")
 
     application = Application.builder().token(TOKEN).build()
 
