@@ -91,10 +91,13 @@ async def cart_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     keyboard = [
         [
             InlineKeyboardButton("📊 查看排行榜", callback_data="show_rank_back")
+        ],
+        [
+            InlineKeyboardButton("🔙 返回兑换中心", callback_data="cart_menu")
         ]
     ]
-    await query.message.reply_text("🏆 排行榜：", 
-reply_markup=InlineKeyboardMarkup(keyboard))
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("🏆 *欢迎进入排行榜菜单*，请选择：", reply_markup=reply_markup, parse_mode='Markdown')
 # 🎁 展示奖品
 async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
