@@ -89,11 +89,13 @@ async def cart_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     elif update.message:
         # 当是命令 /cart 或 自动跳转触发
-        keyboard = [
-    [InlineKeyboardButton("按钮1", callback_data="a")],
-    [InlineKeyboardButton("按钮2", callback_data="b")]
+    keyboard = [
+    [InlineKeyboardButton("签到", callback_data="signin"),
+     InlineKeyboardButton("积分查询", callback_data="points")],
+    [InlineKeyboardButton("兑换奖品", callback_data="rewards")],
+    [InlineKeyboardButton("排行榜", callback_data="rank")],
+    [InlineKeyboardButton("返回主页", callback_data="restart")]
 ]
-
 # 🎁 展示奖品
 async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
