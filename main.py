@@ -1,17 +1,21 @@
 # =========================
-# VIP中转 - 守门员小卫机器人
-# 功能总览：
-# 1) /start 欢迎 + 开始验证 + 积分按钮
-# 2) VIP验证：订单号校验（内部规则，不对用户展示），失败2次锁10小时
+# VIP中转 - 守门员小卫机器人（完整版）
+#
+# 功能：
+# 1) /start：首页欢迎 + 【开始验证】+【积分】
+# 2) VIP验证：输入订单号核验（内部规则），失败2次锁10小时
+#    ✅ 修改点1：VIP失败2次锁10小时后 -> 提示后自动跳转到 /start 首页
 # 3) 积分中心：
-#    - 签到：每天一次，随机+3~8积分
-#    - 充值：微信/支付宝各仅允许成功一次；失败2次锁10小时
-#    - 兑换：含固定测试商品(0积分=哈哈)，兑换前确认/取消，兑换后显示已兑换并可重复查看内容
-#    - 余额：显示当前积分 + 最近流水记录（时间+原因）
-#    - 排行榜：近3天“获得积分”排行（delta>0），扣除不算；展示昵称 + 总积分；显示我的排名
-# 4) /admin 管理员系统：
-#    - 按钮添加商品（文本/图片/视频 file_id）
-#    - 商品上下架
+#    - 签到：每天一次，随机+3~8
+#    - 充值：微信/支付宝各只能成功一次；失败2次锁10小时
+#      ✅ 修改点3：充值失败2次锁10小时后 -> 提示后自动跳转到 积分中心页面
+#    - 兑换：有固定测试商品（0积分=哈哈），兑换前确认/取消
+#    - 余额：显示积分 + 最近流水
+#    - 排行榜：近3天【获得积分】排行（delta>0，扣除不算），显示昵称+总积分+我的排名
+# 4) /admin：管理员系统（添加商品 文本/图片/视频，商品上下架）
+#
+# 部署：
+# - BOT_TOKEN、DATABASE_URL 放 Railway Variables（不使用 .env 文件）
 # =========================
 
 import os
@@ -25,15 +29,18 @@ import asyncpg
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ContextTypes, filters
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
 )
 
 # ============================================================
-# 【你需要在 Railway Variables 配置的地方】（不是 .env 文件）
-# Railway -> Service -> Variables:
+# 【需要你修改 1/2】Railway Variables：
 #   BOT_TOKEN=xxxx
-#   DATABASE_URL=postgresql://... (建议用 Vercel 的 POSTGRES_URL_NON_POOLING)
+#   DATABASE_URL=postgresql://...  (建议用 Vercel 的 POSTGRES_URL_NON_POOLING)
 # ============================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
@@ -41,24 +48,23 @@ if not BOT_TOKEN or not DATABASE_URL:
     raise RuntimeError("缺少 Railway Variables：BOT_TOKEN 或 DATABASE_URL")
 
 # ============================================================
-# 【你需要替换的地方 1】：管理员 Telegram user_id
-# 获取方式：你可以临时用 @userinfobot 查看自己的 user_id
+# 【需要你修改 2/2】管理员 Telegram user_id（可多个）
+# 你可以用 @userinfobot 查看你的 user_id
 # ============================================================
-ADMIN_IDS = {123456789}  # <- 改成你的管理员ID，可多个，例如 {111,222}
+ADMIN_IDS = {123456789}  # ← 改成你的管理员ID，例如 {111,222}
 
 # ============================================================
-# 【你需要替换的地方 2】：可选图片 File ID（不需要就留空字符串）
+# 可选：图片 File ID（不需要就留空字符串）
 # ============================================================
 WELCOME_IMAGE_FILE_ID = ""   # /start 欢迎图
 VIP_IMAGE_FILE_ID = ""       # VIP说明图
-WECHAT_IMAGE_FILE_ID = ""    # 微信充值页图（可放二维码/教程图）
-ALIPAY_IMAGE_FILE_ID = ""    # 支付宝充值页图（可放二维码/教程图）
+WECHAT_IMAGE_FILE_ID = ""    # 微信充值页图
+ALIPAY_IMAGE_FILE_ID = ""    # 支付宝充值页图
 
-# 固定入群链接
 GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"
 
 # =========================
-# 文案（你可按需微调）
+# 文案
 # =========================
 WELCOME_TEXT = (
     "👋 欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~\n\n"
@@ -161,9 +167,8 @@ async def ensure_user(app: Application, user_id: int):
 
 async def upsert_user_nick(app: Application, tg_user) -> None:
     """
-    昵称存储规则：
+    排行榜昵称存储：
     优先 @username，否则 full_name，否则 "用户后4位"
-    用于排行榜展示昵称。
     """
     user_id = tg_user.id
     if tg_user.username:
@@ -205,20 +210,46 @@ async def set_state(app: Application, user_id: int, state: Optional[str]):
         await conn.execute("UPDATE users SET state=$1 WHERE user_id=$2;", state, user_id)
 
 # =========================
-# 按钮 UI（美化）
+# 页面跳转工具（用于你要的“自动跳转”）
+# =========================
+async def push_home(message):
+    """自动回到 /start 首页"""
+    if WELCOME_IMAGE_FILE_ID:
+        await message.reply_photo(
+            photo=WELCOME_IMAGE_FILE_ID,
+            caption=WELCOME_TEXT,
+            reply_markup=kb_home()
+        )
+    else:
+        await message.reply_text(
+            WELCOME_TEXT,
+            reply_markup=kb_home()
+        )
+
+async def push_points_center(message, app: Application, user_id: int):
+    """自动跳转到积分中心页面"""
+    u = await get_user(app, user_id)
+    text = (
+        "🎯 <b>积分中心</b>\n\n"
+        f"当前积分：<b>{u['points']}</b>\n"
+        "在这里你可以签到、充值、兑换、查看余额与排行榜。"
+    )
+    await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb_points())
+
+# =========================
+# 按钮 UI
 # =========================
 def kb_home():
-    # /start：开始验证下方添加积分按钮
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🛡️ 开始验证", callback_data="vip_intro")],
         [InlineKeyboardButton("🎯 积分", callback_data="points_home")],
     ])
 
+# ✅ 修改点2：删除 VIP 页面里的“积分中心”按钮，只保留付款验证 + 返回首页
 def kb_vip():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ 我已付款，开始验证", callback_data="vip_pay")],
-        [InlineKeyboardButton("🎯 积分中心", callback_data="points_home"),
-         InlineKeyboardButton("⬅️ 返回首页", callback_data="home")]
+        [InlineKeyboardButton("⬅️ 返回首页", callback_data="home")]
     ])
 
 def kb_points():
@@ -283,7 +314,7 @@ def kb_admin_kind_select():
     ])
 
 # =========================
-# 商品/兑换（含测试商品）
+# 商品/兑换
 # =========================
 async def fetch_active_products(app: Application) -> List[Dict[str, Any]]:
     p = await db_pool(app)
@@ -340,7 +371,7 @@ async def build_exchange_keyboard(app: Application, user_id: int) -> InlineKeybo
         else:
             buttons.append([InlineKeyboardButton(f"🎁 {name}｜{cost}积分", callback_data=f"redeem_ask:{pid}")])
 
-        # 按你要求：在测试商品下面放“管理员添加商品”
+        # 测试商品下方给管理员添加入口
         if pid == "test" and user_id in ADMIN_IDS:
             buttons.append([InlineKeyboardButton("➕ 管理员：添加商品", callback_data="admin_add")])
 
@@ -348,7 +379,7 @@ async def build_exchange_keyboard(app: Application, user_id: int) -> InlineKeybo
     return InlineKeyboardMarkup(buttons)
 
 # =========================
-# 管理员添加商品：草稿（多步输入）
+# 管理员草稿（多步添加商品）
 # =========================
 async def draft_set(app: Application, admin_id: int, stage: str,
                     product_id: Optional[str] = None,
@@ -386,6 +417,7 @@ async def draft_clear(app: Application, admin_id: int):
 # /start /admin
 # =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await ensure_user(context.application, update.effective_user.id)
     await upsert_user_nick(context.application, update.effective_user)
 
     if WELCOME_IMAGE_FILE_ID:
@@ -394,6 +426,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(WELCOME_TEXT, reply_markup=kb_home())
 
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await ensure_user(context.application, update.effective_user.id)
     await upsert_user_nick(context.application, update.effective_user)
 
     user_id = update.effective_user.id
@@ -403,7 +436,7 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(ADMIN_WELCOME, parse_mode=ParseMode.HTML, reply_markup=kb_admin_home())
 
 # =========================
-# Callback（按钮逻辑总入口）
+# Callback 入口（按钮）
 # =========================
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -417,15 +450,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = q.data
 
-    # -------- 首页 --------
+    # 首页
     if data == "home":
-        if WELCOME_IMAGE_FILE_ID:
-            await q.message.reply_photo(photo=WELCOME_IMAGE_FILE_ID, caption=WELCOME_TEXT, reply_markup=kb_home())
-        else:
-            await q.message.reply_text(WELCOME_TEXT, reply_markup=kb_home())
+        await push_home(q.message)
         return
 
-    # -------- VIP验证 --------
+    # VIP 页面
     if data == "vip_intro":
         if VIP_IMAGE_FILE_ID:
             await q.message.reply_photo(photo=VIP_IMAGE_FILE_ID, caption=VIP_TEXT, parse_mode=ParseMode.HTML, reply_markup=kb_vip())
@@ -445,18 +475,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text(VIP_ORDER_PROMPT, parse_mode=ParseMode.HTML)
         return
 
-    # -------- 积分中心 --------
+    # 积分中心
     if data == "points_home":
-        u = await get_user(app, user_id)
-        text = (
-            "🎯 <b>积分中心</b>\n\n"
-            f"当前积分：<b>{u['points']}</b>\n"
-            "在这里你可以签到、充值、兑换、查看余额与排行榜。"
-        )
-        await q.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb_points())
+        await push_points_center(q.message, app, user_id)
         return
 
-    # 1) 签到（每天一次，随机+3~8）
+    # 签到
     if data == "checkin":
         u = await get_user(app, user_id)
         if u["last_checkin_date"] == today_utc():
@@ -475,11 +499,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u2 = await get_user(app, user_id)
         await q.message.reply_text(
             f"✅ 签到成功！本次获得 <b>{gain}</b> 积分\n当前积分：<b>{u2['points']}</b>",
-            parse_mode=ParseMode.HTML, reply_markup=kb_points()
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb_points()
         )
         return
 
-    # 2) 充值菜单
+    # 充值菜单
     if data == "topup_menu":
         u = await get_user(app, user_id)
         text = (
@@ -490,7 +515,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb_topup_menu())
         return
 
-    # 微信充值页
+    # 微信充值
     if data == "topup_wechat":
         u = await get_user(app, user_id)
         if u["wechat_used"]:
@@ -500,6 +525,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if rem:
             await q.message.reply_text(f"⚠️ 微信充值暂不可用，请 {rem} 后再试。", reply_markup=kb_topup_menu())
             return
+
         if WECHAT_IMAGE_FILE_ID:
             await q.message.reply_photo(photo=WECHAT_IMAGE_FILE_ID, caption=WECHAT_GUIDE, parse_mode=ParseMode.HTML, reply_markup=kb_wechat_pay())
         else:
@@ -521,7 +547,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text(WECHAT_ORDER_PROMPT, parse_mode=ParseMode.HTML)
         return
 
-    # 支付宝充值页
+    # 支付宝充值
     if data == "topup_alipay":
         u = await get_user(app, user_id)
         if u["alipay_used"]:
@@ -531,6 +557,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if rem:
             await q.message.reply_text(f"⚠️ 支付宝充值暂不可用，请 {rem} 后再试。", reply_markup=kb_topup_menu())
             return
+
         if ALIPAY_IMAGE_FILE_ID:
             await q.message.reply_photo(photo=ALIPAY_IMAGE_FILE_ID, caption=ALIPAY_GUIDE, parse_mode=ParseMode.HTML, reply_markup=kb_alipay_pay())
         else:
@@ -552,7 +579,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text(ALIPAY_ORDER_PROMPT, parse_mode=ParseMode.HTML)
         return
 
-    # 3) 兑换
+    # 兑换
     if data == "exchange_menu":
         kb = await build_exchange_keyboard(app, user_id)
         await q.message.reply_text("🎁 <b>兑换中心</b>\n请选择要兑换的商品：", parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -622,7 +649,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_product_content(update, product)
         return
 
-    # 4) 余额（积分 + 最近记录）
+    # 余额
     if data == "balance":
         u = await get_user(app, user_id)
         p = await db_pool(app)
@@ -648,7 +675,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb_after_points())
         return
 
-    # 5) 排行榜（近3天：只统计获得积分，扣除不算；显示昵称 + 总积分）
+    # 排行榜（近3天只统计获得积分 delta>0；扣除不算；显示昵称+总积分）
     if data == "leaderboard":
         p = await db_pool(app)
         async with p.acquire() as conn:
@@ -734,9 +761,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=kb_after_points())
         return
 
-    # =========================
-    # 管理员按钮逻辑
-    # =========================
+    # 管理员按钮
     if data.startswith("admin"):
         if user_id not in ADMIN_IDS:
             await q.message.reply_text("⛔ 无权限操作。")
@@ -784,7 +809,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for r in rows:
                 pid = r["product_id"]
                 if pid == "test":
-                    continue  # 固定测试商品不提供上下架
+                    continue
                 status = "🟢上架" if r["active"] else "⚫下架"
                 buttons.append([InlineKeyboardButton(
                     f"{status}｜{r['name']}（{r['cost']}积分）",
@@ -889,7 +914,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = await get_user(app, user_id)
     state = u["state"]
 
-    # VIP 验证：内部判断，不告诉用户规则；失败2次锁10小时
+    # ========== VIP 验证 ==========
     if state == "vip_order":
         rem = lock_remaining(u["vip_locked_until"])
         if rem:
@@ -897,12 +922,15 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         raw = digits_only(text) or text
-        ok = str(raw).startswith("20260")  # 内部判断
+        ok = str(raw).startswith("20260")  # 内部判断，不提示用户规则
 
         p = await db_pool(app)
         async with p.acquire() as conn:
             if ok:
-                await conn.execute("UPDATE users SET state=NULL, vip_attempts=0, vip_locked_until=NULL WHERE user_id=$1;", user_id)
+                await conn.execute(
+                    "UPDATE users SET state=NULL, vip_attempts=0, vip_locked_until=NULL WHERE user_id=$1;",
+                    user_id
+                )
                 await update.message.reply_text("✅ 核验通过！点击下方按钮加入会员群。", reply_markup=kb_join_group())
             else:
                 attempts = u["vip_attempts"] + 1
@@ -916,9 +944,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         locked_until, user_id
                     )
                     await update.message.reply_text("❌ 尝试次数已达上限，请 10 小时后重试。")
+                    # ✅ 修改点1：自动跳转到 /start 首页
+                    await push_home(update.message)
         return
 
-    # 微信充值：内部识别；失败2次锁10小时；成功只允许一次
+    # ========== 微信充值 ==========
     if state == "wechat_order":
         if u["wechat_used"]:
             await set_state(app, user_id, None)
@@ -931,7 +961,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         order = digits_only(text)
-        ok = order.startswith("4200") and len(order) >= 4  # 内部判断
+        ok = order.startswith("4200") and len(order) >= 4  # 内部判断，不提示规则
 
         p = await db_pool(app)
         async with p.acquire() as conn:
@@ -952,7 +982,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 u2 = await get_user(app, user_id)
                 await update.message.reply_text(
                     f"✅ 已充值 <b>100</b> 积分\n当前积分：<b>{u2['points']}</b>",
-                    parse_mode=ParseMode.HTML, reply_markup=kb_after_points()
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb_after_points()
                 )
             else:
                 attempts = u["wechat_attempts"] + 1
@@ -967,9 +998,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         locked_until, user_id
                     )
                     await update.message.reply_text("❌ 尝试次数已达上限，请 10 小时后重试。")
+                    # ✅ 修改点3：自动跳转到积分中心
+                    await push_points_center(update.message, app, user_id)
         return
 
-    # 支付宝充值：内部识别；失败2次锁10小时；成功只允许一次
+    # ========== 支付宝充值 ==========
     if state == "alipay_order":
         if u["alipay_used"]:
             await set_state(app, user_id, None)
@@ -982,7 +1015,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         order = digits_only(text)
-        ok = order.startswith("4768") and len(order) >= 4  # 内部判断
+        ok = order.startswith("4768") and len(order) >= 4  # 内部判断，不提示规则
 
         p = await db_pool(app)
         async with p.acquire() as conn:
@@ -1003,7 +1036,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 u2 = await get_user(app, user_id)
                 await update.message.reply_text(
                     f"✅ 已充值 <b>100</b> 积分\n当前积分：<b>{u2['points']}</b>",
-                    parse_mode=ParseMode.HTML, reply_markup=kb_after_points()
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb_after_points()
                 )
             else:
                 attempts = u["alipay_attempts"] + 1
@@ -1018,6 +1052,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         locked_until, user_id
                     )
                     await update.message.reply_text("❌ 尝试次数已达上限，请 10 小时后重试。")
+                    # ✅ 修改点3：自动跳转到积分中心
+                    await push_points_center(update.message, app, user_id)
         return
 
     # ---------- 非订单状态：允许不输入 /start ----------
@@ -1025,26 +1061,17 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     triggers_start = {"开始验证", "验证", "start", "开始", "首页"}
 
     if text in triggers_start:
-        if WELCOME_IMAGE_FILE_ID:
-            await update.message.reply_photo(photo=WELCOME_IMAGE_FILE_ID, caption=WELCOME_TEXT, reply_markup=kb_home())
-        else:
-            await update.message.reply_text(WELCOME_TEXT, reply_markup=kb_home())
+        await push_home(update.message)
         return
 
     if text in triggers_points:
-        u2 = await get_user(app, user_id)
-        msg = (
-            "🎯 <b>积分中心</b>\n\n"
-            f"当前积分：<b>{u2['points']}</b>\n"
-            "在这里你可以签到、充值、兑换、查看余额与排行榜。"
-        )
-        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=kb_points())
+        await push_points_center(update.message, app, user_id)
         return
 
     await update.message.reply_text("请选择一个功能继续：", reply_markup=kb_home())
 
 # =========================
-# 管理员：上传图片/视频作为商品内容（file_id 存 products.file_id）
+# 管理员：图片/视频商品内容上传
 # =========================
 async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     app = context.application
@@ -1089,11 +1116,15 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # init / shutdown
 # =========================
 async def post_init(app: Application):
-    # Neon 一般需要 SSL
     ssl_ctx = ssl.create_default_context()
-    app.bot_data["db_pool"] = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5, ssl=ssl_ctx)
+    app.bot_data["db_pool"] = await asyncpg.create_pool(
+        DATABASE_URL,
+        min_size=1,
+        max_size=5,
+        ssl=ssl_ctx
+    )
 
-    # 兜底确保“测试商品”始终存在且上架
+    # 兜底：确保测试商品永远存在且上架（0积分=哈哈）
     p = app.bot_data["db_pool"]
     async with p.acquire() as conn:
         await conn.execute(
@@ -1121,9 +1152,11 @@ def main():
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("admin", admin_cmd))
     application.add_handler(CallbackQueryHandler(on_callback))
+
     application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, on_media))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
+    # polling：同一个BOT_TOKEN只能跑一个实例
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
