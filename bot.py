@@ -87,15 +87,15 @@ async def cart_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             parse_mode="Markdown"
         )
 
-elif query.data == "rank_menu":
-    keyboard = [
-        [
-            InlineKeyboardButton("📊 查看排行榜", callback_data="show_rank_back")
-        ],
-        [
-            InlineKeyboardButton("🔙 返回菜单", callback_data="cart_menu")
+    elif query.data == "rank_menu":
+        keyboard = [
+            [
+                InlineKeyboardButton("📊 查看排行榜", callback_data="show_rank_back")
+            ],
+            [
+                InlineKeyboardButton("🔙 返回菜单", callback_data="cart_menu")
+            ]
         ]
-    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("🏆 排行榜：", reply_markup=reply_markup)
 # 🎁 展示奖品
