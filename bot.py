@@ -70,20 +70,26 @@ async def handle_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ✅ 兑换菜单
 async def cart_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
 
-    keyboard = [
-        [InlineKeyboardButton("✅ 签到", callback_data="signin"),
-         InlineKeyboardButton("💰 查看积分", callback_data="points")],
-        [InlineKeyboardButton("🎁 奖品兑换", callback_data="rewards")],
-        [InlineKeyboardButton("🏆 查看排行榜", callback_data="rank_menu")],
-        [InlineKeyboardButton("🔙 返回主菜单", callback_data="restart")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+        keyboard = [
+            [InlineKeyboardButton("✅ 签到", callback_data="signin"),
+             InlineKeyboardButton("💰 查询积分", callback_data="points")],
+            [InlineKeyboardButton("🎁 奖品兑换", callback_data="rewards")],
+            [InlineKeyboardButton("🏆 查看排行榜", callback_data="rank_menu")],
+            [InlineKeyboardButton("🔙 返回首页", callback_data="restart")]
+        ]
+        await query.message.reply_text(
+            "🎉 *小卫积分中心菜单*\n请选择操作：",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 
-    await query.message.reply_text("🎉 *小卫 积分中心菜单*\n请选择操作：", reply_markup=reply_markup, parse_mode="Markdown")
-    # bot.py - Part 3：动态奖品列表 + 兑换处理
+    elif update.message:
+        # 当是命令 /cart 或 自动跳转触发
+        keyboard = [
 
 # 🎁 展示奖品
 async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
