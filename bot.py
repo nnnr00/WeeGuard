@@ -357,6 +357,7 @@ def main():
             ADD_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_reward_cost)],
         },
         fallbacks=[],
+        per_message=True
     )
     app.add_handler(conv_handler)
 
