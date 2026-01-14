@@ -1,2 +1,1 @@
-python-telegram-bot==20.6
-SQLAlchemy==2.0.25
+pyTelegramBotAPI==4.15.4
