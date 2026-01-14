@@ -320,12 +320,18 @@ async def receive_codes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========== 启动 main() ==========
 
-def main():
-    if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        print("请将 BOT_TOKEN 替换为你的机器人 Token 或设置环境变量。")
-        return
+from telegram.request import HTTPXRequest  # ← 🔺 必须添加到顶部
 
-    app = Application.builder().token(BOT_TOKEN).build()
+def main():
+    # 🔧 构建更稳定的请求器，增加超时配置（官方推荐方式）
+    request = HTTPXRequest(
+        connect_timeout=10.0,
+        read_timeout=20.0,
+        pool_timeout=10.0
+    )
+
+    # ✅ 替换为带 request 参数的 ApplicationBuilder
+    app = ApplicationBuilder().token(BOT_TOKEN).request(request).build()
 
     # ✅ 注册命令
     app.add_handler(CommandHandler("start", cart_menu_callback))
@@ -346,6 +352,17 @@ def main():
     app.add_handler(CallbackQueryHandler(delete_reward_start, pattern="^delete_reward$"))
     app.add_handler(CallbackQueryHandler(list_rewards, pattern="^list_rewards$"))
     app.add_handler(CallbackQueryHandler(confirm_delete_reward, pattern="^del_"))
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(f"⚠️ [Error] - {context.error}")
+    try:
+        if update and update.effective_message:
+            await update.effective_message.reply_text("⚠️ 出现暂时性错误，请稍后重试~")
+    except:
+        pass
+
+# 注册错误处理器
+app.add_error_handler(error_handler)
 
     # 奖品添加对话流程
     conv_handler = ConversationHandler(
