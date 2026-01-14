@@ -14,10 +14,10 @@ from models import Base, User, Reward, RewardCode
 # ========== 配置 ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_IDS = [123456789]  # 替换为你的 TG ID
-GROUP_LINK = "https://t.me/your_group_link"
+GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"
 
-VIP_SERVICE_IMAGE_URL = "https://i.postimg.cc/xxxxx/vip-image.jpg"
-TUTORIAL_IMAGE_URL = "https://i.postimg.cc/yyyyy/tutorial.jpg"
+VIP_SERVICE_IMAGE_URL = "https://i.postimg.cc/QtkVBw7N/photo-2026-01-13-17-04-27.jpg" # VIP特权图片
+TUTORIAL_IMAGE_URL = "https://i.postimg.cc/zBYtqtKb/photo-2026-01-13-17-04-32.jpg" # 订单号查找教程图片
 
 engine = create_engine("sqlite:///db.sqlite3")
 Base.metadata.create_all(engine)
