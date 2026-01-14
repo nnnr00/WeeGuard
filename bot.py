@@ -367,16 +367,13 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(start, pattern="^start$")]
-        states={
-            ADD_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_reward_id)],
-            ADD_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_reward_title)],
-            ADD_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_reward_desc)],
-            ADD_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_reward_cost)],
-        },
-        fallbacks=[],
-        per_message=True,      # ← 改成 False
-        per_chat=True, 
+        entry_points=[
+            CallbackQueryHandler(start, pattern="^start$")   # ← 注意逗号
+        ],
+        states={...},
+        fallbacks=[...],
+        per_message=False,
+        per_chat=True,
     )
 
     app.add_handler(conv_handler)
