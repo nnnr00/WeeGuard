@@ -361,23 +361,33 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
+# ------------------ 导入 ------------------
+from telegram.ext import ...
+
+# ------------------ 常量 ------------------
+CHOOSE, INPUT = range(2)
+
+# ------------------ 回调函数 ------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ...
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ...
+
+# ------------------ ConversationHandler ------------------
+conv_handler = ConversationHandler(
+    entry_points=[CallbackQueryHandler(start, pattern="^start$")],
+    states={...},
+    fallbacks=[CallbackQueryHandler(cancel, pattern="^cancel$")],
+    per_message=False,
+    per_chat=True,
+)
+
+# ------------------ main ------------------
 def main():
-    from telegram.ext import ApplicationBuilder
-
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(start, pattern="^start$")   # ← 注意逗号
-        ],
-        states={...},
-        fallbacks=[...],
-        per_message=False,
-        per_chat=True,
-    )
-
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(conv_handler)
-
+    app.run_polling(...)
     print("✅ 机器人已启动，监听中...")
     app.run_polling()
 
