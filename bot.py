@@ -374,8 +374,9 @@ app.add_error_handler(error_handler)
             ADD_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_reward_cost)],
         },
         fallbacks=[],
-        per_message=True
+        per_message=True  # ✅ 加这个可以避免处理按钮时出错
     )
+
     app.add_handler(conv_handler)
 
     print("✅ 机器人已启动，监听中...")
