@@ -87,17 +87,17 @@ async def cart_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             parse_mode="Markdown"
         )
 
-    elif query.data == "rank_menu":
-        keyboard = [
-            [
-                InlineKeyboardButton("📊 查看排行榜", callback_data="show_rank_back")
-            ],
-            [
-                InlineKeyboardButton("🔙 返回菜单", callback_data="cart_menu")
-            ]
+    if update.callback_query:
+        query = update.callback_query        # ✅ 第 90 行：定义 query
+        await query.answer()
+
+        if query.data == "rank_menu":        # ✅ 第 93 行（修复条件判断）
+            keyboard = [
+                [InlineKeyboardButton("🏅 查看排行榜", callback_data="show_rank_back")],
+                [InlineKeyboardButton("🔙 返回", callback_data="cart_menu")]
         ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("🏆 排行榜：", reply_markup=reply_markup)
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("🏆 排行榜：", reply_markup=reply_markup)  # ✅ 
 # 🎁 展示奖品
 async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
