@@ -360,20 +360,6 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text("⚠️ 出现暂时性错误，请稍后重试~")
     except:
         pass
-
-# ------------------ 导入 ------------------
-from telegram.ext import ...
-
-# ------------------ 常量 ------------------
-CHOOSE, INPUT = range(2)
-
-# ------------------ 回调函数 ------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ...
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ...
-
 # ------------------ ConversationHandler ------------------
 conv_handler = ConversationHandler(
     entry_points=[CallbackQueryHandler(start, pattern="^start$")],
