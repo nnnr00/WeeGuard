@@ -1,6 +1,3 @@
-以下是基于你描述的**完整轻量版代码模板**（aiogram 2.x 同步风格，与你现有仓库风格一致），**所有需要你手动修改的地方都用清晰注释标注**。
-
-```python
 import logging
 import time
 from aiogram import Bot, Dispatcher, executor, types
