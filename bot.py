@@ -87,14 +87,13 @@ async def cart_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             parse_mode="Markdown"
         )
 
-    elif update.message:
-        # 当是命令 /cart 或 自动跳转触发
+    elif query.data == "rank_menu":
     keyboard = [
-    [
-        InlineKeyboardButton("按钮1", callback_data="a"),
-        InlineKeyboardButton("按钮2", callback_data="b")
+        [
+            InlineKeyboardButton("Top10", callback_data="show_rank")
+        ]
     ]
-]
+    await query.message.reply_text("排行榜：", reply_markup=InlineKeyboardMarkup(keyboard))
 # 🎁 展示奖品
 async def show_rewards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
