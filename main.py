@@ -286,12 +286,3 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     executor.start_polling(dp, skip_updates=True)
 ```
-
-### 必须修改的 4 处（总结）
-
-1. `BOT_TOKEN`
-2. `FILE_ID_QRCODE`
-3. `FILE_ID_TUTORIAL`
-4. `FILE_ID_INPUT_BG`（可选）
-
-如需后续加入 **Redis / SQLite / PostgreSQL** 持久化，可在 `user_points` 和 `user_purchased` 部分替换为数据库操作。
