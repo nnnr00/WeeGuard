@@ -1,1 +1,2 @@
-pyTelegramBotAPI==4.15.4
+python-telegram-bot==20.6
+asyncpg==0.29.0
