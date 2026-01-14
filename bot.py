@@ -367,7 +367,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(add_reward_start, pattern="^add_reward$")],
+        entry_points=[CallbackQueryHandler(start, pattern="^start$")]
         states={
             ADD_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_reward_id)],
             ADD_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_reward_title)],
