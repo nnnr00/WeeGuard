@@ -361,10 +361,11 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-# 注册错误处理器
-app.add_error_handler(error_handler)
+def main():
+    from telegram.ext import ApplicationBuilder
 
-    # 奖品添加对话流程
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_reward_start, pattern="^add_reward$")],
         states={
@@ -374,7 +375,7 @@ app.add_error_handler(error_handler)
             ADD_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_reward_cost)],
         },
         fallbacks=[],
-        per_message=True  # ✅ 加这个可以避免处理按钮时出错
+        per_message=True
     )
 
     app.add_handler(conv_handler)
