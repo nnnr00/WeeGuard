@@ -36,7 +36,7 @@ ADMIN_IDS = {1480512549}
 # 【需要你修改 2/2】页面图片 file_id（可选，不需要就留空）
 # ============================================================
 WELCOME_IMAGE_FILE_ID = ""   # /start 欢迎图
-VIP_IMAGE_FILE_ID = ""       # VIP说明图
+VIP_IMAGE_FILE_ID = "AgACAgUAAxkBAAIBJ2loboOm15d-Qog2KkzAVSTLG-1eAAKaD2sbQNhBV_UKRl5JPolfAQADAgADeAADOAQ"       # VIP说明图
 WECHAT_IMAGE_FILE_ID = ""    # 微信充值页图
 ALIPAY_IMAGE_FILE_ID = ""    # 支付宝充值页图
 
