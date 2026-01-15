@@ -30,7 +30,7 @@ if not BOT_TOKEN or not DATABASE_URL:
 # 【需要你修改】管理员 Telegram user_id（可多个）
 # 用 @userinfobot 查看自己的 user_id
 # ============================================================
-ADMIN_IDS = {123456789}
+ADMIN_IDS = {1480512549}
 
 GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"
 
