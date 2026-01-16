@@ -22,7 +22,7 @@ WELCOME_GROUP_LINK = "https://t.me/WeeBearbot"  # 欢迎语主群链接
 VIP_GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"  # 会员福利群链接
 ALLOWED_WELCOME_GROUPS = [-1002520416718, -1002933211039]  # 允许欢迎的群ID（@RawDataBot查询）
 
-# 初始商品（删除VIP会员，仅保留测试商品）
+# 初始商品（仅保留测试商品）
 INITIAL_PRODUCTS = [
     {"name": "测试兑换", "price": 0, "type": "text", "content": "哈哈", "is_active": True},
 ]
@@ -63,7 +63,6 @@ async def init_db():
             PRIMARY KEY (user_id, command)
         );
     """)
-    # 初始化商品
     for p in INITIAL_PRODUCTS:
         await db_pool.execute("""
             INSERT INTO products (name, price, type, content, is_active) 
@@ -196,6 +195,71 @@ async def has_exchanged(user_id: int, item_id: int) -> bool:
         record = await conn.fetchrow("SELECT * FROM exchange_records WHERE user_id = $1 AND item_id = $2", user_id, item_id)
         return record is not None
 
+async def handle_exchange(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    item_id = int(query.data.split("_")[1])
+    item = await db_pool.fetchrow("SELECT * FROM products WHERE id = $1", item_id)
+    user = await get_user(user_id)
+
+    if not item or not item["is_active"]:
+        await query.edit_message_text(
+            "❌ 商品不存在或已下架。",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回兑换列表", callback_data="exchange")]])
+        )
+        return
+
+    if await has_exchanged(user_id, item_id):
+        await show_exchange_content(update, context, item)
+        return
+
+    if user["points"] < item["price"]:
+        await query.edit_message_text(
+            "❌ 余额不足！",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="exchange")]])
+        )
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("✅ 确认", callback_data=f"confirm_exchange_{item_id}")],
+        [InlineKeyboardButton("❌ 取消", callback_data="exchange")]
+    ]
+    await query.edit_message_text(
+        f"📌 确认兑换：{item['name']}（{item['price']}积分）？",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def confirm_exchange(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    item_id = int(query.data.split("_")[2])
+    item = await db_pool.fetchrow("SELECT * FROM products WHERE id = $1", item_id)
+    user = await get_user(user_id)
+
+    if user["points"] >= item["price"]:
+        new_points = user["points"] - item["price"]
+        await update_user(user_id, points=new_points)
+        await db_pool.execute(
+            "INSERT INTO exchange_records (user_id, item_id) VALUES ($1, $2)",
+            user_id, item_id
+        )
+        await show_exchange_content(update, context, item)
+    else:
+        await query.edit_message_text("❌ 兑换失败，积分不足！")
+
+async def show_exchange_content(update: Update, context: ContextTypes.DEFAULT_TYPE, item):
+    query = update.callback_query
+    if item["type"] == "text":
+        text = f"🎁 兑换内容：{item['content']}"
+    elif item["type"] == "image":
+        await context.bot.send_photo(chat_id=query.message.chat_id, photo=item["content"])
+        text = "✅ 兑换成功！"
+    elif item["type"] == "video":
+        await context.bot.send_video(chat_id=query.message.chat_id, video=item["content"])
+        text = "✅ 兑换成功！"
+    keyboard = [[InlineKeyboardButton("🔙 返回兑换中心", callback_data="exchange")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
 # ================= 5. 管理员系统 =================
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -300,8 +364,10 @@ def main():
     app.add_handler(CallbackQueryHandler(show_points, pattern="^my_points$"))
     app.add_handler(CallbackQueryHandler(sign_in, pattern="^sign_in$"))
     app.add_handler(CallbackQueryHandler(show_exchange, pattern="^exchange$"))
+    app.add_handler(CallbackQueryHandler(handle_exchange, pattern="^exchange_"))
+    app.add_handler(CallbackQueryHandler(confirm_exchange, pattern="^confirm_exchange_"))
 
-    # 管理员功能（可扩展）
+    # 管理员功能
     app.add_handler(CallbackQueryHandler(manage_forwards, pattern="^manage_forwards$"))
 
     print("Bot 已启动...")
