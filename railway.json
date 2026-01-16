@@ -2,12 +2,5 @@
   "build": {
     "builder": "NIXPACKS"
   },
-  "deploy": {
-    "startCommand": "python main.py",
-    "healthcheckPath": "/",
-    "healthcheckTimeout": 30
-  },
-  "environment": {
-    "PYTHON_VERSION": "3.12"
-  }
+  "start": "python main.py"
 }
