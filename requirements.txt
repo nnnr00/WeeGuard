@@ -1,2 +1,2 @@
-python-telegram-bot[updates]==20.6
-asyncpg==0.27.0 --only-binary=all  # 使用预编译版本（关键）
+pyTelegramBotAPI
+psycopg2-binary
