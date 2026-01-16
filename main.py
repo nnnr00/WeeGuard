@@ -20,7 +20,7 @@ from psycopg2.extras import RealDictCursor
 # 🎛️ 核心配置区 --- 所有需要你修改的地方都在这里
 # ==============================================
 ⚠️ 【需要你修改】替换成你自己的Telegram ID（@userinfobot可获取）
-ADMIN_USER_IDS = [123456789]  
+ADMIN_USER_IDS = [1480512549]  
 
 ⚠️ 【需要你修改】替换成你的VIP群链接
 VIP_GROUP_URL = "https://t.me/+495j5rWmApsxYzg9"
