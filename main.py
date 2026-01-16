@@ -32,28 +32,28 @@ from telegram.ext import (
 
 # File IDs (替换为你自己的 File ID，通过 /admin 获取)
 # 如果图片失效，请使用 /admin 命令重新获取并替换
-VIP_PERKS_FILE_ID = "AgACAgUAAxkBAAIBJ2loboOm15d-Qog2KkzAVSTLG-1eAAKaD2sbQNhBV_UKRl5JPolfAQADAgADeAADOAQ"
-ORDER_TUTORIAL_FILE_ID = "AgACAgUAAxkBAAIBHWlobOW8SVMC9dk6aKquMiQHPh1AAKVD2sbQNhBV9mV11AQnf1xAQADAgADeQADOAQ" # VIP订单号查找教程图
+VIP_PERKS_FILE_ID = "AgACAgUAAxkBAAIBJ2loboOm15d-Qog2KkzAVSTLG-1eAAKaD2sbQNhBV_UKRl5JPolfAQADAgADeAADOAQ" # VIP特权图片 File ID
+ORDER_TUTORIAL_FILE_ID = "AgACAgUAAxkBAAIBHWlobOW8SVMC9dk6aKquMiQHPh1AAKVD2sbQNhBV9mV11AQnf1xAQADAgADeQADOAQ" # VIP订单号查找教程图片 File ID
 WECHAT_TOPUP_QR_FILE_ID = "AgACAgUAAxkBAAIBImlobmPLtn9DWUFZJ53t1mhkVIA7AAKYD2sbQNhBV_A-2IdqoG-dAQADAgADeAADOAQ"
 WECHAT_ORDER_TUTORIAL_FILE_ID = "AgACAgUAAxkBAAIBLWlocIlhveHnlgntE7dGi1ri56i2AAKeD2sbQNhBVyZ8_L3zE7qwAQADAgADeQADOAQ"
 ALIPAY_TOPUP_QR_FILE_ID = "AgACAgUAAxkBAAIBJWlobnt_eXxhfHqg5bpF8WFwDDESAAKZD2sbQNhBVyWCVUCv9Q3iAQADAgADeAADOAQ"
 ALIPAY_ORDER_TUTORIAL_FILE_ID = "AgACAgUAAxkBAAIBMGlocJCdAlLyJie451mVeM6gi7xhAAKfD2sbQNhBV-EDx2qKNqc-AQADAgADeQADOAQ"
 
 # 会员群组链接 (替换为你自己的会员群链接)
-MEMBER_GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"
+MEMBER_GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9" # VIP会员群的邀请链接
 
 # 允许机器人发送欢迎语的群组ID列表 (替换为你的群组ID，负数)
 # 注意: 群组ID是负数，例如 -100XXXXXXXXXX
 ALLOWED_WELCOME_GROUPS = {
-    -1002520416718, # 示例群组ID 1 (替换)
-    -1002933211039  # 示例群组ID 2 (替换)
+    -1002520416718, # 示例群组ID 1 (替换为你实际的群组ID)
+    -1002933211039  # 示例群组ID 2 (替换为你实际的群组ID)
 }
 WELCOME_BONUS_POINTS = 20 # 首次入群赠送积分数量
 
 # VIP 验证相关配置
 VIP_VALIDATION_ATTEMPTS_MAX = 2 # 订单号重试次数
-VIP_VALIDATION_COOLDOWN_SECONDS = 5 * 3600  # 失败后冷却时间：5小时
-VIP_ORDER_PREFIX = "20260" # VIP订单号开头
+VIP_VALIDATION_COOLDOWN_SECONDS = 5 * 3600  # 失败后冷却时间：5小时 (单位：秒)
+VIP_ORDER_PREFIX = "20260" # VIP订单号开头 (用于内部匹配，用户不会看到此数字)
 
 # 积分获取配置
 DAILY_CHECK_IN_POINTS_MIN = 3 # 每日签到最少积分
@@ -61,22 +61,22 @@ DAILY_CHECK_IN_POINTS_MAX = 8 # 每日签到最多积分
 
 # 充值相关配置
 PAYMENT_ATTEMPTS_MAX = 2 # 充值订单号重试次数
-PAYMENT_COOLDOWN_SECONDS = 10 * 3600 # 失败后冷却时间：10小时
+PAYMENT_COOLDOWN_SECONDS = 10 * 3600 # 失败后冷却时间：10小时 (单位：秒)
 
 WECHAT_TOPUP_POINTS = 100 # 微信充值获得积分
-WECHAT_ORDER_PREFIX = "4200" # 微信订单号开头
+WECHAT_ORDER_PREFIX = "4200" # 微信订单号开头 (用于内部匹配，用户不会看到此数字)
 
 ALIPAY_TOPUP_POINTS = 100 # 支付宝充值获得积分
-ALIPAY_ORDER_PREFIX = "4768" # 支付宝订单号开头
+ALIPAY_ORDER_PREFIX = "4768" # 支付宝订单号开头 (用于内部匹配，用户不会看到此数字)
 
 # 转发消息相关配置
-FORWARDED_MESSAGE_LIFETIME_SECONDS = 20 * 60 # 转发消息自动删除时间：20分钟
-DELETE_CHECK_INTERVAL_SECONDS = 5 * 60 # 每5分钟检查一次待删除消息
+FORWARDED_MESSAGE_LIFETIME_SECONDS = 20 * 60 # 转发消息自动删除时间：20分钟 (单位：秒)
+DELETE_CHECK_INTERVAL_SECONDS = 5 * 60 # 每5分钟检查一次待删除消息 (单位：秒)
 
-# Telegram 消息链接正则表达式
+# Telegram 消息链接正则表达式 (通常无需修改)
 TELEGRAM_MESSAGE_LINK_REGEX = re.compile(r"https://t\.me/(?:c/)?(?:([\d]+)|([a-zA-Z0-9_]+))/([\d]+)")
 
-# 定义时区，这里使用上海/北京时间
+# 定义时区 (例如 'Asia/Shanghai' 代表北京时间，通常无需修改)
 TIMEZONE = pytz.timezone('Asia/Shanghai')
 
 # --- 日志设置 ---
@@ -291,10 +291,11 @@ async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"💎 **VIP特权**：验证您的VIP身份，尊享专属中转通道和会员群权益，一键畅览精彩内容！\n"
         )
         
-        if chat_id not in user_data['joined_groups']: # 确保只为该群组处理一次
-            updated_joined_groups = list(set(user_data['joined_groups']) | {chat_id})
+        # 检查用户是否已在该群组的 joined_groups 列表中，避免重复处理
+        if chat_id not in user_data['joined_groups']: 
+            updated_joined_groups = list(set(user_data['joined_groups']) | {chat_id}) # 添加当前群组ID
 
-            if not user_data['welcome_bonus_given']:
+            if not user_data['welcome_bonus_given']: # 仅在首次加入任何受监控群组时发放
                 new_points = user_data['points'] + WELCOME_BONUS_POINTS
                 new_total_acquired_points = user_data['total_acquired_points'] + WELCOME_BONUS_POINTS
                 
@@ -310,10 +311,10 @@ async def new_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             else:
                 # 只是更新 joined_groups，不重复发积分
                 await update_user_data(user_id, joined_groups=updated_joined_groups)
-                welcome_text += f"\n\n再次见到您，**{user_name}**！期待您继续活跃！"
+                welcome_text += f"\n\n再次见到您，**{user_name}**！您的积分和权益已保留。"
 
         else: # 用户已经在 joined_groups 里面，但可能由于其他原因触发了 new_chat_members，不做额外处理
-            welcome_text += f"\n\n再次见到您，**{user_name}**！期待您继续活跃！"
+            welcome_text += f"\n\n再次见到您，**{user_name}**！您的积分和权益已保留。"
             
         welcome_text += "\n\n点击下方按钮，开始您的探索之旅吧！"
         
@@ -397,7 +398,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         query = update.callback_query
         if query:
             await query.answer()
-            # 尝试编辑消息，如果原消息是图片，编辑caption
+            # 尝试编辑消息，如果原消息是图片，发送新消息并删除旧消息，因为edit_message_text不能改变消息类型
             if query.message.photo:
                 await query.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
                 try:
@@ -572,7 +573,8 @@ async def top_up_points_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.edit_message_text(
-        top_up_markup=reply_markup,
+        top_up_text,
+        reply_markup=reply_markup,
         parse_mode='Markdown'
     )
     return ConversationHandler.END
@@ -783,7 +785,7 @@ async def process_alipay_order_id(update: Update, context: ContextTypes.DEFAULT_
         )
         return ConversationHandler.END
     else:
-        await update_user_data(user_id, alipay_attempts=current_attempts + 1)
+        await update.user_data(user_id, alipay_attempts=current_attempts + 1)
         if current_attempts + 1 < PAYMENT_ATTEMPTS_MAX:
             remaining_attempts = PAYMENT_ATTEMPTS_MAX - (current_attempts + 1)
             await update.message.reply_text(f"❌ 订单识别失败，请核对后重试。您还剩下 {remaining_attempts} 次机会。")
@@ -890,911 +892,4 @@ async def confirm_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         has_redeemed = await conn.fetchrow('SELECT id FROM redemptions WHERE user_id = $1 AND product_id = $2', user_id, product_id)
 
     if not product:
-        await query.edit_message_text("❌ 商品不存在或已下架。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回兑换列表", callback_data="show_redeem_menu")]]))
-        return ConversationHandler.END
-    
-    if has_redeemed: 
-        await show_redeemed_content(update, product)
-        await show_redeem_menu(update, context) 
-        return ConversationHandler.END
-
-    if user_data['points'] < product['points_cost']:
-        await query.edit_message_text("❌ 余额不足，无法兑换该商品。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回兑换列表", callback_data="show_redeem_menu")]]))
-        return ConversationHandler.END
-    
-    new_points = user_data['points'] - product['points_cost']
-    await update_user_data(user_id, points=new_points)
-    await add_transaction(user_id, 'redeem', -product['points_cost'], f"兑换商品 '{product['product_id']}' 消耗 {product['points_cost']} 积分")
-
-    async with db_pool.acquire() as conn:
-        await conn.execute(
-            'INSERT INTO redemptions (user_id, product_id, points_cost_at_redemption) VALUES ($1, $2, $3)',
-            user_id, product_id, product['points_cost']
-        )
-    
-    del context.user_data['redeem_product_id'] 
-    
-    await query.message.reply_text(f"🎉 恭喜您成功兑换了商品 `{product['product_id']}`！", parse_mode='Markdown')
-    await show_redeemed_content(update, product) 
-    await show_redeem_menu(update, context) 
-    return ConversationHandler.END
-
-
-async def show_redeemed_content(update: Update, product) -> None:
-    """显示已兑换商品的内容。"""
-    content_text = f"✨ **您的兑换内容如下** ✨\n\n`{product['product_id']}`:\n\n"
-    
-    # 根据是query还是message触发，选择回复方式
-    if update.callback_query:
-        reply_func = update.callback_query.message.reply_text
-        reply_photo_func = update.callback_query.message.reply_photo
-        reply_video_func = update.callback_query.message.reply_video
-    else: # 可能是admin直接测试内容
-        reply_func = update.message.reply_text
-        reply_photo_func = update.message.reply_photo
-        reply_video_func = update.message.reply_video
-
-    if product['type'] == 'text':
-        await reply_func(content_text + product['content'], parse_mode='Markdown')
-    elif product['type'] == 'photo':
-        await reply_photo_func(product['content'], caption=content_text, parse_mode='Markdown')
-    elif product['type'] == 'video':
-        await reply_video_func(product['content'], caption=content_text, parse_mode='Markdown')
-    else:
-        await reply_func("🤔 无法识别的商品类型。", parse_mode='Markdown')
-
-# --- [8] 我的余额和积分排行榜 ---
-async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """显示用户积分余额和历史记录按钮。"""
-    query = update.callback_query
-    await query.answer()
-
-    user_id = query.from_user.id
-    user_data = await get_user_data(user_id)
-
-    balance_text = (
-        f"💼 **我的余额** 💼\n\n"
-        f"您当前的积分余额：`{user_data['points']}` 积分\n\n"
-        "点击下方按钮查看积分明细。"
-    )
-    keyboard = [
-        [InlineKeyboardButton("📊 积分明细 (获得)", callback_data="show_acquisition_history")],
-        [InlineKeyboardButton("📉 积分明细 (消耗)", callback_data="show_usage_history")],
-        [InlineKeyboardButton("🔙 返回首页", callback_data="start_command")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        balance_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    return ConversationHandler.END
-
-async def show_acquisition_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """显示积分获得记录。"""
-    query = update.callback_query
-    await query.answer()
-
-    user_id = query.from_user.id
-    async with db_pool.acquire() as conn:
-        transactions = await conn.fetch(
-            'SELECT * FROM transactions WHERE user_id = $1 AND amount > 0 ORDER BY timestamp DESC LIMIT 10',
-            user_id
-        )
-    
-    history_text = "📊 **您的积分获得记录** 📊\n\n"
-    if not transactions:
-        history_text += "暂无获得记录。"
-    else:
-        for t in transactions:
-            history_text += f"📅 {t['timestamp'].astimezone(TIMEZONE).strftime('%Y-%m-%d %H:%M')}\n"
-            history_text += f"   ➕ {t['description']}：获得 `{t['amount']}` 积分\n\n"
-    
-    keyboard = [[InlineKeyboardButton("🔙 返回我的余额", callback_data="show_balance")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        history_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    return ConversationHandler.END
-
-async def show_usage_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """显示积分消耗记录。"""
-    query = update.callback_query
-    await query.answer()
-
-    user_id = query.from_user.id
-    async with db_pool.acquire() as conn:
-        transactions = await conn.fetch(
-            'SELECT * FROM transactions WHERE user_id = $1 AND amount < 0 ORDER BY timestamp DESC LIMIT 10',
-            user_id
-        )
-    
-    history_text = "📉 **您的积分消耗记录** 📉\n\n"
-    if not transactions:
-        history_text += "暂无消耗记录。"
-    else:
-        for t in transactions:
-            history_text += f"📅 {t['timestamp'].astimezone(TIMEZONE).strftime('%Y-%m-%d %H:%M')}\n"
-            history_text += f"   ➖ {t['description']}：消耗 `{abs(t['amount'])}` 积分\n\n"
-    
-    keyboard = [[InlineKeyboardButton("🔙 返回我的余额", callback_data="show_balance")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        history_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    return ConversationHandler.END
-
-async def show_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """显示积分排行榜。"""
-    query = update.callback_query
-    await query.answer()
-
-    user_id = query.from_user.id
-    
-    async with db_pool.acquire() as conn:
-        # 获取前10名
-        top_users = await conn.fetch(
-            'SELECT id, total_acquired_points FROM users ORDER BY total_acquired_points DESC LIMIT 10'
-        )
-        # 获取当前用户的排名
-        user_rank_data = await conn.fetchrow(
-            '''
-            SELECT rank, id, total_acquired_points
-            FROM (
-                SELECT RANK() OVER (ORDER BY total_acquired_points DESC) as rank, id, total_acquired_points
-                FROM users
-            ) AS ranked_users
-            WHERE id = $1
-            ''', user_id
-        )
-    
-    leaderboard_text = "🏆 **积分排行榜** 🏆 (基于总获得积分)\n\n"
-    if not top_users:
-        leaderboard_text += "暂无数据。\n"
-    else:
-        for i, user in enumerate(top_users):
-            is_current_user = " (您)" if user['id'] == user_id else ""
-            leaderboard_text += f"*{i+1}.* 用户`{user['id']}`: `{user['total_acquired_points']}` 积分 {is_current_user}\n"
-    
-    if user_rank_data:
-        leaderboard_text += (
-            f"\n---您的排名---\n"
-            f"*{user_rank_data['rank']}.* 用户`{user_rank_data['id']}`: `{user_rank_data['total_acquired_points']}` 积分\n"
-        )
-    else:
-        leaderboard_text += "\n您暂未上榜。"
-
-    keyboard = [[InlineKeyboardButton("🔙 返回首页", callback_data="start_command")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        leaderboard_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    return ConversationHandler.END
-
-# --- [9] 管理员功能 ---
-async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理 /admin 命令，仅管理员可用。"""
-    if str(update.effective_user.id) != get_env_variable('ADMIN_ID'):
-        await update.message.reply_text("抱歉，您不是管理员。")
-        return
-
-    admin_text = (
-        "✨ **管理员面板** ✨\n\n"
-        "👋 欢迎，亲爱的管理员小卫！\n"
-        "在这里您可以管理商品、配置频道转发命令、获取文件ID等。\n\n"
-    )
-    keyboard = [
-        [InlineKeyboardButton("🔑 获取 File ID", callback_data="admin_file_id")],
-        [InlineKeyboardButton("📦 管理商品", callback_data="admin_manage_products")],
-        [InlineKeyboardButton("📺 频道转发库", callback_data="admin_fwd_cmd_menu")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        admin_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-
-async def admin_prompt_for_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """管理员点击“获取 File ID”按钮后的提示。"""
-    query = update.callback_query
-    await query.answer()
-    if str(query.from_user.id) == get_env_variable('ADMIN_ID'):
-        await query.edit_message_text("请现在发送您想要获取 File ID 的图片、视频或文件。")
-    else:
-        await query.edit_message_text("您不是管理员。")
-
-async def admin_get_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理管理员发送的媒体文件，回复其 File ID。"""
-    if str(update.effective_user.id) != get_env_variable('ADMIN_ID'):
-        return 
-
-    file_id = None
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id 
-    elif update.message.document:
-        file_id = update.message.document.file_id
-    elif update.message.video:
-        file_id = update.message.video.file_id
-    
-    if file_id:
-        await update.message.reply_text(f"文件 File ID: `{file_id}`", parse_mode='Markdown')
-    else:
-        await update.message.reply_text("未检测到图片、视频或文件。请发送图片、视频或文件以获取其 File ID。")
-
-# --- [10] 管理员：商品管理功能 ---
-async def admin_manage_products_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """管理员商品管理主菜单。"""
-    query = update.callback_query
-    await query.answer()
-
-    keyboard = [
-        [InlineKeyboardButton("➕ 添加新商品", callback_data="admin_add_product_start")],
-        [InlineKeyboardButton("✍️ 编辑/删除商品", callback_data="admin_list_products_to_manage")],
-        [InlineKeyboardButton("🔙 返回管理员面板", callback_data="admin_back_to_main")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        "📦 **商品管理中心** 📦\n\n请选择您的操作：",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    return ConversationHandler.END
-
-async def admin_add_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """开始添加新商品流程。"""
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("请输入新商品的唯一ID (例如：`test_item_001`)：", parse_mode='Markdown')
-    return ADMIN_PRODUCT_ADD_ID
-
-async def admin_receive_product_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """接收商品ID。"""
-    product_id = update.message.text.strip()
-    if not product_id:
-        await update.message.reply_text("商品ID不能为空，请重新输入。")
-        return ADMIN_PRODUCT_ADD_ID
-    
-    async with db_pool.acquire() as conn:
-        existing_product = await conn.fetchrow('SELECT product_id FROM products WHERE product_id = $1', product_id)
-        if existing_product:
-            await update.message.reply_text(f"商品ID `{product_id}` 已存在，请重新输入一个唯一的ID。", parse_mode='Markdown')
-            return ADMIN_PRODUCT_ADD_ID
-            
-    context.user_data['temp_product_id'] = product_id
-    keyboard = [
-        [InlineKeyboardButton("文本", callback_data="set_product_type:text")],
-        [InlineKeyboardButton("图片", callback_data="set_product_type:photo")],
-        [InlineKeyboardButton("视频", callback_data="set_product_type:video")],
-        [InlineKeyboardButton("↩️ 取消添加", callback_data="admin_manage_products")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        f"商品ID设置为：`{product_id}`\n请选择商品内容类型：", 
-        reply_markup=reply_markup, 
-        parse_mode='Markdown'
-    )
-    return ADMIN_PRODUCT_ADD_TYPE
-
-async def admin_receive_product_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """接收商品类型。"""
-    query = update.callback_query
-    await query.answer()
-    product_type = query.data.split(':')[1]
-    context.user_data['temp_product_type'] = product_type
-
-    if product_type == 'text':
-        await query.edit_message_text("请输入商品内容文本：")
-    elif product_type in ['photo', 'video']:
-        await query.edit_message_text(f"请发送商品内容（{product_type}），机器人将自动获取其 File ID。")
-    return ADMIN_PRODUCT_ADD_CONTENT
-
-async def admin_receive_product_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """接收商品内容（文本或文件ID）。"""
-    product_type = context.user_data.get('temp_product_type')
-    product_content = None
-
-    if product_type == 'text':
-        if update.message.text:
-            product_content = update.message.text.strip()
-        else:
-            await update.message.reply_text("请发送文本内容。")
-            return ADMIN_PRODUCT_ADD_CONTENT
-    elif product_type == 'photo':
-        if update.message.photo:
-            product_content = update.message.photo[-1].file_id
-        else:
-            await update.message.reply_text("请发送图片。")
-            return ADMIN_PRODUCT_ADD_CONTENT
-    elif product_type == 'video':
-        if update.message.video:
-            product_content = update.message.video.file_id
-        else:
-            await update.message.reply_text("请发送视频。")
-            return ADMIN_PRODUCT_ADD_CONTENT
-    
-    if not product_content:
-        await update.message.reply_text("无法获取内容，请重试。")
-        return ADMIN_PRODUCT_ADD_CONTENT
-        
-    context.user_data['temp_product_content'] = product_content
-    await update.message.reply_text("请输入商品所需积分（必须是整数）：")
-    return ADMIN_PRODUCT_ADD_POINTS_COST
-
-async def admin_receive_product_points_cost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """接收商品所需积分并保存商品。"""
-    try:
-        points_cost = int(update.message.text.strip())
-        if points_cost < 0:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("积分必须是一个非负整数，请重新输入。")
-        return ADMIN_PRODUCT_ADD_POINTS_COST
-    
-    product_id = context.user_data.get('temp_product_id')
-    product_type = context.user_data.get('temp_product_type')
-    product_content = context.user_data.get('temp_product_content')
-
-    if not all([product_id, product_type, product_content]):
-        await update.message.reply_text("商品信息不完整，请从头重新添加。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回商品管理", callback_data="admin_manage_products")]]) )
-        return ConversationHandler.END
-
-    async with db_pool.acquire() as conn:
-        await conn.execute(
-            'INSERT INTO products (product_id, type, content, points_cost) VALUES ($1, $2, $3, $4)',
-            product_id, product_type, product_content, points_cost
-        )
-    
-    for key in ['temp_product_id', 'temp_product_type', 'temp_product_content']:
-        if key in context.user_data:
-            del context.user_data[key]
-
-    await update.message.reply_text(
-        f"✅ 商品 `{product_id}` 添加成功！",
-        parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回商品管理", callback_data="admin_manage_products")]])
-    )
-    return ConversationHandler.END
-
-async def admin_list_products_to_manage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """列出所有商品供管理员编辑/删除。"""
-    query = update.callback_query
-    await query.answer()
-
-    async with db_pool.acquire() as conn:
-        products = await conn.fetch('SELECT product_id, is_active FROM products ORDER BY created_at')
-    
-    keyboard = []
-    if not products:
-        await query.edit_message_text("暂无商品可管理。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回商品管理", callback_data="admin_manage_products")]]) )
-        return ConversationHandler.END
-    
-    for product in products:
-        status = "🟢 上架中" if product['is_active'] else "🔴 已下架"
-        keyboard.append([InlineKeyboardButton(f"{product['product_id']} ({status})", callback_data=f"admin_select_product:{product['product_id']}")])
-
-    keyboard.append([InlineKeyboardButton("🔙 返回商品管理", callback_data="admin_manage_products")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        "✍️ **选择要管理的商品：**\n\n点击商品ID进入管理界面。",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    return ConversationHandler.END
-
-async def admin_select_product_to_manage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """管理员选择特定商品进行管理。"""
-    query = update.callback_query
-    await query.answer()
-
-    product_id = query.data.split(':')[1]
-    context.user_data['admin_managing_product_id'] = product_id
-
-    async with db_pool.acquire() as conn:
-        product = await conn.fetchrow('SELECT * FROM products WHERE product_id = $1', product_id)
-    
-    if not product:
-        await query.edit_message_text("❌ 商品不存在。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回商品列表", callback_data="admin_list_products_to_manage")]]) )
-        return ConversationHandler.END
-    
-    status_text = "🟢 上架中" if product['is_active'] else "🔴 已下架"
-    toggle_action = "下架" if product['is_active'] else "上架"
-
-    product_details = (
-        f"**商品详情：** `{product['product_id']}`\n"
-        f"类型：`{product['type']}`\n"
-        f"内容：`{product['content'][:50]}...` (过长则截断)\n" 
-        f"所需积分：`{product['points_cost']}`\n"
-        f"状态：{status_text}\n"
-    )
-    keyboard = [
-        [InlineKeyboardButton(f"切换为 {toggle_action}", callback_data=f"admin_toggle_product_status:{product_id}")],
-        [InlineKeyboardButton("🗑️ 删除商品", callback_data=f"admin_delete_product:{product_id}")],
-        [InlineKeyboardButton("🔙 返回商品列表", callback_data="admin_list_products_to_manage")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(product_details, reply_markup=reply_markup, parse_mode='Markdown')
-    return ConversationHandler.END
-
-async def admin_toggle_product_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """管理员切换商品上架/下架状态。"""
-    query = update.callback_query
-    await query.answer()
-
-    product_id = query.data.split(':')[1]
-
-    async with db_pool.acquire() as conn:
-        current_status = await conn.fetchval('SELECT is_active FROM products WHERE product_id = $1', product_id)
-        new_status = not current_status
-        await conn.execute('UPDATE products SET is_active = $1 WHERE product_id = $2', new_status, product_id)
-    
-    status_message = "已上架" if new_status else "已下架"
-    await query.edit_message_text(
-        f"✅ 商品 `{product_id}` 已成功切换为 `{status_message}`。",
-        parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回商品列表", callback_data="admin_list_products_to_manage")]])
-    )
-    return ConversationHandler.END
-
-async def admin_delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """管理员删除商品。"""
-    query = update.callback_query
-    await query.answer("商品删除前将清除所有兑换记录，请谨慎操作！", show_alert=True) 
-
-    product_id = query.data.split(':')[1]
-
-    async with db_pool.acquire() as conn:
-        await conn.execute('DELETE FROM redemptions WHERE product_id = $1', product_id)
-        await conn.execute('DELETE FROM products WHERE product_id = $1', product_id)
-    
-    await query.edit_message_text(
-        f"✅ 商品 `{product_id}` 及相关兑换记录已成功删除。",
-        parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回商品列表", callback_data="admin_list_products_to_manage")]])
-    )
-    return ConversationHandler.END
-
-# --- [11] 管理员：频道转发库功能 ---
-async def admin_fwd_cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """管理员频道转发库主菜单。"""
-    query = update.callback_query
-    await query.answer()
-
-    keyboard = [
-        [InlineKeyboardButton("➕ 添加转发命令", callback_data="admin_add_fwd_cmd_start")],
-        [InlineKeyboardButton("✍️ 管理转发命令", callback_data="admin_list_fwd_cmds_to_manage")],
-        [InlineKeyboardButton("🔙 返回管理员面板", callback_data="admin_back_to_main")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        "📺 **频道转发库** 📺\n\n请选择您的操作：",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    return ConversationHandler.END
-
-async def admin_add_fwd_cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """开始添加转发命令流程。"""
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        "请输入新的转发命令名称 (例如：`/channel_content` 或 `/我的频道`，支持中文和大小写)。\n"
-        "**请勿使用机器人内置命令**，例如 `/start`, `/admin`。",
-        parse_mode='Markdown'
-    )
-    return ADMIN_FWD_CMD_ADD_NAME
-
-async def admin_receive_fwd_cmd_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """接收转发命令名称。"""
-    command_name_input = update.message.text.strip()
-    
-    if not command_name_input.startswith('/'):
-        command_name_input = '/' + command_name_input
-    
-    command_name_lower = command_name_input.lower()
-    
-    reserved_commands = {"/start", "/admin"}
-    if command_name_lower in reserved_commands:
-        await update.message.reply_text(f"命令名称 `{command_name_input}` 为机器人内置命令，请勿使用。请重新输入。", parse_mode='Markdown')
-        return ADMIN_FWD_CMD_ADD_NAME
-    
-    if not command_name_input or len(command_name_input) < 2:
-        await update.message.reply_text("命令名称不能为空且至少包含一个字符（斜杠除外），请重新输入。")
-        return ADMIN_FWD_CMD_ADD_NAME
-    
-    async with db_pool.acquire() as conn:
-        existing_cmd = await conn.fetchrow('SELECT command_name FROM forward_commands WHERE command_name = $1', command_name_lower) # 数据库存小写
-        if existing_cmd:
-            await update.message.reply_text(f"转发命令 `{command_name_input}` 已存在，请重新输入一个唯一的命令名称。", parse_mode='Markdown')
-            return ADMIN_FWD_CMD_ADD_NAME
-            
-    context.user_data['temp_fwd_command_name'] = command_name_input # 存储原始输入格式，但实际匹配会用小写
-    await update.message.reply_text(
-        f"命令名称设置为：`{command_name_input}`\n\n"
-        "请粘贴您要转发的频道消息链接，每行一个（最多支持50条）。\n"
-        "例如：\n"
-        "`https://t.me/c/123456789/100`\n"
-        "`https://t.me/public_channel/200`\n"
-        "**重要提示：** 请确保机器人是这些频道的管理员且拥有**转发频道内容**的权限。",
-        parse_mode='Markdown'
-    )
-    return ADMIN_FWD_CMD_ADD_LINKS
-
-async def admin_receive_fwd_message_links(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """接收转发消息链接，解析并保存。"""
-    links_input = update.message.text.strip()
-    raw_links = [link.strip() for link in links_input.split('\n') if link.strip()]
-
-    if not raw_links:
-        await update.message.reply_text("没有检测到消息链接，请重新输入。")
-        return ADMIN_FWD_CMD_ADD_LINKS
-    if len(raw_links) > 50:
-        await update.message.reply_text(f"消息链接数量过多（{len(raw_links)}条），最多支持50条。请精简后重新输入。")
-        return ADMIN_FWD_CMD_ADD_LINKS
-    
-    parsed_messages = []
-    invalid_links = []
-    
-    for link in raw_links:
-        match = TELEGRAM_MESSAGE_LINK_REGEX.search(link)
-        if match:
-            chat_identifier = match.group(1) or match.group(2) # Numerical or username
-            message_id = int(match.group(3))
-
-            chat_id = None
-            if chat_identifier.isdigit(): # Numerical chat ID (private channel)
-                chat_id = int("-100" + chat_identifier) 
-            elif chat_identifier: # Username (public channel)
-                chat_id = "@" + chat_identifier
-            
-            if chat_id:
-                parsed_messages.append({'chat_id': str(chat_id), 'message_id': message_id})
-            else:
-                invalid_links.append(link)
-        else:
-            invalid_links.append(link)
-    
-    if invalid_links:
-        await update.message.reply_text(
-            f"以下链接格式不正确或无法解析，请检查后重新输入：\n`{'`\n`'.join(invalid_links)}`",
-            parse_mode='Markdown'
-        )
-        return ADMIN_FWD_CMD_ADD_LINKS
-
-    if not parsed_messages:
-        await update.message.reply_text("没有有效的消息链接被解析出来，请重新输入。")
-        return ADMIN_FWD_CMD_ADD_LINKS
-
-    command_name_input = context.user_data.get('temp_fwd_command_name')
-    if not command_name_input:
-        await update.message.reply_text("命令名称丢失，请从头重新添加命令。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回频道转发库", callback_data="admin_fwd_cmd_menu")]]) )
-        return ConversationHandler.END
-
-    async with db_pool.acquire() as conn:
-        await conn.execute(
-            'INSERT INTO forward_commands (command_name, message_links, parsed_messages, created_by) VALUES ($1, $2, $3, $4)',
-            command_name_input.lower(), raw_links, parsed_messages, update.effective_user.id # 存储小写命令名
-        )
-    
-    for key in ['temp_fwd_command_name']:
-        if key in context.user_data:
-            del context.user_data[key]
-
-    await update.message.reply_text(
-        f"✅ 转发命令 `{command_name_input}` 添加成功！包含 {len(parsed_messages)} 条消息。",
-        parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回频道转发库", callback_data="admin_fwd_cmd_menu")]])
-    )
-    return ConversationHandler.END
-
-async def admin_list_fwd_cmds_to_manage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """列出所有转发命令供管理员管理。"""
-    query = update.callback_query
-    await query.answer()
-
-    async with db_pool.acquire() as conn:
-        commands = await conn.fetch('SELECT command_name FROM forward_commands ORDER BY created_at')
-    
-    keyboard = []
-    if not commands:
-        await query.edit_message_text("暂无转发命令。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回频道转发库", callback_data="admin_fwd_cmd_menu")]]) )
-        return ConversationHandler.END
-    
-    for cmd in commands:
-        # 显示存储的命令名 (小写)
-        keyboard.append([InlineKeyboardButton(cmd['command_name'], callback_data=f"admin_select_fwd_cmd:{cmd['command_name']}")])
-
-    keyboard.append([InlineKeyboardButton("🔙 返回频道转发库", callback_data="admin_fwd_cmd_menu")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        "✍️ **选择要管理的转发命令：**",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    return ConversationHandler.END
-
-async def admin_select_fwd_cmd_to_manage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """管理员选择特定转发命令进行管理。"""
-    query = update.callback_query
-    await query.answer()
-
-    cmd_name_lower = query.data.split(':')[1] # This will be the lowercased version stored in DB
-    context.user_data['admin_managing_fwd_cmd_name'] = cmd_name_lower
-
-    async with db_pool.acquire() as conn:
-        command_data = await conn.fetchrow('SELECT command_name, message_links FROM forward_commands WHERE command_name = $1', cmd_name_lower)
-    
-    if not command_data:
-        await query.edit_message_text("❌ 转发命令不存在。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回命令列表", callback_data="admin_list_fwd_cmds_to_manage")]]) )
-        return ConversationHandler.END
-    
-    links_text = "\n".join(command_data['message_links'])
-
-    cmd_details = (
-        f"**转发命令详情：** `{command_data['command_name']}`\n\n"
-        f"消息链接 ({len(command_data['message_links'])} 条)：\n`{links_text}`"
-    )
-    keyboard = [
-        [InlineKeyboardButton("🗑️ 删除该命令", callback_data=f"admin_confirm_delete_fwd_cmd:{cmd_name_lower}")],
-        [InlineKeyboardButton("🔙 返回命令列表", callback_data="admin_list_fwd_cmds_to_manage")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(cmd_details, reply_markup=reply_markup, parse_mode='Markdown')
-    return ConversationHandler.END
-
-async def admin_confirm_delete_fwd_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """管理员确认删除转发命令。"""
-    query = update.callback_query
-    await query.answer("确认删除此转发命令？", show_alert=True)
-
-    cmd_name_lower = query.data.split(':')[1]
-
-    keyboard = [
-        [InlineKeyboardButton(f"✅ 确认删除 {cmd_name_lower}", callback_data=f"admin_delete_fwd_cmd_final:{cmd_name_lower}")],
-        [InlineKeyboardButton("↩️ 取消", callback_data=f"admin_select_fwd_cmd:{cmd_name_lower}")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        f"您确定要删除转发命令 `{cmd_name_lower}` 吗？此操作不可撤销。",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    return ADMIN_FWD_CMD_MANAGE_CONFIRM_DELETE
-
-async def admin_delete_fwd_cmd_final(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """管理员最终执行删除转发命令。"""
-    query = update.callback_query
-    await query.answer()
-
-    cmd_name_lower = query.data.split(':')[1]
-
-    async with db_pool.acquire() as conn:
-        await conn.execute('DELETE FROM forward_commands WHERE command_name = $1', cmd_name_lower)
-    
-    await query.edit_message_text(
-        f"✅ 转发命令 `{cmd_name_lower}` 已成功删除。",
-        parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回转发命令列表", callback_data="admin_list_fwd_cmds_to_manage")]])
-    )
-    return ConversationHandler.END
-
-# --- [12] 用户触发动态转发命令 ---
-async def handle_dynamic_forward_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理用户发送的动态转发命令。"""
-    if not update.message or not update.message.text:
-        return
-
-    # Extract command, ignoring arguments and making it lowercase for matching
-    command_text = update.message.text.split(' ')[0].lower() 
-    user_chat_id = update.effective_chat.id
-    original_message_id = update.message.message_id
-
-    # Check if the command is /start or /admin (built-in commands) to avoid re-processing
-    # These are handled by specific CommandHandlers
-    reserved_commands = {"/start", "/admin"}
-    if command_text in reserved_commands:
-        return
-
-    async with db_pool.acquire() as conn:
-        command_data = await conn.fetchrow('SELECT parsed_messages FROM forward_commands WHERE command_name = $1', command_text)
-
-    if command_data:
-        # 1. 删除用户发送的命令消息
-        try:
-            await context.bot.delete_message(chat_id=user_chat_id, message_id=original_message_id)
-        except Exception as e:
-            logger.warning(f"Failed to delete user's command message {original_message_id} in chat {user_chat_id}: {e}")
-
-        # 2. 转发消息并记录以便定时删除
-        messages_to_copy = command_data['parsed_messages']
-        deletion_time = datetime.now(TIMEZONE) + timedelta(seconds=FORWARDED_MESSAGE_LIFETIME_SECONDS)
-        
-        for msg_info in messages_to_copy:
-            try:
-                copied_message = await context.bot.copy_message(
-                    chat_id=user_chat_id,
-                    from_chat_id=msg_info['chat_id'], 
-                    message_id=msg_info['message_id']
-                )
-                async with db_pool.acquire() as conn:
-                    await conn.execute(
-                        'INSERT INTO scheduled_deletions (chat_id, message_id, deletion_time) VALUES ($1, $2, $3)',
-                        copied_message.chat_id, copied_message.message_id, deletion_time
-                    )
-            except Exception as e:
-                logger.error(f"Failed to copy message from {msg_info['chat_id']}/{msg_info['message_id']} to {user_chat_id}: {e}")
-                await context.bot.send_message(
-                    chat_id=user_chat_id,
-                    text="❌ 抱歉，部分内容暂时无法转发。请稍后再试或联系客服。\n"
-                         "请确保机器人是该频道的管理员且拥有转发权限。",
-                    parse_mode='Markdown'
-                )
-        
-        # 3. 成功转发后，发送确认消息并提供跳转首页按钮
-        await context.bot.send_message(
-            chat_id=user_chat_id,
-            text="✨ 内容已成功发送！请注意消息存在时间限制。",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 返回首页", callback_data="start_command")]])
-        )
-    # else: If no dynamic command matches, this handler implicitly finishes, allowing other handlers to run if applicable.
-
-# --- [13] 错误处理器 ---
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """记录所有未处理的错误。"""
-    logger.error(f'Update "{update}" caused error "{context.error}"')
-    if update.effective_message:
-        await update.effective_message.reply_text("🚧 抱歉，机器人遇到了一些问题，请稍后再试。")
-
-# --- [14] 主函数和启动逻辑 ---
-async def post_init(application: Application) -> None:
-    """Application 初始化后执行，用于数据库连接和启动定时任务。"""
-    await init_db_pool()
-    job_queue: JobQueue = application.job_queue
-    job_queue.run_repeating(delete_old_messages_job, interval=DELETE_CHECK_INTERVAL_SECONDS, first=5)
-    logger.info("Delete old messages job scheduled.")
-
-async def post_shutdown(application: Application) -> None:
-    """Application 关闭前执行，用于关闭数据库连接。"""
-    await close_db_pool()
-
-def main() -> None:
-    """主函数，设置并运行机器人。"""
-    BOT_TOKEN = get_env_variable('BOT_TOKEN')
-    
-    application = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
-
-    # ConversationHandler 用于管理多步交互
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", start_command),
-            CallbackQueryHandler("start_validation", start_validation_flow),
-            CallbackQueryHandler("ask_vip_order_id", ask_vip_order_id),
-            CallbackQueryHandler("confirm_wechat_payment", confirm_wechat_payment),
-            CallbackQueryHandler("confirm_alipay_payment", confirm_alipay_payment),
-            CallbackQueryHandler(f"select_redeem_item", select_redeem_item, pattern=r"^select_redeem_item:.*$"),
-            CallbackQueryHandler("confirm_redeem", confirm_redeem),
-            # Admin conversation entry points
-            CallbackQueryHandler("admin_add_product_start", admin_add_product_start),
-            CallbackQueryHandler("admin_add_fwd_cmd_start", admin_add_fwd_cmd_start),
-        ],
-        states={
-            ASKING_FOR_VIP_ORDER_ID: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_vip_order_id)
-            ],
-            ASKING_WECHAT_ORDER_ID: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_wechat_order_id)
-            ],
-            ASKING_ALIPAY_ORDER_ID: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_alipay_order_id)
-            ],
-            CONFIRM_REDEMPTION: [
-                CallbackQueryHandler("confirm_redeem", confirm_redeem),
-                CallbackQueryHandler("show_redeem_menu", show_redeem_menu),
-            ],
-            # Admin Product Add States
-            ADMIN_PRODUCT_ADD_ID: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_product_id),
-            ],
-            ADMIN_PRODUCT_ADD_TYPE: [
-                CallbackQueryHandler(r"^set_product_type:.*$", admin_receive_product_type),
-            ],
-            ADMIN_PRODUCT_ADD_CONTENT: [
-                MessageHandler((filters.TEXT | filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, admin_receive_product_content),
-            ],
-            ADMIN_PRODUCT_ADD_POINTS_COST: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_product_points_cost),
-            ],
-            # Admin Forward Command States
-            ADMIN_FWD_CMD_ADD_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_fwd_cmd_name),
-            ],
-            ADMIN_FWD_CMD_ADD_LINKS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_receive_fwd_message_links),
-            ],
-            ADMIN_FWD_CMD_MANAGE_CONFIRM_DELETE: [
-                CallbackQueryHandler(r"^admin_delete_fwd_cmd_final:.*$", admin_delete_fwd_cmd_final),
-                CallbackQueryHandler(r"^admin_select_fwd_cmd:.*$", admin_select_fwd_cmd_to_manage), # 取消删除
-            ]
-        },
-        fallbacks=[
-            CommandHandler("start", start_command), 
-            CallbackQueryHandler("start_command", start_command), 
-            CallbackQueryHandler("show_points_menu", show_points_menu), 
-            CallbackQueryHandler("daily_check_in", daily_check_in),
-            CallbackQueryHandler("top_up_points_menu", top_up_points_menu),
-            CallbackQueryHandler("show_redeem_menu", show_redeem_menu),
-            CallbackQueryHandler("show_wechat_top_up", show_wechat_top_up),
-            CallbackQueryHandler("show_alipay_top_up", show_alipay_top_up),
-            CallbackQueryHandler("show_balance", show_balance),
-            CallbackQueryHandler("show_acquisition_history", show_acquisition_history),
-            CallbackQueryHandler("show_usage_history", show_usage_history),
-            CallbackQueryHandler("show_leaderboard", show_leaderboard),
-            # Admin fallbacks
-            CallbackQueryHandler("admin_back_to_main", admin_command),
-            CallbackQueryHandler("admin_manage_products", admin_manage_products_menu),
-            CallbackQueryHandler("admin_fwd_cmd_menu", admin_fwd_cmd_menu),
-            CallbackQueryHandler("admin_list_products_to_manage", admin_list_products_to_manage),
-            CallbackQueryHandler("admin_list_fwd_cmds_to_manage", admin_list_fwd_cmds_to_manage),
-            # 通用取消，防止用户卡在某个输入流程
-            # 这个 MessageHandler 应该放在最后，以确保其他更具体的 MessageHandler 优先
-            MessageHandler(filters.COMMAND, start_command),
-            # 如果不是命令，但是 ConversationHandler 的当前状态需要文本输入，且用户输入了其他东西，
-            # 那么这个 fallback 会被触发。这里我们不处理它，让它继续。
-            # 或者可以添加一个 generic_message_handler_fallback，但目前不是必须的
-        ],
-        allow_reentry=True,
-    )
-    application.add_handler(conv_handler)
-
-    # 独立的处理器 (某些操作即使在对话中也能直接触发)
-    application.add_handler(CommandHandler("admin", admin_command))
-    application.add_handler(CallbackQueryHandler("admin_file_id", admin_prompt_for_file_id))
-    # admin_get_file_id 放在所有 CommandHandler/CallbackQueryHandler 之后，以免它干扰其他指令
-    application.add_handler(MessageHandler(filters.PHOTO | filters.DOCUMENT | filters.VIDEO, admin_get_file_id, block=False)) 
-
-    # 管理员按钮的回调
-    application.add_handler(CallbackQueryHandler("admin_back_to_main", admin_command))
-    application.add_handler(CallbackQueryHandler("admin_manage_products", admin_manage_products_menu))
-    application.add_handler(CallbackQueryHandler("admin_list_products_to_manage", admin_list_products_to_manage))
-    application.add_handler(CallbackQueryHandler(r"^admin_select_product:.*$", admin_select_product_to_manage))
-    application.add_handler(CallbackQueryHandler(r"^admin_toggle_product_status:.*$", admin_toggle_product_status))
-    application.add_handler(CallbackQueryHandler(r"^admin_delete_product:.*$", admin_delete_product))
-    
-    application.add_handler(CallbackQueryHandler("admin_fwd_cmd_menu", admin_fwd_cmd_menu))
-    application.add_handler(CallbackQueryHandler("admin_list_fwd_cmds_to_manage", admin_list_fwd_cmds_to_manage))
-    application.add_handler(CallbackQueryHandler(r"^admin_select_fwd_cmd:.*$", admin_select_fwd_cmd_to_manage))
-    application.add_handler(CallbackQueryHandler(r"^admin_confirm_delete_fwd_cmd:.*$", admin_confirm_delete_fwd_cmd))
-
-    # 群组欢迎/离开处理器 (优先处理)
-    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member_handler))
-    application.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, left_member_handler))
-
-    # 动态转发命令处理器 (必须放在 CommandHandler 和 ConversationHandler 之后，因为它匹配所有命令)
-    application.add_handler(MessageHandler(filters.COMMAND & ~filters.UpdateType.EDITED_MESSAGE, handle_dynamic_forward_command))
-
-
-    # 错误处理器
-    application.add_error_handler(error_handler)
-
-    logger.info("Bot started polling...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
+        await query.edit_message_text("❌ 商品不存在或已下架。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回兑换列表", 
