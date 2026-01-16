@@ -18,7 +18,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 # ==================== 常量 ====================
 VIP_LOCK_TIME = 5 * 60 * 60
 RECHARGE_LOCK_TIME = 10 * 60 * 60
-MESSAGE_EXPIRE_TIME = 20 * 60  # 20分钟
+MESSAGE_EXPIRE_TIME = 20 * 60
 GROUP_LINK = "https://t.me/+495j5rWmApsxYzg9"
 
 # ==================== 图片 ====================
@@ -323,15 +323,12 @@ def get_alipay_remaining(user_id):
     return format_time(max(0, remaining))
 
 def parse_message_link(link):
-    """解析消息链接"""
     link = link.strip()
-    # 私有频道: https://t.me/c/1234567890/123
     match = re.match(r'https://t\.me/c/(\d+)/(\d+)', link)
     if match:
         channel_id = int('-100' + match.group(1))
         message_id = int(match.group(2))
         return channel_id, message_id
-    # 公开频道: https://t.me/channelname/123
     match = re.match(r'https://t\.me/([^/]+)/(\d+)', link)
     if match:
         channel_username = '@' + match.group(1)
@@ -340,14 +337,12 @@ def parse_message_link(link):
     return None, None
 
 def delete_messages_later(chat_id, message_ids, user_id, delay=MESSAGE_EXPIRE_TIME):
-    """延迟删除消息"""
     def do_delete():
         for msg_id in message_ids:
             try:
                 bot.delete_message(chat_id, msg_id)
             except:
                 pass
-        # 发送过期提示
         try:
             msg = """⏰ 消息已过期
 
@@ -630,7 +625,7 @@ https://t.me/c/1234567890/2
 💰 积分：{points_cost}
 ━━━━━━━━━━━━━━━━━━━━━
 
-用户发送 "{command_name}" 即可触发"""
+用户发送「{command_name}」即可触发"""
         
         markup = types.InlineKeyboardMarkup()
         btn = types.InlineKeyboardButton("📦 返回转发库", callback_data="channel_library")
@@ -644,9 +639,9 @@ https://t.me/c/1234567890/2
         
         if cmd:
             delete_command(command_name)
-            bot.send_message(chat_id, f"✅ 命令 "{command_name}" 已删除")
+            bot.send_message(chat_id, f"✅ 命令「{command_name}」已删除")
         else:
-            bot.send_message(chat_id, f"❌ 命令 "{command_name}" 不存在")
+            bot.send_message(chat_id, f"❌ 命令「{command_name}」不存在")
         
         user_state[user_id] = {}
         send_channel_library(chat_id)
@@ -749,14 +744,12 @@ https://t.me/c/1234567890/2
         user = get_user(user_id)
         purchased = has_purchased(user_id, text)
         
-        # 删除用户发送的命令消息
         try:
             bot.delete_message(chat_id, message.message_id)
         except:
             pass
         
         if purchased or cmd['points_cost'] == 0:
-            # 已购买或免费，直接发送
             if not purchased and cmd['points_cost'] == 0:
                 add_purchase(user_id, text)
             
@@ -771,21 +764,18 @@ https://t.me/c/1234567890/2
                         protect_content=True
                     )
                     sent_message_ids.append(sent.message_id)
-                except Exception as e:
+                except:
                     pass
             
             if sent_message_ids:
-                # 20分钟后删除
                 delete_messages_later(chat_id, sent_message_ids, user_id)
             
-            # 发送兑换成功提示
             markup = types.InlineKeyboardMarkup()
             btn = types.InlineKeyboardButton("🎁 返回兑换中心", callback_data="exchange_center")
             markup.add(btn)
-            hint_msg = bot.send_message(chat_id, f"✅ 内容已发送\n\n⏰ 消息将在20分钟后自动删除\n💡 已兑换内容可随时重新获取", reply_markup=markup)
+            hint_msg = bot.send_message(chat_id, "✅ 内容已发送\n\n⏰ 消息将在20分钟后自动删除\n💡 已兑换内容可随时重新获取", reply_markup=markup)
             sent_message_ids.append(hint_msg.message_id)
         else:
-            # 未购买，显示兑换页面
             if user['points'] < cmd['points_cost']:
                 msg = f"""🎁 兑换内容：{text}
 
@@ -900,10 +890,7 @@ def cb_delete_command_menu(call):
     
     user_state[call.from_user.id] = {'admin_step': 'waiting_delete_name'}
     
-    msg = """🗑️ 删除命令
-
-━━━━━━━━━━━━━━━━━━━━━
-📋 已有命令：\n"""
+    msg = "🗑️ 删除命令\n\n━━━━━━━━━━━━━━━━━━━━━\n📋 已有命令：\n"
     
     for cmd in commands:
         msg += f"• {cmd['command_name']}\n"
@@ -951,7 +938,7 @@ def cb_exchange_center(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("exchange_"))
 def cb_exchange_item(call):
-    command_name = call.data[9:]  # Remove "exchange_"
+    command_name = call.data[9:]
     user_id = call.from_user.id
     chat_id = call.message.chat.id
     
@@ -966,7 +953,6 @@ def cb_exchange_item(call):
     bot.answer_callback_query(call.id)
     
     if purchased:
-        # 已购买，直接发送内容
         sent_message_ids = []
         
         for link_info in cmd['message_links']:
@@ -987,10 +973,9 @@ def cb_exchange_item(call):
         markup = types.InlineKeyboardMarkup()
         btn = types.InlineKeyboardButton("🎁 返回兑换中心", callback_data="exchange_center")
         markup.add(btn)
-        hint_msg = bot.send_message(chat_id, f"✅ 内容已发送\n\n⏰ 消息将在20分钟后自动删除\n💡 已兑换内容可随时重新获取", reply_markup=markup)
+        hint_msg = bot.send_message(chat_id, "✅ 内容已发送\n\n⏰ 消息将在20分钟后自动删除\n💡 已兑换内容可随时重新获取", reply_markup=markup)
         sent_message_ids.append(hint_msg.message_id)
     else:
-        # 未购买，显示兑换确认
         if user['points'] < cmd['points_cost']:
             msg = f"""🎁 兑换内容：{command_name}
 
@@ -1024,7 +1009,7 @@ def cb_exchange_item(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("confirm_exchange_"))
 def cb_confirm_exchange(call):
-    command_name = call.data[16:]  # Remove "confirm_exchange_"
+    command_name = call.data[16:]
     user_id = call.from_user.id
     chat_id = call.message.chat.id
     
@@ -1039,13 +1024,11 @@ def cb_confirm_exchange(call):
         bot.answer_callback_query(call.id, "❌ 积分不足", show_alert=True)
         return
     
-    # 扣除积分并记录购买
     deduct_points(user_id, cmd['points_cost'])
     add_purchase(user_id, command_name)
     
     bot.answer_callback_query(call.id, "✅ 兑换成功！")
     
-    # 发送内容
     sent_message_ids = []
     
     for link_info in cmd['message_links']:
