@@ -554,19 +554,25 @@ def main():
         print("请配置BOT_TOKEN和DATABASE_URL环境变量")
         return
 
-    app = ApplicationBuilder().token(bot_token).build()
+    # 初始化应用，添加全局错误处理器
+    app = ApplicationBuilder().token(bot_token).defaults(defaults).build()
+    app.add_error_handler(error_handler)
 
-    # 注册群事件处理器
+    # 注册处理器
     app.add_handler(ChatMemberHandler(group_welcome_handler, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(group_leave_handler, ChatMemberHandler.CHAT_MEMBER))
-
-    # 注册核心命令处理器
     app.add_handler(CommandHandler("start", welcome_flow))
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    app.run_polling()
+    # 安全加固的长轮询配置
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+        timeout=30,
+        read_timeout=30
+    )
 
 if __name__ == "__main__":
     main()
