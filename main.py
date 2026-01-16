@@ -20,13 +20,13 @@ from psycopg2.extras import RealDictCursor
 # 🎛️ 核心配置区 --- 所有需要你修改的地方都在这里
 # ==============================================
 ⚠️ 【需要你修改】替换成你自己的Telegram ID（@userinfobot可获取）
-ADMIN_USER_IDS = [-1002520416718,-1002933211039]  
+ADMIN_USER_IDS = [1480512549]  
 
 ⚠️ 【需要你修改】替换成你的VIP群链接
 VIP_GROUP_URL = "https://t.me/+495j5rWmApsxYzg9"
 
 ⚠️ 【需要你修改】替换成你要启用欢迎语的群ID（@userinfobot可获取，格式为-100xxxxxxxxx）
-ALLOWED_WELCOME_GROUPS = [-1001234567890]
+ALLOWED_WELCOME_GROUPS = [-1002520416718,-1002933211039]
 
 # --------------------------
 # 固定规则（无需修改）
