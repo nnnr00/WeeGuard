@@ -547,6 +547,10 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🚀 主函数
 # ==============================================
 def main():
+    # 可选：忽略废弃警告，让日志更干净
+    import warnings
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module="telegram")
+
     init_db()
     bot_token = os.getenv("BOT_TOKEN")
     db_url = os.getenv("DATABASE_URL")
@@ -555,15 +559,8 @@ def main():
         print("❌ 请先在Railway配置BOT_TOKEN和DATABASE_URL环境变量")
         return
 
-    # 👉 按照最新API规范，把超时配置移到ApplicationBuilder中
-    app = (
-        ApplicationBuilder()
-        .token(bot_token)
-        .get_updates_timeout(30)          # 替换原来run_polling里的timeout参数
-        .get_updates_read_timeout(30)     # 替换原来run_polling里的read_timeout参数
-        .get_updates_pool_timeout(5)      # 连接池超时配置
-        .build()
-    )
+    # 简化初始化，严格适配v20.7版本
+    app = ApplicationBuilder().token(bot_token).build()
 
     # 全局错误处理器
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -579,10 +576,13 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # 简化run_polling调用，只保留必要参数
+    # 👉 严格适配v20.7的run_polling写法，虽然有废弃提示但完全可用
+    # 废弃提示不影响机器人运行，只是官方后续版本会移除该写法
     app.run_polling(
-        drop_pending_updates=True,  # 启动时自动清理旧的未处理更新
-        allowed_updates=Update.ALL_TYPES
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+        timeout=30,
+        read_timeout=30
     )
 
 if __name__ == "__main__":
