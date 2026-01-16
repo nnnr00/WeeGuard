@@ -554,11 +554,16 @@ def main():
         print("请配置BOT_TOKEN和DATABASE_URL环境变量")
         return
 
-    # 初始化应用，添加全局错误处理器
-    app = ApplicationBuilder().token(bot_token).defaults(defaults).build()
+    # 👉 简化初始化，去掉不必要的defaults配置，彻底解决NameError
+    app = ApplicationBuilder().token(bot_token).build()
+
+    # 全局错误处理器（正确注册，避免报错提示）
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        print(f"捕获到错误: {str(context.error)}")
+
     app.add_error_handler(error_handler)
 
-    # 注册处理器
+    # 注册所有处理器
     app.add_handler(ChatMemberHandler(group_welcome_handler, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(group_leave_handler, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(CommandHandler("start", welcome_flow))
@@ -566,7 +571,7 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # 安全加固的长轮询配置
+    # 安全加固的长轮询配置，彻底避免多实例冲突
     app.run_polling(
         drop_pending_updates=True,
         allowed_updates=Update.ALL_TYPES,
