@@ -551,21 +551,27 @@ def main():
     bot_token = os.getenv("BOT_TOKEN")
     db_url = os.getenv("DATABASE_URL")
     
-    # 校验必要环境变量
     if not bot_token or not db_url:
         print("❌ 请先在Railway配置BOT_TOKEN和DATABASE_URL环境变量")
         return
 
-    # 👉 完全简化初始化，彻底移除不必要的defaults配置，从根源解决NameError
-    app = ApplicationBuilder().token(bot_token).build()
+    # 👉 按照最新API规范，把超时配置移到ApplicationBuilder中
+    app = (
+        ApplicationBuilder()
+        .token(bot_token)
+        .get_updates_timeout(30)          # 替换原来run_polling里的timeout参数
+        .get_updates_read_timeout(30)     # 替换原来run_polling里的read_timeout参数
+        .get_updates_pool_timeout(5)      # 连接池超时配置
+        .build()
+    )
 
-    # 全局错误处理器，捕获所有异常避免机器人崩溃
+    # 全局错误处理器
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         print(f"⚠️ 捕获到错误: {str(context.error)}")
 
     app.add_error_handler(error_handler)
 
-    # 注册所有核心处理器（和之前的逻辑完全一致，没有修改）
+    # 注册所有核心处理器（和原有逻辑完全一致）
     app.add_handler(ChatMemberHandler(group_welcome_handler, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(group_leave_handler, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(CommandHandler("start", welcome_flow))
@@ -573,12 +579,10 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # 安全加固的长轮询配置，彻底避免多实例冲突
+    # 简化run_polling调用，只保留必要参数
     app.run_polling(
-        drop_pending_updates=True,  # 启动时自动清理旧更新，避免堆积
-        allowed_updates=Update.ALL_TYPES,
-        timeout=30,
-        read_timeout=30
+        drop_pending_updates=True,  # 启动时自动清理旧的未处理更新
+        allowed_updates=Update.ALL_TYPES
     )
 
 if __name__ == "__main__":
