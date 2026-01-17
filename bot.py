@@ -19,33 +19,24 @@ import psycopg2
 from psycopg2.extras import Json, RealDictCursor
 import json
 
-# ============== 日志配置 ==============
+# 配置日志
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ============== 环境变量配置 ==============
+# 从环境变量获取配置
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 DATABASE_URL = os.getenv('DATABASE_URL')
 GROUP_INVITE_LINK = os.getenv('GROUP_INVITE_LINK', 'https://t.me/your_group')
 
-# ============== 全局数据存储（内存缓存） ==============
-# 用户验证锁定
+# 内存缓存
 user_locks = {}
-
-# 频道转发库 {command: {'chat_id': str, 'message_ids': [int], 'created_by': int}}
 forward_library = {}
-
-# 临时命令创建数据 {user_id: {'command': str, 'chat_id': str, 'message_ids': [int]}}
 temp_commands = {}
-
-# 消息删除任务
 delete_tasks = {}
-
-# File ID 存储
 file_id_storage = {
     'PAYMENT_IMAGE': '',
     'TUTORIAL_IMAGE': '',
@@ -54,23 +45,11 @@ file_id_storage = {
     'ALIPAY_PAY_IMAGE': '',
     'ALIPAY_TUTORIAL_IMAGE': ''
 }
-
-# 用户积分
 user_points = {}
-
-# 签到记录
 signin_records = {}
-
-# 充值记录
 recharge_records = {}
-
-# 充值锁定
 recharge_locks = {}
-
-# 等待充值订单号
 waiting_recharge_order = {}
-
-# 商品列表
 products = {
     'test_product': {
         'name': '测试商品',
@@ -81,14 +60,8 @@ products = {
         }
     }
 }
-
-# 用户兑换记录
 user_exchanges = {}
-
-# 临时商品数据
 temp_products = {}
-
-# 积分历史
 points_history = {}
 
 # ============== 数据库连接函数 ==============
@@ -99,20 +72,19 @@ def get_db_connection():
         conn = psycopg2.connect(DATABASE_URL, sslmode='require')
         return conn
     except Exception as e:
-        logger.error(f"❌ 数据库连接失败: {e}")
+        logger.error(f"数据库连接失败: {e}")
         return None
 
 def init_database():
     """初始化数据库表"""
     conn = get_db_connection()
     if not conn:
-        logger.warning("⚠️ 数据库不可用，使用内存模式")
         return
     
     try:
         cur = conn.cursor()
         
-        # 用户积分表
+        # 创建用户积分表
         cur.execute('''
             CREATE TABLE IF NOT EXISTS user_points (
                 user_id BIGINT PRIMARY KEY,
@@ -123,7 +95,7 @@ def init_database():
             )
         ''')
         
-        # 充值记录表
+        # 创建充值记录表
         cur.execute('''
             CREATE TABLE IF NOT EXISTS recharge_records (
                 user_id BIGINT PRIMARY KEY,
@@ -138,7 +110,7 @@ def init_database():
             )
         ''')
         
-        # 商品表
+        # 创建商品表
         cur.execute('''
             CREATE TABLE IF NOT EXISTS products (
                 product_id VARCHAR(100) PRIMARY KEY,
@@ -150,7 +122,7 @@ def init_database():
             )
         ''')
         
-        # 用户兑换记录表
+        # 创建用户兑换记录表
         cur.execute('''
             CREATE TABLE IF NOT EXISTS user_exchanges (
                 id SERIAL PRIMARY KEY,
@@ -161,7 +133,7 @@ def init_database():
             )
         ''')
         
-        # 积分历史表
+        # 创建积分历史表
         cur.execute('''
             CREATE TABLE IF NOT EXISTS points_history (
                 id SERIAL PRIMARY KEY,
@@ -173,7 +145,7 @@ def init_database():
             )
         ''')
         
-        # 转发库表
+        # 创建转发库表
         cur.execute('''
             CREATE TABLE IF NOT EXISTS forward_library (
                 command VARCHAR(100) PRIMARY KEY,
@@ -184,7 +156,7 @@ def init_database():
             )
         ''')
         
-        # 用户锁定表
+        # 创建用户锁定表
         cur.execute('''
             CREATE TABLE IF NOT EXISTS user_locks (
                 user_id BIGINT PRIMARY KEY,
@@ -199,7 +171,7 @@ def init_database():
         logger.info("✅ 数据库表初始化成功")
         
     except Exception as e:
-        logger.error(f"❌ 数据库表创建失败: {e}")
+        logger.error(f"数据库表创建失败: {e}")
         conn.rollback()
     finally:
         cur.close()
@@ -212,7 +184,6 @@ def load_data_from_db():
     
     conn = get_db_connection()
     if not conn:
-        logger.warning("⚠️ 数据库不可用，跳过数据加载")
         return
     
     try:
@@ -233,6 +204,7 @@ def load_data_from_db():
                 'alipay': row['alipay_used']
             }
             
+            # 加载锁定信息
             recharge_locks[row['user_id']] = {}
             if row['wechat_locked_until']:
                 recharge_locks[row['user_id']]['wechat'] = {
@@ -265,7 +237,7 @@ def load_data_from_db():
             user_exchanges[row['user_id']].append(row['product_id'])
         
         # 加载积分历史
-        cur.execute('SELECT * FROM points_history ORDER BY created_at DESC LIMIT 1000')
+        cur.execute('SELECT * FROM points_history ORDER BY created_at DESC')
         for row in cur.fetchall():
             if row['user_id'] not in points_history:
                 points_history[row['user_id']] = []
@@ -276,22 +248,14 @@ def load_data_from_db():
                 'desc': row['description']
             })
         
-        # 加载转发库 - 关键修复
+        # 加载转发库
         cur.execute('SELECT * FROM forward_library')
-        rows = cur.fetchall()
-        logger.info(f"📚 从数据库加载转发库: {len(rows)} 条")
-        
-        for row in rows:
-            try:
-                message_ids = json.loads(row['message_ids']) if row['message_ids'] else []
-                forward_library[row['command']] = {
-                    'chat_id': row['chat_id'],
-                    'message_ids': message_ids,
-                    'created_by': row['created_by']
-                }
-                logger.info(f"  ✅ 加载命令: {row['command']} ({len(message_ids)} 条消息)")
-            except Exception as e:
-                logger.error(f"  ❌ 加载命令 {row['command']} 失败: {e}")
+        for row in cur.fetchall():
+            forward_library[row['command']] = {
+                'chat_id': row['chat_id'],
+                'message_ids': json.loads(row['message_ids']) if row['message_ids'] else [],
+                'created_by': row['created_by']
+            }
         
         # 加载用户锁定
         cur.execute('SELECT * FROM user_locks WHERE locked_until > NOW()')
@@ -301,14 +265,10 @@ def load_data_from_db():
                 'locked_until': row['locked_until']
             }
         
-        logger.info("✅ 数据加载完成")
-        logger.info(f"   📊 统计:")
-        logger.info(f"      - 用户积分: {len(user_points)}")
-        logger.info(f"      - 转发库: {len(forward_library)}")
-        logger.info(f"      - 商品: {len(products)}")
+        logger.info("✅ 数据加载成功")
         
     except Exception as e:
-        logger.error(f"❌ 数据加载失败: {e}")
+        logger.error(f"数据加载失败: {e}")
     finally:
         cur.close()
         conn.close()
@@ -390,23 +350,13 @@ def save_product_to_db(product_id: str, product_data: dict):
         conn.close()
 
 def save_forward_library_to_db(command: str, data: dict):
-    """保存转发库到数据库 - 关键修复"""
+    """保存转发库到数据库"""
     conn = get_db_connection()
     if not conn:
-        logger.warning(f"⚠️ 数据库不可用，命令 {command} 仅保存到内存")
         return
     
     try:
         cur = conn.cursor()
-        
-        # 转换 message_ids 为 JSON
-        message_ids_json = json.dumps(data['message_ids'])
-        
-        logger.info(f"💾 保存转发库到数据库:")
-        logger.info(f"   命令: {command}")
-        logger.info(f"   频道ID: {data['chat_id']}")
-        logger.info(f"   消息数: {len(data['message_ids'])}")
-        
         cur.execute('''
             INSERT INTO forward_library (command, chat_id, message_ids, created_by)
             VALUES (%s, %s, %s, %s)
@@ -415,17 +365,14 @@ def save_forward_library_to_db(command: str, data: dict):
         ''', (
             command,
             data['chat_id'],
-            message_ids_json,
+            json.dumps(data['message_ids']),
             data['created_by'],
             data['chat_id'],
-            message_ids_json
+            json.dumps(data['message_ids'])
         ))
-        
         conn.commit()
-        logger.info(f"✅ 命令 {command} 已保存到数据库")
-        
     except Exception as e:
-        logger.error(f"❌ 保存转发库失败: {e}")
+        logger.error(f"保存转发库失败: {e}")
         conn.rollback()
     finally:
         cur.close()
@@ -441,7 +388,6 @@ def delete_forward_library_from_db(command: str):
         cur = conn.cursor()
         cur.execute('DELETE FROM forward_library WHERE command = %s', (command,))
         conn.commit()
-        logger.info(f"✅ 命令 {command} 已从数据库删除")
     except Exception as e:
         logger.error(f"删除转发库失败: {e}")
         conn.rollback()
@@ -513,7 +459,7 @@ def save_recharge_record_to_db(user_id: int, pay_type: str):
         cur.close()
         conn.close()
 
-# ============== 积分系统函数 ==============
+# ============== 积分历史记录函数 ==============
 
 def add_points_history(user_id: int, points_type: str, points: int, description: str):
     """添加积分历史记录"""
@@ -527,8 +473,10 @@ def add_points_history(user_id: int, points_type: str, points: int, description:
         'desc': description
     })
     
+    # 保存到数据库
     save_points_history_to_db(user_id, points_type, points, description)
     
+    # 只保留最近50条记录
     if len(points_history[user_id]) > 50:
         points_history[user_id] = points_history[user_id][-50:]
 
@@ -579,6 +527,8 @@ def exchange_product(user_id: int, product_id: str) -> bool:
     add_points_history(user_id, 'spend', product['points'], f"兑换商品：{product['name']}")
     
     return True
+
+# ============== 积分系统函数 ==============
 
 def get_user_points(user_id: int) -> int:
     """获取用户积分"""
@@ -672,127 +622,6 @@ def verify_alipay_order(order_number: str) -> bool:
     """验证支付宝订单号"""
     return order_number.startswith('4768')
 
-# ============== 工具函数 ==============
-
-def is_admin(user_id: int) -> bool:
-    return user_id == ADMIN_ID
-
-def is_user_locked(user_id: int) -> tuple[bool, datetime]:
-    """检查用户是否被锁定"""
-    if user_id in user_locks:
-        lock_info = user_locks[user_id]
-        if lock_info.get('locked_until') and lock_info['locked_until'] > datetime.now():
-            return True, lock_info['locked_until']
-        else:
-            if 'locked_until' in lock_info and lock_info['locked_until'] <= datetime.now():
-                del user_locks[user_id]
-    return False, None
-
-def record_failed_attempt(user_id: int):
-    """记录验证失败"""
-    if user_id not in user_locks:
-        user_locks[user_id] = {'count': 0, 'locked_until': None}
-    
-    user_locks[user_id]['count'] += 1
-    
-    if user_locks[user_id]['count'] >= 2:
-        user_locks[user_id]['locked_until'] = datetime.now() + timedelta(hours=5)
-        user_locks[user_id]['count'] = 0
-        return True
-    return False
-
-def clear_user_attempts(user_id: int):
-    if user_id in user_locks:
-        del user_locks[user_id]
-
-def verify_order_number(order_number: str) -> bool:
-    return order_number.startswith('20260')
-
-def extract_channel_id(text: str) -> str:
-    patterns = [
-        r't\.me/([a-zA-Z0-9_]+)',
-        r'@([a-zA-Z0-9_]+)'
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            username = match.group(1)
-            return f"@{username}"
-    
-    return None
-
-async def schedule_message_deletion(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_ids: list, delay_minutes: int = 20):
-    await asyncio.sleep(delay_minutes * 60)
-    
-    deleted_count = 0
-    for msg_id in message_ids:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            deleted_count += 1
-        except Exception as e:
-            logger.warning(f"删除消息失败 {chat_id}:{msg_id} - {e}")
-    
-    if deleted_count > 0:
-        try:
-            reminder_msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    "⏰ *消息已过期删除*\n\n"
-                    "💡 消息存在时间有限，如需重新查看请返回购买处重新获取\n\n"
-                    "✅ 已购买用户无需二次付费，可直接再次获取查看\n\n"
-                    "正在返回首页..."
-                ),
-                parse_mode='Markdown'
-            )
-            
-            await asyncio.sleep(3)
-            await context.bot.delete_message(chat_id=chat_id, message_id=reminder_msg.message_id)
-            await send_home_page(context.bot, chat_id)
-            
-        except Exception as e:
-            logger.error(f"发送删除提示失败: {e}")
-
-async def send_home_page(bot, chat_id: int):
-    user_id = chat_id
-    welcome_text = (
-        "👋 欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~\n\n"
-        "📢 小卫小卫，守门员小卫！\n"
-        "一键入群，小卫帮你搞定！\n"
-        "新人来报到，小卫查身份！"
-    )
-    
-    reply_markup = get_home_keyboard(user_id)
-    
-    try:
-        await bot.send_message(
-            chat_id=chat_id,
-            text=welcome_text,
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"发送首页失败: {e}")
-
-def get_home_keyboard(user_id: int):
-    locked, unlock_time = is_user_locked(user_id)
-    
-    keyboard = []
-    
-    if locked:
-        time_left = unlock_time - datetime.now()
-        hours = int(time_left.total_seconds() // 3600)
-        minutes = int((time_left.total_seconds() % 3600) // 60)
-        button_text = f"🔒 验证已锁定 ({hours}小时{minutes}分钟后解锁)"
-        callback_data = "locked"
-    else:
-        button_text = "✨ 开始验证"
-        callback_data = "start_verify"
-    
-    keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
-    keyboard.append([InlineKeyboardButton("💰 积分中心", callback_data="show_points")])
-    
-    return InlineKeyboardMarkup(keyboard)
-
 # ============== 余额页面 ==============
 
 async def show_balance_page(query, context: ContextTypes.DEFAULT_TYPE):
@@ -831,7 +660,7 @@ async def show_balance_page(query, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-# ============== 兑换页面 ==============
+# ============== 兑换页面 - 修复部分 ==============
 
 async def show_exchange_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """显示兑换页面"""
@@ -881,10 +710,12 @@ async def handle_exchange(query, context: ContextTypes.DEFAULT_TYPE, product_id:
     
     product = products[product_id]
     
+    # 如果已兑换，直接发送内容（修复：显示在单独页面）
     if has_exchanged(user_id, product_id):
         await show_exchanged_product_content(query, context, product_id)
         return
     
+    # 未兑换，显示确认页面
     points = get_user_points(user_id)
     
     text = (
@@ -930,11 +761,12 @@ async def confirm_exchange(query, context: ContextTypes.DEFAULT_TYPE, product_id
         await show_exchange_page(temp_update, context)
 
 async def show_exchanged_product_content(query, context: ContextTypes.DEFAULT_TYPE, product_id: str):
-    """显示已兑换商品内容（单独页面）"""
+    """显示已兑换商品内容（单独页面）- 修复部分"""
     user_id = query.from_user.id
     product = products[product_id]
     content = product['content']
     
+    # 先显示内容页面
     content_text = (
         f"📦 *{product['name']}*\n\n"
         f"✅ 兑换成功\n\n"
@@ -947,6 +779,7 @@ async def show_exchanged_product_content(query, context: ContextTypes.DEFAULT_TY
     
     try:
         if content['type'] == 'text':
+            # 文本内容直接显示
             full_text = content_text + f"📄 内容：\n\n{content['data']}"
             await query.edit_message_text(
                 full_text,
@@ -955,6 +788,7 @@ async def show_exchanged_product_content(query, context: ContextTypes.DEFAULT_TY
             )
         
         elif content['type'] == 'photo':
+            # 图片内容
             await query.edit_message_text(content_text, parse_mode='Markdown')
             await context.bot.send_photo(
                 chat_id=user_id,
@@ -964,6 +798,7 @@ async def show_exchanged_product_content(query, context: ContextTypes.DEFAULT_TY
             )
         
         elif content['type'] == 'video':
+            # 视频内容
             await query.edit_message_text(content_text, parse_mode='Markdown')
             await context.bot.send_video(
                 chat_id=user_id,
@@ -973,6 +808,7 @@ async def show_exchanged_product_content(query, context: ContextTypes.DEFAULT_TY
             )
         
         elif content['type'] == 'document':
+            # 文档内容
             await query.edit_message_text(content_text, parse_mode='Markdown')
             await context.bot.send_document(
                 chat_id=user_id,
@@ -1580,14 +1416,133 @@ async def handle_recharge_order_input(update: Update, context: ContextTypes.DEFA
     
     return True
 
+# ============== 工具函数 ==============
+
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
+
+def is_user_locked(user_id: int) -> tuple[bool, datetime]:
+    """检查用户是否被锁定"""
+    if user_id in user_locks:
+        lock_info = user_locks[user_id]
+        if lock_info.get('locked_until') and lock_info['locked_until'] > datetime.now():
+            return True, lock_info['locked_until']
+        else:
+            if 'locked_until' in lock_info and lock_info['locked_until'] <= datetime.now():
+                del user_locks[user_id]
+    return False, None
+
+def record_failed_attempt(user_id: int):
+    """记录验证失败"""
+    if user_id not in user_locks:
+        user_locks[user_id] = {'count': 0, 'locked_until': None}
+    
+    user_locks[user_id]['count'] += 1
+    
+    if user_locks[user_id]['count'] >= 2:
+        user_locks[user_id]['locked_until'] = datetime.now() + timedelta(hours=5)
+        user_locks[user_id]['count'] = 0
+        return True
+    return False
+
+def clear_user_attempts(user_id: int):
+    if user_id in user_locks:
+        del user_locks[user_id]
+
+def verify_order_number(order_number: str) -> bool:
+    return order_number.startswith('20260')
+
+def extract_channel_id(text: str) -> str:
+    patterns = [
+        r't\.me/([a-zA-Z0-9_]+)',
+        r'@([a-zA-Z0-9_]+)'
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            username = match.group(1)
+            return f"@{username}"
+    
+    return None
+
+async def schedule_message_deletion(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_ids: list, delay_minutes: int = 20):
+    await asyncio.sleep(delay_minutes * 60)
+    
+    deleted_count = 0
+    for msg_id in message_ids:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            deleted_count += 1
+        except Exception as e:
+            logger.warning(f"删除消息失败 {chat_id}:{msg_id} - {e}")
+    
+    if deleted_count > 0:
+        try:
+            reminder_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "⏰ *消息已过期删除*\n\n"
+                    "💡 消息存在时间有限，如需重新查看请返回购买处重新获取\n\n"
+                    "✅ 已购买用户无需二次付费，可直接再次获取查看\n\n"
+                    "正在返回首页..."
+                ),
+                parse_mode='Markdown'
+            )
+            
+            await asyncio.sleep(3)
+            await context.bot.delete_message(chat_id=chat_id, message_id=reminder_msg.message_id)
+            await send_home_page(context.bot, chat_id)
+            
+        except Exception as e:
+            logger.error(f"发送删除提示失败: {e}")
+
+async def send_home_page(bot, chat_id: int):
+    user_id = chat_id
+    welcome_text = (
+        "👋 欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~\n\n"
+        "📢 小卫小卫，守门员小卫！\n"
+        "一键入群，小卫帮你搞定！\n"
+        "新人来报到，小卫查身份！"
+    )
+    
+    reply_markup = get_home_keyboard(user_id)
+    
+    try:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=welcome_text,
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.error(f"发送首页失败: {e}")
+
+def get_home_keyboard(user_id: int):
+    locked, unlock_time = is_user_locked(user_id)
+    
+    keyboard = []
+    
+    if locked:
+        time_left = unlock_time - datetime.now()
+        hours = int(time_left.total_seconds() // 3600)
+        minutes = int((time_left.total_seconds() % 3600) // 60)
+        button_text = f"🔒 验证已锁定 ({hours}小时{minutes}分钟后解锁)"
+        callback_data = "locked"
+    else:
+        button_text = "✨ 开始验证"
+        callback_data = "start_verify"
+    
+    keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+    keyboard.append([InlineKeyboardButton("💰 积分中心", callback_data="show_points")])
+    
+    return InlineKeyboardMarkup(keyboard)
+
 # ============== 首页功能 ==============
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """首页"""
     user = update.effective_user
     user_id = user.id
     
-    # 清除所有会话状态
     context.user_data.clear()
     
     welcome_text = (
@@ -1605,19 +1560,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text(welcome_text, reply_markup=reply_markup)
 
 async def handle_normal_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理普通消息"""
     if context.user_data.get('in_verification') or context.user_data.get('in_admin_process'):
         return
     
     user_id = update.effective_user.id
     message_text = update.message.text
     
-    # 检查是否为转发库命令
     if message_text in forward_library:
         await handle_forward_command(update, context, message_text)
         return
     
-    # 返回首页
     welcome_text = (
         "👋 欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~\n\n"
         "📢 小卫小卫，守门员小卫！\n"
@@ -1701,7 +1653,6 @@ async def handle_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # ============== 管理员后台 ==============
 
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """管理员后台"""
     user_id = update.effective_user.id
     
     if not is_admin(user_id):
@@ -1711,7 +1662,6 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_menu(update.message, context)
 
 async def admin_menu(message_or_query, context: ContextTypes.DEFAULT_TYPE):
-    """显示管理员菜单"""
     keyboard = [
         [InlineKeyboardButton("🔍 获取文件 ID", callback_data="get_file_id")],
         [InlineKeyboardButton("📚 频道转发库", callback_data="forward_library")],
@@ -1738,7 +1688,6 @@ async def admin_menu(message_or_query, context: ContextTypes.DEFAULT_TYPE):
 # ============== File ID 功能 ==============
 
 async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """快捷获取文件ID"""
     user_id = update.effective_user.id
     
     if not is_admin(user_id):
@@ -1755,7 +1704,6 @@ async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['in_admin_process'] = True
 
 async def handle_admin_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理管理员发送的文件"""
     if not is_admin(update.effective_user.id):
         return
     
@@ -1831,12 +1779,9 @@ async def handle_admin_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['admin_getting_file'] = False
     context.user_data['in_admin_process'] = False
 
-# ============== 频道转发库功能 - 核心修复部分 ==============
+# ============== 频道转发库功能 - 修复的关键部分 ==============
 
 async def show_forward_library(query, context: ContextTypes.DEFAULT_TYPE):
-    """显示转发库列表"""
-    logger.info(f"📚 显示转发库，当前命令数: {len(forward_library)}")
-    
     if not forward_library:
         text = "📚 *频道转发库*\n\n暂无命令，点击下方添加新命令："
     else:
@@ -1859,11 +1804,8 @@ async def show_forward_library(query, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def handle_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理添加命令"""
     query = update.callback_query
     user_id = query.from_user.id
-    
-    logger.info(f"🆕 用户 {user_id} 开始添加新命令")
     
     if query.data == "add_new_command":
         await query.edit_message_text(
@@ -1874,47 +1816,36 @@ async def handle_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "发送 /cancel 取消",
             parse_mode='Markdown'
         )
-        
-        # 设置状态标志 - 关键修复
         context.user_data['waiting_command_name'] = True
         context.user_data['in_admin_process'] = True
-        
-        logger.info(f"✅ 设置用户 {user_id} 状态: waiting_command_name=True")
+        logger.info(f"用户 {user_id} 开始创建命令，设置 waiting_command_name=True")
 
 async def handle_command_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理命令名称输入 - 关键修复"""
     if not context.user_data.get('waiting_command_name'):
-        logger.info(f"⚠️ 用户 {update.effective_user.id} 状态不匹配，跳过命令名称处理")
         return False
     
     user_id = update.effective_user.id
     command_name = update.message.text.strip()
     
-    logger.info(f"📝 用户 {user_id} 输入命令名称: {command_name}")
+    logger.info(f"用户 {user_id} 输入命令名称: {command_name}")
     
-    # 检查命令是否已存在
     if command_name in forward_library:
-        logger.warning(f"⚠️ 命令 {command_name} 已存在")
         await update.message.reply_text(
             f"❌ 命令 `{command_name}` 已存在！\n\n请输入其他命令名称：",
             parse_mode='Markdown'
         )
         return True
     
-    # 保存到临时数据 - 关键修复
     temp_commands[user_id] = {
         'command': command_name,
         'chat_id': None,
         'message_ids': []
     }
     
-    logger.info(f"💾 保存临时命令数据: {temp_commands[user_id]}")
-    
-    # 更新状态
     context.user_data['waiting_command_name'] = False
     context.user_data['waiting_content'] = True
     
-    logger.info(f"✅ 更新用户 {user_id} 状态: waiting_content=True")
+    logger.info(f"用户 {user_id} 设置 waiting_content=True")
     
     await update.message.reply_text(
         f"✅ 命令名称：`{command_name}`\n\n"
@@ -1937,147 +1868,97 @@ async def handle_command_name_input(update: Update, context: ContextTypes.DEFAUL
     return True
 
 async def handle_content_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理内容输入 - 支持所有类型（完整修复版）"""
     if not context.user_data.get('waiting_content'):
-        logger.info(f"⚠️ 用户 {update.effective_user.id} 状态不匹配 waiting_content")
         return False
     
     user_id = update.effective_user.id
     
-    logger.info(f"📥 [内容添加] 用户 {user_id} 添加内容")
-    logger.info(f"   temp_commands 存在: {user_id in temp_commands}")
+    logger.info(f"用户 {user_id} 添加内容，waiting_content={context.user_data.get('waiting_content')}")
     
-    # 检查临时数据
     if user_id not in temp_commands:
-        logger.error(f"❌ [错误] temp_commands[{user_id}] 不存在")
-        logger.error(f"   当前 temp_commands 的用户: {list(temp_commands.keys())}")
-        
-        await update.message.reply_text(
-            "❌ 会话已过期，请重新开始\n\n"
-            "请使用 /admin → 📚 频道转发库 → ➕ 添加新命令"
-        )
+        await update.message.reply_text("❌ 会话已过期，请重新开始")
         context.user_data.clear()
         return True
     
     message = update.message
     temp_cmd = temp_commands[user_id]
     
-    logger.info(f"   当前临时数据: {temp_cmd}")
-    
-    # 检查消息数量限制
     if len(temp_cmd['message_ids']) >= 100:
         await update.message.reply_text(
             "⚠️ 已达到最大限制（100条消息）\n\n请点击「完成绑定」保存"
         )
         return True
     
-    # ============== 处理不同类型的内容（核心修复）==============
-    
-    content_type = None
-    
-    # 1. 转发的消息（优先处理）
-    if message.forward_from_chat:
-        chat_id = message.forward_from_chat.id
-        username = getattr(message.forward_from_chat, 'username', None) or "未知频道"
-        temp_cmd['chat_id'] = chat_id
-        temp_cmd['message_ids'].append(message.message_id)
-        content_type = f"转发消息（来自 @{username}）"
-        logger.info(f"↗️ [转发] 频道ID: {chat_id}, 用户名: {username}")
-    
-    # 2. 频道链接（t.me/...）
-    elif message.text and ('t.me/' in message.text or '@' in message.text):
+    if message.text and ('t.me/' in message.text or '@' in message.text):
         channel_id = extract_channel_id(message.text)
         if channel_id:
             temp_cmd['chat_id'] = channel_id
-            content_type = f"频道链接（{channel_id}）"
-            logger.info(f"🔗 [链接] 频道ID: {channel_id}")
+            temp_cmd['message_ids'].append(message.message_id)
         else:
-            content_type = "文本消息"
-            logger.info(f"📝 [文本] 内容: {message.text[:50]}")
+            temp_cmd['message_ids'].append(message.message_id)
+    elif message.forward_from_chat:
+        chat_id = message.forward_from_chat.id
+        temp_cmd['chat_id'] = chat_id
         temp_cmd['message_ids'].append(message.message_id)
-    
-    # 3. 纯文本
-    elif message.text:
-        temp_cmd['message_ids'].append(message.message_id)
-        content_type = "文本消息"
-        logger.info(f"📝 [文本] 内容: {message.text[:50]}")
-    
-    # 4. 图片
-    elif message.photo:
-        temp_cmd['message_ids'].append(message.message_id)
-        content_type = "图片"
-        logger.info(f"🖼 [图片] 已添加")
-    
-    # 5. 视频
-    elif message.video:
-        temp_cmd['message_ids'].append(message.message_id)
-        content_type = "视频"
-        logger.info(f"🎬 [视频] 已添加")
-    
-    # 6. 文档
-    elif message.document:
-        temp_cmd['message_ids'].append(message.message_id)
-        file_name = getattr(message.document, 'file_name', None) or "未命名文件"
-        content_type = f"文档（{file_name}）"
-        logger.info(f"📄 [文档] 文件名: {file_name}")
-    
-    # 7. 音频
-    elif message.audio:
-        temp_cmd['message_ids'].append(message.message_id)
-        content_type = "音频"
-        logger.info(f"🎵 [音频] 已添加")
-    
-    # 8. 语音
-    elif message.voice:
-        temp_cmd['message_ids'].append(message.message_id)
-        content_type = "语音消息"
-        logger.info(f"🎤 [语音] 已添加")
-    
-    # 9. 贴纸
-    elif message.sticker:
-        temp_cmd['message_ids'].append(message.message_id)
-        content_type = "贴纸"
-        logger.info(f"🎨 [贴纸] 已添加")
-    
-    # 10. 动画/GIF
-    elif message.animation:
-        temp_cmd['message_ids'].append(message.message_id)
-        content_type = "GIF动画"
-        logger.info(f"🎞 [动画] 已添加")
-    
     else:
-        logger.warning(f"⚠️ [未知类型] 无法识别的消息类型")
-        await update.message.reply_text(
-            "❌ 不支持的消息类型\n\n"
-            "请发送：文本、图片、视频、文档、音频、转发消息等"
-        )
-        return True
+        temp_cmd['message_ids'].append(message.message_id)
     
     count = len(temp_cmd['message_ids'])
     
-    logger.info(f"✅ [统计] 已添加 {count} 条，最新类型: {content_type}")
-    logger.info(f"   更新后的临时数据: {temp_cmd}")
-    
-    # 创建带按钮的回复
-    keyboard = [
-        [InlineKeyboardButton("✅ 完成绑定", callback_data="finish_binding")],
-        [InlineKeyboardButton("❌ 取消", callback_data="cancel_binding")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    logger.info(f"用户 {user_id} 已添加 {count} 条内容")
     
     await update.message.reply_text(
         f"✅ 已添加第 {count} 条内容\n\n"
-        f"📋 类型：{content_type}\n\n"
         f"继续添加或点击「完成绑定」",
-        reply_markup=reply_markup
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ 完成绑定", callback_data="finish_binding")],
+            [InlineKeyboardButton("❌ 取消", callback_data="cancel_binding")]
+        ])
     )
-    
-    logger.info(f"✅ [消息发送] 已更新提示消息")
     
     return True
 
+async def finish_binding(query, context: ContextTypes.DEFAULT_TYPE):
+    """完成绑定 - 修复的关键部分"""
+    user_id = query.from_user.id
+    
+    logger.info(f"用户 {user_id} 点击完成绑定")
+    logger.info(f"temp_commands 内容: {temp_commands.get(user_id)}")
+    
+    if user_id not in temp_commands:
+        logger.error(f"用户 {user_id} 不在 temp_commands 中")
+        await query.answer("❌ 会话已过期", show_alert=True)
+        return
+    
+    temp_cmd = temp_commands[user_id]
+    
+    if not temp_cmd['message_ids']:
+        logger.warning(f"用户 {user_id} 没有添加任何内容")
+        await query.answer("❌ 请至少添加一条内容", show_alert=True)
+        return
+    
+    # 保存到转发库
+    forward_library[temp_cmd['command']] = {
+        'chat_id': temp_cmd['chat_id'],
+        'message_ids': temp_cmd['message_ids'],
+        'created_by': user_id
+    }
+    
+    # 保存到数据库
+    save_forward_library_to_db(temp_cmd['command'], forward_library[temp_cmd['command']])
+    
+    logger.info(f"用户 {user_id} 成功创建命令: {temp_cmd['command']}, 消息数: {len(temp_cmd['message_ids'])}")
+    
+    # 清除临时数据
+    del temp_commands[user_id]
+    context.user_data.clear()
+    
+    await query.answer("✅ 绑定成功！", show_alert=True)
+    
+    # 返回转发库列表
+    await show_forward_library(query, context)
+
 async def view_command_detail(query, context: ContextTypes.DEFAULT_TYPE, command_name: str):
-    """查看命令详情"""
     if command_name not in forward_library:
         await query.answer("❌ 命令不存在", show_alert=True)
         return
@@ -2105,7 +1986,6 @@ async def view_command_detail(query, context: ContextTypes.DEFAULT_TYPE, command
     )
 
 async def confirm_delete_command(query, context: ContextTypes.DEFAULT_TYPE, command_name: str):
-    """确认删除命令"""
     text = (
         f"⚠️ *确认删除*\n\n"
         f"确定要删除命令 `{command_name}` 吗？\n\n"
@@ -2124,11 +2004,9 @@ async def confirm_delete_command(query, context: ContextTypes.DEFAULT_TYPE, comm
     )
 
 async def delete_command(query, context: ContextTypes.DEFAULT_TYPE, command_name: str):
-    """删除命令"""
     if command_name in forward_library:
         del forward_library[command_name]
         delete_forward_library_from_db(command_name)
-        logger.info(f"🗑 已删除命令: {command_name}")
         await query.answer("✅ 删除成功", show_alert=True)
     else:
         await query.answer("❌ 命令不存在", show_alert=True)
@@ -2138,7 +2016,6 @@ async def delete_command(query, context: ContextTypes.DEFAULT_TYPE, command_name
 # ============== 用户使用转发库命令 ==============
 
 async def handle_forward_command(update: Update, context: ContextTypes.DEFAULT_TYPE, command: str):
-    """处理用户发送的转发库命令"""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
@@ -2147,8 +2024,6 @@ async def handle_forward_command(update: Update, context: ContextTypes.DEFAULT_T
     
     cmd_data = forward_library[command]
     message_ids_to_delete = [update.message.message_id]
-    
-    logger.info(f"📤 用户 {user_id} 使用命令: {command}")
     
     try:
         for msg_id in cmd_data['message_ids']:
@@ -2191,25 +2066,18 @@ async def handle_forward_command(update: Update, context: ContextTypes.DEFAULT_T
         logger.error(f"转发消息失败: {e}")
         await update.message.reply_text("❌ 发送失败，请稍后重试")
 
-# ============== 回调处理 - 核心路由 ==============
+# ============== 回调处理 ==============
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理所有按钮回调 - 关键修复"""
     query = update.callback_query
-    
-    # 立即响应回调，防止超时
-    try:
-        await query.answer()
-    except Exception as e:
-        logger.warning(f"回调响应失败: {e}")
+    await query.answer()
     
     user_id = query.from_user.id
     data = query.data
     
-    logger.info(f"🔘 用户 {user_id} 点击按钮: {data}")
+    logger.info(f"用户 {user_id} 点击按钮: {data}")
     
-    # ============== 积分系统回调 ==============
-    
+    # 积分系统回调
     if data == "show_points":
         await show_points_page(update, context)
         return
@@ -2239,8 +2107,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         product_id = data.replace("confirm_exchange_", "")
         await confirm_exchange(query, context, product_id)
         return
-    
-    # ============== 充值回调 ==============
     
     if data == "recharge_wechat":
         await handle_recharge_wechat(query, context)
@@ -2280,8 +2146,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(f"⏰ 支付宝支付已被封禁，请等待 {hours}小时{minutes}分钟后重试", show_alert=True)
         return
     
-    # ============== VIP验证回调 ==============
-    
+    # 锁定状态
     if data == "locked":
         locked, unlock_time = is_user_locked(user_id)
         if locked:
@@ -2291,6 +2156,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer(f"⏰ 开始验证已被封禁，请等待 {hours}小时{minutes}分钟后重试", show_alert=True)
         return
     
+    # 开始验证
     if data == "start_verify":
         locked, unlock_time = is_user_locked(user_id)
         if locked:
@@ -2330,6 +2196,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
     
+    # 已付款验证
     if data == "paid_verify":
         tutorial_text = (
             "📋 *如何查找订单号*\n\n"
@@ -2358,27 +2225,16 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting_order'] = True
         return
     
-    # ============== 导航回调 ==============
-    
+    # 返回首页
     if data == "back_home":
         context.user_data.clear()
         await start(update, context)
         return
     
-    # ============== 管理员功能回调 ==============
-    
-    # 检查管理员权限
+    # 管理员功能
     if not is_admin(user_id):
-        # 以下回调需要管理员权限
-        admin_callbacks = [
-            "get_file_id", "forward_library", "product_management", "add_product",
-            "add_new_command", "finish_binding", "cancel_binding", "back_to_admin", "close_menu"
-        ]
-        
-        if data in admin_callbacks or data.startswith(("manage_product_", "remove_product_", 
-                                                        "view_cmd_", "confirm_delete_", "delete_")):
-            await query.answer("⛔ 权限不足", show_alert=True)
-            return
+        await query.answer("⛔ 权限不足", show_alert=True)
+        return
     
     # 获取文件ID
     if data == "get_file_id":
@@ -2393,7 +2249,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # 转发库
     if data == "forward_library":
-        logger.info(f"📚 管理员 {user_id} 打开转发库")
         await show_forward_library(query, context)
         return
     
@@ -2416,27 +2271,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await remove_product(query, context, product_id)
         return
     
-    # ============== 转发库回调 - 核心修复 ==============
-    
     # 添加新命令
     if data == "add_new_command":
-        logger.info(f"🆕 管理员 {user_id} 触发添加新命令")
+        logger.info(f"用户 {user_id} 触发 add_new_command")
         await handle_add_command(update, context)
         return
     
-    # 完成绑定 - 最关键的修复
+    # 完成绑定 - 修复的关键
     if data == "finish_binding":
-        logger.info(f"✅ 管理员 {user_id} 触发完成绑定")
-        logger.info(f"📊 当前状态:")
-        logger.info(f"   context.user_data: {context.user_data}")
-        logger.info(f"   temp_commands: {temp_commands}")
-        
+        logger.info(f"用户 {user_id} 触发 finish_binding")
         await finish_binding(query, context)
         return
     
     # 取消绑定
     if data == "cancel_binding":
-        logger.info(f"❌ 管理员 {user_id} 取消绑定")
         if user_id in temp_commands:
             del temp_commands[user_id]
         context.user_data.clear()
@@ -2465,7 +2313,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 返回后台
     if data == "back_to_admin":
         context.user_data.clear()
-        logger.info(f"🔙 管理员 {user_id} 返回后台")
         await admin_menu(query, context)
         return
     
@@ -2488,9 +2335,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """取消操作"""
     user_id = update.effective_user.id
     
-    # 清除所有临时数据
     if user_id in temp_commands:
-        logger.info(f"🧹 清除用户 {user_id} 的转发库临时数据")
         del temp_commands[user_id]
     
     if user_id in waiting_recharge_order:
@@ -2509,8 +2354,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============== 主函数 ==============
 
 def main():
-    """主函数 - 启动机器人"""
-    
     if not BOT_TOKEN:
         logger.error("❌ BOT_TOKEN 未设置！")
         return
@@ -2519,23 +2362,15 @@ def main():
         logger.error("❌ ADMIN_ID 未设置！")
         return
     
-    logger.info("="*50)
-    logger.info("🤖 Telegram 机器人启动中...")
-    logger.info("="*50)
-    
     # 初始化数据库
-    logger.info("📊 正在初始化数据库...")
     init_database()
     
     # 从数据库加载数据
-    logger.info("📥 正在加载数据...")
     load_data_from_db()
     
-    # 创建应用
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # ============== 命令处理器 ==============
-    
+    # 命令处理
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('admin', admin))
     application.add_handler(CommandHandler('id', id_command))
@@ -2543,159 +2378,107 @@ def main():
     application.add_handler(CommandHandler('dh', dh_command))
     application.add_handler(CommandHandler('cancel', cancel))
     
-    # ============== 回调处理器 ==============
-    
+    # 回调处理
     application.add_handler(CallbackQueryHandler(button_callback))
     
-    # ============== 管理员消息处理器（优先级最高）==============
-    
-    async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """
-        管理员专用消息处理器 - 统一处理所有类型
-        优先级最高，避免被其他处理器拦截
-        """
+    # 统一的媒体处理器
+    async def unified_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """统一的媒体处理器"""
         user_id = update.effective_user.id
         
         if not is_admin(user_id):
-            return  # 不是管理员，交给后续处理器
+            return
         
-        message = update.message
-        
-        logger.info(f"📨 [管理员消息] 用户 {user_id}")
-        logger.info(f"   状态: {context.user_data}")
-        
-        # ============== 优先级1: 获取文件ID ==============
         if context.user_data.get('admin_getting_file'):
-            logger.info("   → 路由到: 获取文件ID")
-            
-            # 只处理媒体文件
-            if message.photo or message.video or message.document or \
-               message.audio or message.voice or message.sticker or message.animation:
-                await handle_admin_file(update, context)
-                return
-            else:
-                logger.warning("   ⚠️ 不是媒体文件，跳过")
-                return
+            await handle_admin_file(update, context)
+            return
         
-        # ============== 优先级2: 商品内容 ==============
         if context.user_data.get('waiting_product_content'):
-            logger.info("   → 路由到: 商品内容")
             handled = await handle_product_content_input(update, context)
-            if handled:
-                return
+            return
         
-        # ============== 优先级3: 商品名称 ==============
-        if context.user_data.get('waiting_product_name'):
-            logger.info("   → 路由到: 商品名称")
-            if message.text:
-                handled = await handle_product_name_input(update, context)
-                if handled:
-                    return
-        
-        # ============== 优先级4: 商品积分 ==============
-        if context.user_data.get('waiting_product_points'):
-            logger.info("   → 路由到: 商品积分")
-            if message.text:
-                handled = await handle_product_points_input(update, context)
-                if handled:
-                    return
-        
-        # ============== 优先级5: 转发库命令名称 ==============
-        if context.user_data.get('waiting_command_name'):
-            logger.info("   → 路由到: 转发库命令名称")
-            if message.text:
-                handled = await handle_command_name_input(update, context)
-                if handled:
-                    return
-        
-        # ============== 优先级6: 转发库内容（核心修复）==============
         if context.user_data.get('waiting_content'):
-            logger.info("   → 路由到: 转发库内容")
-            logger.info(f"   消息类型检测:")
-            logger.info(f"      文本: {bool(message.text)}")
-            logger.info(f"      图片: {bool(message.photo)}")
-            logger.info(f"      视频: {bool(message.video)}")
-            logger.info(f"      文档: {bool(message.document)}")
-            logger.info(f"      音频: {bool(message.audio)}")
-            logger.info(f"      转发: {bool(message.forward_from_chat)}")
-            
-            # 接受所有类型的消息
-            if message.text or message.photo or message.video or \
-               message.document or message.audio or message.voice or \
-               message.sticker or message.animation or message.forward_from_chat:
-                
-                handled = await handle_content_input(update, context)
-                if handled:
-                    logger.info("   ✅ 内容已处理")
-                    return
-                else:
-                    logger.warning("   ⚠️ 处理返回 False")
-            else:
-                logger.warning("   ⚠️ 未识别的消息类型")
-                await message.reply_text(
-                    "❌ 不支持的消息类型\n\n"
-                    "请发送：文本、图片、视频、文档、音频或转发消息"
-                )
-                return
-        
-        # ============== 其他情况 ==============
-        logger.info("   → 未匹配任何状态")
+            handled = await handle_content_input(update, context)
+            return
     
-    # 注册管理员消息处理器（处理所有消息类型）
+    # 媒体处理
     application.add_handler(MessageHandler(
-        filters.User(ADMIN_ID) & ~filters.COMMAND,
-        admin_message_handler
+        (filters.PHOTO | filters.VIDEO | filters.Document.ALL | 
+         filters.AUDIO | filters.VOICE | filters.Sticker.ALL | 
+         filters.ANIMATION) & filters.User(ADMIN_ID),
+        unified_media_handler
     ))
     
-    # ============== 普通用户文本消息处理器 ==============
+    # 转发消息处理
+    async def forwarded_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """转发消息处理器"""
+        if context.user_data.get('waiting_content'):
+            await handle_content_input(update, context)
     
-    async def user_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """普通用户文本消息处理器"""
+    application.add_handler(MessageHandler(
+        filters.FORWARDED & filters.User(ADMIN_ID),
+        forwarded_handler
+    ))
+    
+    # 文本消息处理
+    async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """统一的文本消息处理器"""
         user_id = update.effective_user.id
-        message_text = update.message.text
         
-        logger.info(f"💬 [用户消息] 用户 {user_id}: {message_text[:50]}")
-        
-        # 充值订单号输入
+        # 优先级1: 充值订单号输入
         if context.user_data.get('waiting_recharge_order'):
-            logger.info("   → 路由到: 充值订单号")
             handled = await handle_recharge_order_input(update, context)
             if handled:
                 return
         
-        # VIP验证订单号
+        # 优先级2: 商品管理（仅管理员）
+        if is_admin(user_id):
+            if context.user_data.get('waiting_product_name'):
+                handled = await handle_product_name_input(update, context)
+                if handled:
+                    return
+            
+            if context.user_data.get('waiting_product_points'):
+                handled = await handle_product_points_input(update, context)
+                if handled:
+                    return
+            
+            if context.user_data.get('waiting_product_content'):
+                handled = await handle_product_content_input(update, context)
+                if handled:
+                    return
+        
+        # 优先级3: 转发库命令名称（仅管理员）
+        if is_admin(user_id) and context.user_data.get('waiting_command_name'):
+            logger.info(f"处理命令名称输入: user_id={user_id}")
+            handled = await handle_command_name_input(update, context)
+            if handled:
+                return
+        
+        # 优先级4: 转发库内容（仅管理员）
+        if is_admin(user_id) and context.user_data.get('waiting_content'):
+            logger.info(f"处理内容输入: user_id={user_id}")
+            handled = await handle_content_input(update, context)
+            if handled:
+                return
+        
+        # 优先级5: VIP验证订单号
         if context.user_data.get('awaiting_order'):
-            logger.info("   → 路由到: VIP订单号")
             handled = await handle_order_input(update, context)
             if handled:
                 return
         
-        # 其他情况：检查转发库命令或返回首页
-        logger.info("   → 路由到: 普通消息处理")
+        # 其他情况
         await handle_normal_message(update, context)
     
-    # 注册普通用户文本处理器
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & ~filters.User(ADMIN_ID),
-        user_text_handler
-    ))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     
-    # ============== 启动机器人 ==============
-    
-    logger.info("="*50)
-    logger.info("✅ 机器人配置完成！")
-    logger.info("="*50)
-    logger.info(f"📊 当前数据统计:")
+    logger.info("🤖 机器人启动中...")
+    logger.info(f"📊 已加载数据:")
     logger.info(f"   - 用户积分: {len(user_points)} 个")
     logger.info(f"   - 转发库命令: {len(forward_library)} 个")
-    for cmd in forward_library.keys():
-        logger.info(f"      • {cmd} ({len(forward_library[cmd]['message_ids'])} 条消息)")
     logger.info(f"   - 商品: {len(products)} 个")
-    logger.info("="*50)
-    logger.info("🚀 机器人开始运行...")
-    logger.info("="*50)
     
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
