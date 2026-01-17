@@ -46,10 +46,9 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # Admin Basic
 ADMIN_WAITING_FOR_FILE = 10
 
-# Admin Channel Binding (New Flow)
+# Admin Channel Binding
 ADMIN_BIND_WAIT_CMD = 50
 ADMIN_BIND_WAIT_LINK = 51
-ADMIN_BIND_WAIT_COUNT = 52
 
 # Admin Product
 ADMIN_PROD_WAIT_NAME = 40
@@ -146,9 +145,19 @@ def init_db():
 
 # --- 辅助函数 ---
 def parse_telegram_link(link):
+    """解析链接，返回 (ID/Username, msg_id)"""
+    # 1. 私有频道 (t.me/c/ID/MSG_ID)
     match_private = re.search(r't\.me/c/(\d+)/(\d+)', link)
     if match_private:
         return int(f"-100{match_private.group(1)}"), int(match_private.group(2))
+    
+    # 2. 公开频道 (t.me/username/MSG_ID)
+    match_public = re.search(r't\.me/([^/]+)/(\d+)', link)
+    if match_public:
+        username = match_public.group(1)
+        if username != 'c':
+            return username, int(match_public.group(2))
+            
     return None, None
 
 def is_admin(user_id):
@@ -398,13 +407,13 @@ async def deliver_product(update, context, p_type, p_val):
     except Exception as e: await context.bot.send_message(chat_id, f"⚠️ 发货出错: {e}")
 
 # ==========================================
-# 🛠 管理员系统 (修改后的频道绑定逻辑)
+# 🛠 管理员系统
 # ==========================================
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id): return
     keyboard = [
         [InlineKeyboardButton("📂 获取文件ID", callback_data='btn_get_file_id')],
-        [InlineKeyboardButton("📚 频道绑定 (命令管理)", callback_data='btn_bind_channel')],
+        [InlineKeyboardButton("📚 频道转发库 (绑定命令)", callback_data='btn_bind_channel')],
         [InlineKeyboardButton("🛍 商品管理 (上架/下架)", callback_data='btn_manage_products')]
     ]
     await update.message.reply_text("🔧 **管理员后台**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
@@ -423,7 +432,22 @@ async def admin_prod_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     func = query.edit_message_text if query else update.message.reply_text
     await func(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
-# --- 商品上架逻辑 ---
+# --- 文件ID获取逻辑 (修正：跳转回admin) ---
+async def handle_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    fid = msg.document.file_id if msg.document else (msg.video.file_id if msg.video else (msg.photo[-1].file_id if msg.photo else None))
+    
+    if fid:
+        await msg.reply_text(f"✅ **获取成功**\nFile ID:\n`{fid}`", parse_mode=ParseMode.MARKDOWN)
+    else:
+        await msg.reply_text("❌ 未知文件类型")
+    
+    # 跳转回 Admin 面板
+    await asyncio.sleep(1)
+    await admin_panel(update, context)
+    return ConversationHandler.END
+
+# --- 商品上架逻辑 (修正：跳转回admin) ---
 async def admin_add_prod_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     await query.edit_message_text("📝 **步骤 1/3：请输入商品名称**", parse_mode=ParseMode.MARKDOWN)
@@ -451,7 +475,12 @@ async def admin_add_prod_content(update: Update, context: ContextTypes.DEFAULT_T
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("INSERT INTO products (name, cost, content_type, content_val) VALUES (%s, %s, %s, %s)", (context.user_data['new_prod_name'], context.user_data['new_prod_cost'], p_type, p_val))
     conn.commit(); conn.close()
-    await update.message.reply_text("✅ 商品上架成功！"); await admin_panel(update, context)
+    
+    await update.message.reply_text("✅ 商品上架成功！")
+    
+    # 跳转回 Admin 面板
+    await asyncio.sleep(1)
+    await admin_panel(update, context)
     return ConversationHandler.END
 
 # --- 商品删除逻辑 ---
@@ -474,80 +503,62 @@ async def admin_del_exec(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit(); conn.close()
     await query.message.reply_text("✅ 已删除。"); await asyncio.sleep(1); await admin_prod_menu(update, context)
 
-# --- 频道绑定新逻辑 (分步) ---
+# --- 频道绑定逻辑 (修正：跳转回admin) ---
 async def admin_bind_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """步骤1：询问自定义命令"""
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("⌨️ **请输入自定义命令**\n(例如：`VIP1`，支持中文)", parse_mode=ParseMode.MARKDOWN)
+    query = update.callback_query; await query.answer()
+    await query.edit_message_text("⌨️ **请输入自定义命令**\n(例如：`VIP1`，支持中文/大写)", parse_mode=ParseMode.MARKDOWN)
     return ADMIN_BIND_WAIT_CMD
 
 async def admin_bind_get_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """步骤2：询问链接"""
     cmd = update.message.text.strip().upper()
     context.user_data['bind_cmd'] = cmd
-    await update.message.reply_text(f"✅ 命令已记录：`{cmd}`\n\n🔗 **请输入起始消息链接**\n(例如：`https://t.me/c/12345/100`)", parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(f"✅ 命令：`{cmd}`\n🔗 **请输入消息链接** (支持 t.me/...)", parse_mode=ParseMode.MARKDOWN)
     return ADMIN_BIND_WAIT_LINK
 
 async def admin_bind_get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """步骤3：询问数量"""
     link = update.message.text.strip()
-    chat_id, msg_id = parse_telegram_link(link)
+    chat_identifier, msg_id = parse_telegram_link(link)
     
-    if not chat_id:
-        await update.message.reply_text("❌ 链接格式无效，请重新输入链接。\n(格式应为 `t.me/c/xxx/xxx`)")
-        return ADMIN_BIND_WAIT_LINK # 保持在当前状态重试
+    if not chat_identifier:
+        await update.message.reply_text("❌ 链接格式无效，请重试。")
+        return ADMIN_BIND_WAIT_LINK
     
-    context.user_data['bind_chat_id'] = chat_id
-    context.user_data['bind_msg_id'] = msg_id
-    
-    await update.message.reply_text("🔢 **请输入转发数量**\n(最多 100 条)", parse_mode=ParseMode.MARKDOWN)
-    return ADMIN_BIND_WAIT_COUNT
+    # 尝试解析公开频道 Username 为 ID
+    final_chat_id = chat_identifier
+    if isinstance(chat_identifier, str):
+        try:
+            chat = await context.bot.get_chat(chat_id=f"@{chat_identifier}")
+            final_chat_id = chat.id
+        except Exception as e:
+            await update.message.reply_text("❌ 无法获取该公开频道ID，请确保链接正确或将机器人拉入频道。")
+            return ADMIN_BIND_WAIT_LINK
 
-async def admin_bind_get_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """步骤4：完成绑定"""
-    try:
-        count = int(update.message.text.strip())
-        if count < 1 or count > 100:
-            await update.message.reply_text("❌ 数量必须在 1 到 100 之间，请重新输入。")
-            return ADMIN_BIND_WAIT_COUNT
-        
-        # 存入数据库
-        cmd = context.user_data['bind_cmd']
-        chat_id = context.user_data['bind_chat_id']
-        msg_id = context.user_data['bind_msg_id']
-        
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO msg_bindings (command_trigger, source_chat_id, start_msg_id, msg_count)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (command_trigger) 
-            DO UPDATE SET source_chat_id = EXCLUDED.source_chat_id, start_msg_id = EXCLUDED.start_msg_id, msg_count = EXCLUDED.msg_count;
-        """, (cmd, chat_id, msg_id, count))
-        conn.commit()
-        conn.close()
-        
-        await update.message.reply_text(
-            f"✅ **已完成绑定**\n\n"
-            f"命令: `{cmd}`\n"
-            f"频道: `{chat_id}`\n"
-            f"起始: `{msg_id}`\n"
-            f"数量: `{count}`",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        await admin_panel(update, context) # 返回主面板
-        return ConversationHandler.END
-        
-    except ValueError:
-        await update.message.reply_text("❌ 请输入有效的数字。")
-        return ADMIN_BIND_WAIT_COUNT
+    cmd = context.user_data['bind_cmd']
+    count = 100 # 固定数量
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO msg_bindings (command_trigger, source_chat_id, start_msg_id, msg_count)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (command_trigger) 
+        DO UPDATE SET source_chat_id = EXCLUDED.source_chat_id, start_msg_id = EXCLUDED.start_msg_id, msg_count = EXCLUDED.msg_count;
+    """, (cmd, final_chat_id, msg_id, count))
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text(f"✅ **绑定成功**\n命令: `{cmd}`\n自动转发: 100条", parse_mode=ParseMode.MARKDOWN)
+    
+    # 跳转回 Admin 面板
+    await asyncio.sleep(1)
+    await admin_panel(update, context)
+    return ConversationHandler.END
 
 # --- 管理员通用回调 ---
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     if query.data == 'btn_get_file_id': await query.edit_message_text("📤 发送文件获取ID"); return ADMIN_WAITING_FOR_FILE
-    elif query.data == 'btn_bind_channel': return await admin_bind_start(update, context) # 跳转新逻辑
+    elif query.data == 'btn_bind_channel': return await admin_bind_start(update, context) 
     elif query.data == 'back_to_admin': await admin_panel(update, context); return ConversationHandler.END
 
 # ==========================================
@@ -594,6 +605,7 @@ async def check_recharge_order(update: Update, context: ContextTypes.DEFAULT_TYP
     valid = (method=='wx' and text.startswith('4200')) or (method=='ali' and text.startswith('4768'))
     
     if valid:
+        # === 成功 ===
         cur.execute("UPDATE user_points SET points=points+100, recharge_attempts=0 WHERE user_id=%s", (user_id,))
         if method=='wx': cur.execute("UPDATE user_points SET wx_used=TRUE WHERE user_id=%s", (user_id,))
         else: cur.execute("UPDATE user_points SET ali_used=TRUE WHERE user_id=%s", (user_id,))
@@ -601,11 +613,13 @@ async def check_recharge_order(update: Update, context: ContextTypes.DEFAULT_TYP
         
         log_point_change(user_id, 100, f"充值:{'微信' if method=='wx' else '支付宝'}")
         
+        # 成功 -> 跳转到首页
         await update.message.reply_text("🎉 **充值成功！**\n获得 100 积分。")
         await asyncio.sleep(2)
-        await start(update, context)
+        await start(update, context) # 跳转到首页 /start
         return ConversationHandler.END
     else:
+        # === 失败 ===
         cur.execute("SELECT recharge_attempts FROM user_points WHERE user_id=%s", (user_id,))
         att = (cur.fetchone()[0] or 0) + 1
         if att >= 2:
@@ -618,8 +632,9 @@ async def check_recharge_order(update: Update, context: ContextTypes.DEFAULT_TYP
             conn.commit(); conn.close()
             await update.message.reply_text("❌ 失败，请重试 (剩1次)。")
         
+        # 失败 -> 跳转回积分页
         await asyncio.sleep(2)
-        await jf_menu_handler(update, context)
+        await jf_menu_handler(update, context) # 跳转回积分页 /jf
         return ConversationHandler.END
 
 # ==========================================
@@ -633,11 +648,6 @@ async def go_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await update.callback_query.answer(); await update.callback_query.delete_message()
     except: pass
     await start(update, context)
-
-async def handle_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    fid = msg.document.file_id if msg.document else (msg.video.file_id if msg.video else (msg.photo[-1].file_id if msg.photo else None))
-    await msg.reply_text(f"`{fid}`" if fid else "❌ 未知文件", parse_mode=ParseMode.MARKDOWN); return ConversationHandler.END
 
 async def delete_msg_job(context: ContextTypes.DEFAULT_TYPE):
     data = context.job.data
@@ -743,7 +753,7 @@ if __name__ == '__main__':
     if not BOT_TOKEN: exit("BOT_TOKEN missing")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Admin Handler (包含新的绑定逻辑)
+    # Admin Handler
     app.add_handler(ConversationHandler(
         entry_points=[
             CallbackQueryHandler(admin_callback, pattern='^(btn_get_file_id|btn_bind_channel)$'),
@@ -753,10 +763,9 @@ if __name__ == '__main__':
         states={
             ADMIN_WAITING_FOR_FILE: [MessageHandler(filters.ATTACHMENT|filters.PHOTO, handle_file_id)],
             
-            # 新的频道绑定分步状态
+            # 频道绑定状态
             ADMIN_BIND_WAIT_CMD: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bind_get_cmd)],
             ADMIN_BIND_WAIT_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bind_get_link)],
-            ADMIN_BIND_WAIT_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_bind_get_count)],
 
             # 商品管理状态
             ADMIN_PROD_WAIT_NAME: [MessageHandler(filters.TEXT, admin_add_prod_name)],
@@ -805,5 +814,5 @@ if __name__ == '__main__':
     app.add_handler(CallbackQueryHandler(go_home, pattern='^go_home$'))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command_forward))
 
-    print("Bot is running with Updated Admin Binding Flow...")
+    print("Bot is running with Final Optimized Flows...")
     app.run_polling()
