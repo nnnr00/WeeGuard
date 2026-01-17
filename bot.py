@@ -2483,7 +2483,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     """主函数 - 启动机器人"""
     
-    # 检查必要配置
     if not BOT_TOKEN:
         logger.error("❌ BOT_TOKEN 未设置！")
         return
@@ -2520,133 +2519,138 @@ def main():
     
     application.add_handler(CallbackQueryHandler(button_callback))
     
-    # ============== 媒体处理器 ==============
+    # ============== 管理员消息处理器（优先级最高）==============
     
-    async def unified_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """统一的媒体处理器"""
+    async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        管理员专用消息处理器 - 统一处理所有类型
+        优先级最高，避免被其他处理器拦截
+        """
         user_id = update.effective_user.id
         
-        # 只处理管理员的媒体
         if not is_admin(user_id):
-            return
+            return  # 不是管理员，交给后续处理器
         
-        logger.info(f"📎 管理员 {user_id} 发送媒体")
+        message = update.message
+        
+        logger.info(f"📨 [管理员消息] 用户 {user_id}")
         logger.info(f"   状态: {context.user_data}")
         
-        # 优先级1: 获取文件ID
+        # ============== 优先级1: 获取文件ID ==============
         if context.user_data.get('admin_getting_file'):
-            logger.info("   → 处理为文件ID获取")
-            await handle_admin_file(update, context)
-            return
+            logger.info("   → 路由到: 获取文件ID")
+            
+            # 只处理媒体文件
+            if message.photo or message.video or message.document or \
+               message.audio or message.voice or message.sticker or message.animation:
+                await handle_admin_file(update, context)
+                return
+            else:
+                logger.warning("   ⚠️ 不是媒体文件，跳过")
+                return
         
-        # 优先级2: 商品内容上传
+        # ============== 优先级2: 商品内容 ==============
         if context.user_data.get('waiting_product_content'):
-            logger.info("   → 处理为商品内容")
-            await handle_product_content_input(update, context)
-            return
+            logger.info("   → 路由到: 商品内容")
+            handled = await handle_product_content_input(update, context)
+            if handled:
+                return
         
-        # 优先级3: 转发库内容
+        # ============== 优先级3: 商品名称 ==============
+        if context.user_data.get('waiting_product_name'):
+            logger.info("   → 路由到: 商品名称")
+            if message.text:
+                handled = await handle_product_name_input(update, context)
+                if handled:
+                    return
+        
+        # ============== 优先级4: 商品积分 ==============
+        if context.user_data.get('waiting_product_points'):
+            logger.info("   → 路由到: 商品积分")
+            if message.text:
+                handled = await handle_product_points_input(update, context)
+                if handled:
+                    return
+        
+        # ============== 优先级5: 转发库命令名称 ==============
+        if context.user_data.get('waiting_command_name'):
+            logger.info("   → 路由到: 转发库命令名称")
+            if message.text:
+                handled = await handle_command_name_input(update, context)
+                if handled:
+                    return
+        
+        # ============== 优先级6: 转发库内容（核心修复）==============
         if context.user_data.get('waiting_content'):
-            logger.info("   → 处理为转发库内容")
-            await handle_content_input(update, context)
-            return
+            logger.info("   → 路由到: 转发库内容")
+            logger.info(f"   消息类型检测:")
+            logger.info(f"      文本: {bool(message.text)}")
+            logger.info(f"      图片: {bool(message.photo)}")
+            logger.info(f"      视频: {bool(message.video)}")
+            logger.info(f"      文档: {bool(message.document)}")
+            logger.info(f"      音频: {bool(message.audio)}")
+            logger.info(f"      转发: {bool(message.forward_from_chat)}")
+            
+            # 接受所有类型的消息
+            if message.text or message.photo or message.video or \
+               message.document or message.audio or message.voice or \
+               message.sticker or message.animation or message.forward_from_chat:
+                
+                handled = await handle_content_input(update, context)
+                if handled:
+                    logger.info("   ✅ 内容已处理")
+                    return
+                else:
+                    logger.warning("   ⚠️ 处理返回 False")
+            else:
+                logger.warning("   ⚠️ 未识别的消息类型")
+                await message.reply_text(
+                    "❌ 不支持的消息类型\n\n"
+                    "请发送：文本、图片、视频、文档、音频或转发消息"
+                )
+                return
         
-        logger.warning(f"   ⚠️ 未匹配任何处理器")
+        # ============== 其他情况 ==============
+        logger.info("   → 未匹配任何状态")
     
-    # 媒体处理
+    # 注册管理员消息处理器（处理所有消息类型）
     application.add_handler(MessageHandler(
-        (filters.PHOTO | filters.VIDEO | filters.Document.ALL | 
-         filters.AUDIO | filters.VOICE | filters.Sticker.ALL | 
-         filters.ANIMATION) & filters.User(ADMIN_ID),
-        unified_media_handler
+        filters.User(ADMIN_ID) & ~filters.COMMAND,
+        admin_message_handler
     ))
     
-    # ============== 转发消息处理器 ==============
+    # ============== 普通用户文本消息处理器 ==============
     
-    async def forwarded_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """转发消息处理器"""
-        user_id = update.effective_user.id
-        
-        if not is_admin(user_id):
-            return
-        
-        logger.info(f"↗️ 管理员 {user_id} 转发消息")
-        logger.info(f"   状态: {context.user_data}")
-        
-        if context.user_data.get('waiting_content'):
-            logger.info("   → 处理为转发库内容")
-            await handle_content_input(update, context)
-        else:
-            logger.warning("   ⚠️ 状态不匹配")
-    
-    application.add_handler(MessageHandler(
-        filters.FORWARDED & filters.User(ADMIN_ID),
-        forwarded_handler
-    ))
-    
-    # ============== 文本消息处理器 ==============
-    
-    async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """统一的文本消息处理器 - 核心路由"""
+    async def user_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """普通用户文本消息处理器"""
         user_id = update.effective_user.id
         message_text = update.message.text
         
-        logger.info(f"💬 用户 {user_id} 发送文本: {message_text[:50]}")
-        logger.info(f"   状态: {context.user_data}")
+        logger.info(f"💬 [用户消息] 用户 {user_id}: {message_text[:50]}")
         
-        # 优先级1: 充值订单号输入
+        # 充值订单号输入
         if context.user_data.get('waiting_recharge_order'):
-            logger.info("   → 处理为充值订单号")
+            logger.info("   → 路由到: 充值订单号")
             handled = await handle_recharge_order_input(update, context)
             if handled:
                 return
         
-        # 优先级2: 商品管理（仅管理员）
-        if is_admin(user_id):
-            if context.user_data.get('waiting_product_name'):
-                logger.info("   → 处理为商品名称")
-                handled = await handle_product_name_input(update, context)
-                if handled:
-                    return
-            
-            if context.user_data.get('waiting_product_points'):
-                logger.info("   → 处理为商品积分")
-                handled = await handle_product_points_input(update, context)
-                if handled:
-                    return
-            
-            if context.user_data.get('waiting_product_content'):
-                logger.info("   → 处理为商品内容（文本）")
-                handled = await handle_product_content_input(update, context)
-                if handled:
-                    return
-        
-        # 优先级3: 转发库命令名称（仅管理员） - 关键处理
-        if is_admin(user_id) and context.user_data.get('waiting_command_name'):
-            logger.info("   → 处理为转发库命令名称")
-            handled = await handle_command_name_input(update, context)
-            if handled:
-                return
-        
-        # 优先级4: 转发库内容（仅管理员） - 关键处理
-        if is_admin(user_id) and context.user_data.get('waiting_content'):
-            logger.info("   → 处理为转发库内容（文本）")
-            handled = await handle_content_input(update, context)
-            if handled:
-                return
-        
-        # 优先级5: VIP验证订单号
+        # VIP验证订单号
         if context.user_data.get('awaiting_order'):
-            logger.info("   → 处理为VIP订单号")
+            logger.info("   → 路由到: VIP订单号")
             handled = await handle_order_input(update, context)
             if handled:
                 return
         
         # 其他情况：检查转发库命令或返回首页
-        logger.info("   → 处理为普通消息")
+        logger.info("   → 路由到: 普通消息处理")
         await handle_normal_message(update, context)
     
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    # 注册普通用户文本处理器
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & ~filters.User(ADMIN_ID),
+        user_text_handler
+    ))
     
     # ============== 启动机器人 ==============
     
@@ -2663,6 +2667,7 @@ def main():
     logger.info("🚀 机器人开始运行...")
     logger.info("="*50)
     
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
