@@ -485,6 +485,8 @@ async def show_product_management(query, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_add_product(query, context: ContextTypes.DEFAULT_TYPE):
     """处理添加商品"""
+    user_id = query.from_user.id
+    
     await query.edit_message_text(
         "📝 *添加新商品*\n\n"
         "请输入商品名称：\n\n"
@@ -499,7 +501,7 @@ async def handle_add_product(query, context: ContextTypes.DEFAULT_TYPE):
 async def handle_product_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理商品名称输入"""
     if not context.user_data.get('waiting_product_name'):
-        return
+        return False
     
     user_id = update.effective_user.id
     product_name = update.message.text.strip()
@@ -519,11 +521,13 @@ async def handle_product_name_input(update: Update, context: ContextTypes.DEFAUL
         f"💡 输入纯数字即可",
         parse_mode='Markdown'
     )
+    
+    return True
 
 async def handle_product_points_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理商品积分输入"""
     if not context.user_data.get('waiting_product_points'):
-        return
+        return False
     
     user_id = update.effective_user.id
     
@@ -532,7 +536,7 @@ async def handle_product_points_input(update: Update, context: ContextTypes.DEFA
         
         if points < 0:
             await update.message.reply_text("❌ 积分必须大于等于0，请重新输入：")
-            return
+            return True
         
         temp_products[user_id]['points'] = points
         
@@ -551,13 +555,16 @@ async def handle_product_points_input(update: Update, context: ContextTypes.DEFA
             parse_mode='Markdown'
         )
         
+        return True
+        
     except ValueError:
         await update.message.reply_text("❌ 请输入有效的数字：")
+        return True
 
 async def handle_product_content_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理商品内容输入"""
     if not context.user_data.get('waiting_product_content'):
-        return
+        return False
     
     user_id = update.effective_user.id
     message = update.message
@@ -565,7 +572,7 @@ async def handle_product_content_input(update: Update, context: ContextTypes.DEF
     if user_id not in temp_products:
         await message.reply_text("❌ 会话已过期，请重新开始")
         context.user_data.clear()
-        return
+        return True
     
     # 获取内容
     content = {}
@@ -592,7 +599,7 @@ async def handle_product_content_input(update: Update, context: ContextTypes.DEF
         }
     else:
         await message.reply_text("❌ 不支持的内容类型，请重新发送")
-        return
+        return True
     
     # 保存商品
     temp_products[user_id]['content'] = content
@@ -626,6 +633,8 @@ async def handle_product_content_input(update: Update, context: ContextTypes.DEF
         "✅ 上架完成",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    
+    return True
 
 async def manage_product(query, context: ContextTypes.DEFAULT_TYPE, product_id: str):
     """管理单个商品"""
@@ -1074,7 +1083,7 @@ def is_user_locked(user_id: int) -> tuple[bool, datetime]:
     return False, None
 
 def record_failed_attempt(user_id: int):
-    """记录验证失败 - 修复的关键部分"""
+    """记录验证失败"""
     if user_id not in user_locks:
         user_locks[user_id] = {'count': 0, 'locked_until': None}
     
@@ -1222,13 +1231,13 @@ async def handle_normal_message(update: Update, context: ContextTypes.DEFAULT_TY
     reply_markup = get_home_keyboard(user_id)
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# ============== 验证流程 - 修复的关键部分 ==============
+# ============== 验证流程 ==============
 
 async def handle_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理VIP验证订单号输入"""
     if not context.user_data.get('awaiting_order'):
         await handle_normal_message(update, context)
-        return
+        return False
     
     user_id = update.effective_user.id
     order_number = update.message.text.strip()
@@ -1261,7 +1270,7 @@ async def handle_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await start(update, context)
         
     else:
-        # 验证失败 - 修复的关键部分
+        # 验证失败
         is_locked = record_failed_attempt(user_id)
         
         if is_locked:
@@ -1293,6 +1302,8 @@ async def handle_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"请检查订单号是否正确，然后重新输入："
             )
             await update.message.reply_text(fail_text, parse_mode='Markdown')
+    
+    return True
 
 # ============== 管理员后台 ==============
 
@@ -1423,7 +1434,7 @@ async def handle_admin_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['admin_getting_file'] = False
     context.user_data['in_admin_process'] = False
 
-# ============== 频道转发库功能 ==============
+# ============== 频道转发库功能 - 修复的关键部分 ==============
 
 async def show_forward_library(query, context: ContextTypes.DEFAULT_TYPE):
     if not forward_library:
@@ -1449,6 +1460,7 @@ async def show_forward_library(query, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = query.from_user.id
     
     if query.data == "add_new_command":
         await query.edit_message_text(
@@ -1464,7 +1476,7 @@ async def handle_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_command_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('waiting_command_name'):
-        return
+        return False
     
     user_id = update.effective_user.id
     command_name = update.message.text.strip()
@@ -1474,7 +1486,7 @@ async def handle_command_name_input(update: Update, context: ContextTypes.DEFAUL
             f"❌ 命令 `{command_name}` 已存在！\n\n请输入其他命令名称：",
             parse_mode='Markdown'
         )
-        return
+        return True
     
     temp_commands[user_id] = {
         'command': command_name,
@@ -1502,17 +1514,19 @@ async def handle_command_name_input(update: Update, context: ContextTypes.DEFAUL
             [InlineKeyboardButton("❌ 取消", callback_data="cancel_binding")]
         ])
     )
+    
+    return True
 
 async def handle_content_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get('waiting_content'):
-        return
+        return False
     
     user_id = update.effective_user.id
     
     if user_id not in temp_commands:
         await update.message.reply_text("❌ 会话已过期，请重新开始")
         context.user_data.clear()
-        return
+        return True
     
     message = update.message
     temp_cmd = temp_commands[user_id]
@@ -1521,7 +1535,7 @@ async def handle_content_input(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(
             "⚠️ 已达到最大限制（100条消息）\n\n请点击「完成绑定」保存"
         )
-        return
+        return True
     
     if message.text and ('t.me/' in message.text or '@' in message.text):
         channel_id = extract_channel_id(message.text)
@@ -1546,6 +1560,8 @@ async def handle_content_input(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("❌ 取消", callback_data="cancel_binding")]
         ])
     )
+    
+    return True
 
 async def finish_binding(query, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
@@ -2001,12 +2017,12 @@ def main():
         
         # 优先级2: 商品内容上传
         if context.user_data.get('waiting_product_content'):
-            await handle_product_content_input(update, context)
+            handled = await handle_product_content_input(update, context)
             return
         
         # 优先级3: 转发库内容
         if context.user_data.get('waiting_content'):
-            await handle_content_input(update, context)
+            handled = await handle_content_input(update, context)
             return
     
     # 媒体处理（图片、视频、文档等）
@@ -2042,32 +2058,38 @@ def main():
         # 优先级2: 商品管理（仅管理员）
         if is_admin(user_id):
             if context.user_data.get('waiting_product_name'):
-                await handle_product_name_input(update, context)
-                return
+                handled = await handle_product_name_input(update, context)
+                if handled:
+                    return
             
             if context.user_data.get('waiting_product_points'):
-                await handle_product_points_input(update, context)
-                return
+                handled = await handle_product_points_input(update, context)
+                if handled:
+                    return
             
             # 商品内容（文本）
             if context.user_data.get('waiting_product_content'):
-                await handle_product_content_input(update, context)
-                return
+                handled = await handle_product_content_input(update, context)
+                if handled:
+                    return
         
         # 优先级3: 转发库命令名称（仅管理员）
         if is_admin(user_id) and context.user_data.get('waiting_command_name'):
-            await handle_command_name_input(update, context)
-            return
+            handled = await handle_command_name_input(update, context)
+            if handled:
+                return
         
         # 优先级4: 转发库内容（仅管理员）
         if is_admin(user_id) and context.user_data.get('waiting_content'):
-            await handle_content_input(update, context)
-            return
+            handled = await handle_content_input(update, context)
+            if handled:
+                return
         
         # 优先级5: VIP验证订单号
         if context.user_data.get('awaiting_order'):
-            await handle_order_input(update, context)
-            return
+            handled = await handle_order_input(update, context)
+            if handled:
+                return
         
         # 其他情况：检查是否为转发库命令或返回首页
         await handle_normal_message(update, context)
