@@ -1,104 +1,131 @@
 import os
+import re
 import logging
+import asyncio
 import psycopg2
 import random
-import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
 from telegram.ext import (
-    ApplicationBuilder, ContextTypes, CommandHandler, 
-    CallbackQueryHandler, MessageHandler, filters
+    ApplicationBuilder,
+    ContextTypes,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+    ConversationHandler
 )
 
-# --- 配置日志 ---
+# ==========================================
+# ⚠️ 配置区域 (请填入你的 File ID)
+# ==========================================
+FILE_ID_VIP = None         # VIP特权说明图
+FILE_ID_TUTORIAL = None    # 验证订单教程图
+FILE_ID_WX_QR = None       # 微信收款码
+FILE_ID_WX_HELP = None     # 微信教程
+FILE_ID_ALI_QR = None      # 支付宝收款码
+FILE_ID_ALI_HELP = None    # 支付宝教程
+
+GROUP_LINK = "https://t.me/joinchat/YOUR_LINK_HERE" # 验证成功后的群链接
+
+# ==========================================
+# ⚙️ 系统设置
+# ==========================================
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# --- 环境变量 ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = os.getenv("ADMIN_ID")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-# --- 素材配置 (部署后通过环境变量填入 File ID) ---
-VIP_INTRO_FILE_ID = os.getenv("VIP_FILE_ID", "")
-TUTORIAL_FILE_ID = os.getenv("TUTORIAL_FILE_ID", "")
-WECHAT_QR_FILE_ID = os.getenv("WECHAT_QR_ID", "")
-ALIPAY_QR_FILE_ID = os.getenv("ALIPAY_QR_ID", "")
-WECHAT_STEP_FILE_ID = os.getenv("WECHAT_STEP_ID", "")
-ALIPAY_STEP_FILE_ID = os.getenv("ALIPAY_STEP_ID", "")
+# --- 状态定义 ---
+# Admin
+ADMIN_WAITING_FOR_FILE = 10
+ADMIN_WAITING_FOR_BINDING = 11
+ADMIN_PROD_WAIT_NAME = 40
+ADMIN_PROD_WAIT_COST = 41
+ADMIN_PROD_WAIT_CONTENT = 42
+# User Verify
+USER_WAITING_FOR_ORDER = 20
+# User Recharge
+WAITING_FOR_WX_ORDER = 30
+WAITING_FOR_ALI_ORDER = 31
 
-# --- 数据库连接 ---
+# ==========================================
+# 🗄️ 数据库操作
+# ==========================================
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    """初始化所有数据库表"""
+    if not DATABASE_URL: return
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # 1. 基础积分与锁定状态表
+        # 1. 消息转发绑定表
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS msg_bindings (
+                command_trigger TEXT PRIMARY KEY,
+                source_chat_id BIGINT,
+                start_msg_id INTEGER,
+                msg_count INTEGER
+            );
+        """)
+
+        # 2. 用户验证状态表
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_verification (
+                user_id BIGINT PRIMARY KEY,
+                attempt_count INTEGER DEFAULT 0,
+                lockout_until TIMESTAMP
+            );
+        """)
+
+        # 3. 用户积分表
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_points (
-                user_id TEXT PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 points INTEGER DEFAULT 0,
-                last_checkin DATE,
-                wechat_used BOOLEAN DEFAULT FALSE,
-                alipay_used BOOLEAN DEFAULT FALSE,
-                recharge_fail_count INTEGER DEFAULT 0,
-                recharge_locked_until TIMESTAMP,
-                vip_fail_count INTEGER DEFAULT 0,
-                vip_locked_until TIMESTAMP,
-                is_vip BOOLEAN DEFAULT FALSE
+                last_signin_date DATE,
+                wx_used BOOLEAN DEFAULT FALSE,
+                ali_used BOOLEAN DEFAULT FALSE,
+                recharge_attempts INTEGER DEFAULT 0,
+                recharge_lockout TIMESTAMP
             );
         """)
 
-        # 2. 积分流水表 (用于明细和排行)
+        # 4. 商品表
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS point_history (
-                id SERIAL PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                change_amount INTEGER NOT NULL,
-                reason TEXT,
-                description TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-
-        # 3. 商品表
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS shop_products (
+            CREATE TABLE IF NOT EXISTS products (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 cost INTEGER NOT NULL,
-                content_type TEXT,
-                content_data TEXT,
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                content_type TEXT, 
+                content_val TEXT
             );
         """)
 
-        # 4. 购买记录表
+        # 5. 兑换记录表
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS user_purchases (
-                id SERIAL PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                product_id INTEGER NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, product_id)
+            CREATE TABLE IF NOT EXISTS redemptions (
+                user_id BIGINT,
+                product_id INTEGER,
+                PRIMARY KEY (user_id, product_id)
             );
         """)
 
-        # 5. 转发命令绑定表
+        # 6. 积分变动日志表 (新)
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS command_bindings (
+            CREATE TABLE IF NOT EXISTS point_logs (
                 id SERIAL PRIMARY KEY,
-                command TEXT NOT NULL,
-                from_chat_id TEXT NOT NULL,
-                message_id INTEGER NOT NULL,
+                user_id BIGINT,
+                change_amount INTEGER,
+                reason TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -106,604 +133,637 @@ def init_db():
         conn.commit()
         cur.close()
         conn.close()
-        print("Database initialized successfully.")
+        logger.info("数据库表结构初始化成功")
     except Exception as e:
-        logger.error(f"Database init error: {e}")
+        logger.error(f"数据库初始化失败: {e}")
 
-# --- 数据库逻辑封装 ---
-
-def get_user_data(user_id):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    # 确保用户存在
-    cur.execute("INSERT INTO user_points (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (str(user_id),))
-    conn.commit()
-    
-    cur.execute("SELECT * FROM user_points WHERE user_id = %s", (str(user_id),))
-    # 获取列名以便构建字典
-    colnames = [desc[0] for desc in cur.description]
-    row = cur.fetchone()
-    conn.close()
-    return dict(zip(colnames, row)) if row else {}
-
-def update_user_status(user_id, updates: dict):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    set_clauses = []
-    values = []
-    for k, v in updates.items():
-        set_clauses.append(f"{k} = %s")
-        values.append(v)
-    values.append(str(user_id))
-    sql = f"UPDATE user_points SET {', '.join(set_clauses)} WHERE user_id = %s"
-    cur.execute(sql, tuple(values))
-    conn.commit()
-    conn.close()
-
-def add_points(user_id, amount, reason, desc):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("UPDATE user_points SET points = points + %s WHERE user_id = %s", (amount, str(user_id)))
-    cur.execute("INSERT INTO point_history (user_id, change_amount, reason, description) VALUES (%s, %s, %s, %s)",
-                (str(user_id), amount, reason, desc))
-    conn.commit()
-    conn.close()
-
-def save_binding(command, chat_id, msg_id):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO command_bindings (command, from_chat_id, message_id) VALUES (%s, %s, %s)",
-                (command.upper(), str(chat_id), int(msg_id)))
-    conn.commit()
-    conn.close()
-
-# --- 辅助逻辑 ---
-
+# --- 辅助函数 ---
 def parse_telegram_link(link):
-    """解析链接获取 chat_id 和 message_id"""
-    private = re.search(r't\.me/c/(\d+)/(\d+)', link)
-    if private: return f"-100{private.group(1)}", int(private.group(2))
-    public = re.search(r't\.me/([a-zA-Z0-9_]+)/(\d+)', link)
-    if public: return f"@{public.group(1)}", int(public.group(2))
+    match_private = re.search(r't\.me/c/(\d+)/(\d+)', link)
+    if match_private:
+        return int(f"-100{match_private.group(1)}"), int(match_private.group(2))
     return None, None
 
-async def delayed_delete(context: ContextTypes.DEFAULT_TYPE):
-    """定时任务：删除资源并提示"""
-    job = context.job.data
-    chat_id = job['chat_id']
-    msg_ids = job['msg_ids']
-    
-    # 删除消息
-    for mid in msg_ids:
-        try: await context.bot.delete_message(chat_id=chat_id, message_id=mid)
-        except: pass
-        
-    # 发送提示
-    bot_uname = context.bot.username
-    kb = [[InlineKeyboardButton("🔄 重新获取 (已购买可点此)", url=f"https://t.me/{bot_uname}")]]
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text="⏳ **消息已过期**\n\n消息存在时间有限，请到购买处重新获取。\n（已购买 不需要二次付费就可看见消息）",
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode='Markdown'
-    )
+def is_admin(user_id):
+    return str(user_id) == str(ADMIN_ID)
 
-# --- 核心处理器 ---
+def log_point_change(user_id, amount, reason):
+    """记录积分变动日志"""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO point_logs (user_id, change_amount, reason) VALUES (%s, %s, %s)", (user_id, amount, reason))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"日志记录失败: {e}")
 
+async def send_media_msg(update, context, file_id, caption, reply_markup=None):
+    chat_id = update.effective_chat.id
+    try:
+        if file_id:
+            try: await context.bot.send_photo(chat_id, file_id, caption=caption, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+            except: 
+                try: await context.bot.send_video(chat_id, file_id, caption=caption, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+                except: await context.bot.send_message(chat_id, caption, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await context.bot.send_message(chat_id, caption, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        logger.error(f"发送消息失败: {e}")
+
+# ==========================================
+# 🏠 首页逻辑 /start
+# ==========================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear() # 清除状态
-    text = (
+    welcome_text = (
         "👋 欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~\n\n"
-        "📢 小卫小卫，守门员小卫！\n"
+        "📢 **小卫小卫，守门员小卫！**\n"
         "一键入群，小卫帮你搞定！\n"
         "新人来报到，小卫查身份！"
     )
-    kb = [
-        [InlineKeyboardButton("🚀 开始验证", callback_data='start_verify')],
-        [InlineKeyboardButton("💰 积分中心", callback_data='menu_points')]
+    keyboard = [
+        [InlineKeyboardButton("🚀 开始验证", callback_data='btn_start_verify')],
+        [InlineKeyboardButton("💰 我的积分", callback_data='btn_my_points')]
     ]
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        await update.callback_query.answer()
+        try: await update.callback_query.message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+        except: pass
     else:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb))
+        await update.message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
-# === VIP 验证模块 ===
-async def vip_flow(update: Update, context: ContextTypes.DEFAULT_TYPE, step):
-    user_id = str(update.effective_user.id)
-    query = update.callback_query
-    
-    if step == 'intro':
-        # 检查锁定
-        udata = get_user_data(user_id)
-        if udata.get('vip_locked_until') and datetime.now() < udata['vip_locked_until']:
-             await query.answer("⛔️ 验证尝试过多，暂时锁定中。", show_alert=True)
-             return
-
-        text = (
-            "💎 **VIP会员特权说明：**\n\n"
-            "✅ 专属中转通道\n✅ 优先审核入群\n✅ 7x24小时客服支持\n✅ 定期福利活动"
-        )
-        kb = [[InlineKeyboardButton("✅ 我已付款，开始验证", callback_data='vip_input')]]
-        if VIP_INTRO_FILE_ID:
-            await query.message.reply_document(VIP_INTRO_FILE_ID, caption=text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-        else:
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-            
-    elif step == 'input':
-        context.user_data['state'] = 'waiting_vip_order'
-        text = (
-            "📝 **请输入您的订单号**\n\n"
-            "请在【我的】-【账单】-【账单详情】-【更多】中查找订单号。\n"
-            "👇 请直接发送订单号："
-        )
-        if TUTORIAL_FILE_ID:
-            await query.message.reply_document(TUTORIAL_FILE_ID, caption=text, parse_mode='Markdown')
-        else:
-            await query.message.reply_text(text, parse_mode='Markdown')
-
-# === 积分商城模块 ===
-async def points_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    udata = get_user_data(user_id)
-    text = f"💰 **我的积分中心**\n\n当前积分：**{udata['points']}** 分"
-    kb = [
-        [InlineKeyboardButton("📅 每日签到", callback_data='do_checkin'), InlineKeyboardButton("💎 充值积分", callback_data='menu_recharge')],
-        [InlineKeyboardButton("🎁 积分兑换", callback_data='menu_shop')],
-        [InlineKeyboardButton("📜 余额明细", callback_data='view_history'), InlineKeyboardButton("🏆 积分排行", callback_data='view_rank')],
-        [InlineKeyboardButton("🔙 返回首页", callback_data='back_home')]
-    ]
-    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-
-async def handle_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    udata = get_user_data(user_id)
-    if str(udata['last_checkin']) == str(datetime.now().date()):
-        await update.callback_query.answer("⚠️ 今天已经签到过了！", show_alert=True)
-        return
-    pts = random.randint(3, 8)
-    # 更新积分和签到时间
-    add_points(user_id, pts, 'checkin', '每日签到')
-    update_user_status(user_id, {'last_checkin': datetime.now().date()})
-    await update.callback_query.answer(f"🎉 签到成功！+{pts} 积分", show_alert=True)
-    await points_menu(update, context)
-
-# === 充值模块 ===
-async def recharge_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    udata = get_user_data(user_id)
-    # 检查锁定
-    if udata.get('recharge_locked_until') and datetime.now() < udata['recharge_locked_until']:
-        hours = int((udata['recharge_locked_until'] - datetime.now()).total_seconds() // 3600) + 1
-        await update.callback_query.answer(f"⛔️ 充值功能已锁定，请 {hours} 小时后重试。", show_alert=True)
-        return
-
-    text = "💎 **请选择充值方式**\n\n⚠️ 温馨提示：微信和支付宝只能各使用一次，请勿重复充值！"
-    kb = [
-        [InlineKeyboardButton("💚 微信充值 (100积分)", callback_data='pay_wechat')],
-        [InlineKeyboardButton("💙 支付宝充值 (100积分)", callback_data='pay_alipay')],
-        [InlineKeyboardButton("🔙 返回", callback_data='menu_points')]
-    ]
-    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-
-async def show_payment(update: Update, context: ContextTypes.DEFAULT_TYPE, method):
-    user_id = str(update.effective_user.id)
-    udata = get_user_data(user_id)
-    
-    if (method == 'wechat' and udata['wechat_used']) or (method == 'alipay' and udata['alipay_used']):
-        await update.callback_query.answer("⚠️ 该方式已使用过，无法重复充值。", show_alert=True)
-        return
-
-    fid = WECHAT_QR_FILE_ID if method == 'wechat' else ALIPAY_QR_FILE_ID
-    name = "微信" if method == 'wechat' else "支付宝"
-    text = f"{'💚' if method=='wechat' else '💙'} **{name}充值**\n\n5元 = 100积分\n\n👇 支付完成后点击下方按钮："
-    kb = [[InlineKeyboardButton("✅ 我已支付，开始验证", callback_data=f'verify_pay_{method}')]]
-    
-    await update.callback_query.message.delete() # 删掉旧菜单
-    if fid:
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=fid, caption=text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    else:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-
-async def verify_pay_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, method):
-    context.user_data['state'] = f'waiting_{method}_order'
-    fid = WECHAT_STEP_FILE_ID if method == 'wechat' else ALIPAY_STEP_FILE_ID
-    name = "微信" if method == 'wechat' else "支付宝"
-    target = "交易单号" if method == 'wechat' else "商家订单号"
-    
-    text = f"📝 **请输入{name}订单号**\n\n请找到账单详情中的 **【{target}】**。\n👇 直接粘贴发送给我："
-    if fid:
-        await update.callback_query.message.reply_photo(photo=fid, caption=text, parse_mode='Markdown')
-    else:
-        await update.callback_query.message.reply_text(text, parse_mode='Markdown')
-
-# === 兑换/商品模块 ===
-async def shop_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
+# ==========================================
+# 💰 积分系统 /jf
+# ==========================================
+async def get_user_point_data(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    # 获取商品
-    cur.execute("SELECT id, name, cost FROM shop_products WHERE is_active = TRUE ORDER BY id ASC")
-    prods = cur.fetchall()
-    # 获取已购
-    cur.execute("SELECT product_id FROM user_purchases WHERE user_id = %s", (user_id,))
-    bought = [r[0] for r in cur.fetchall()]
+    cur.execute("SELECT points, last_signin_date, wx_used, ali_used, recharge_attempts, recharge_lockout FROM user_points WHERE user_id = %s", (user_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.execute("INSERT INTO user_points (user_id, points) VALUES (%s, 0)", (user_id,))
+        conn.commit()
+        row = (0, None, False, False, 0, None)
+    conn.close()
+    return row
+
+async def jf_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if update.callback_query: await update.callback_query.answer()
+    
+    data = await get_user_point_data(user_id)
+    points = data[0]
+    
+    text = f"💰 **积分中心**\n\n当前积分：**{points}** 分\n\n👇 请选择操作："
+    
+    keyboard = [
+        [InlineKeyboardButton("📅 每日签到", callback_data='btn_signin')],
+        [InlineKeyboardButton("💎 积分充值", callback_data='btn_recharge_menu')],
+        [InlineKeyboardButton("🎁 兑换中心", callback_data='btn_dh_menu')],
+        [InlineKeyboardButton("📜 余额/明细", callback_data='btn_balance_log')], # 新增按钮
+        [InlineKeyboardButton("🏠 返回首页", callback_data='go_home')]
+    ]
+    
+    try: await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+    except: await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+# --- 余额明细 (新功能) ---
+async def balance_log_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # 获取当前积分
+    cur.execute("SELECT points FROM user_points WHERE user_id = %s", (user_id,))
+    res = cur.fetchone()
+    points = res[0] if res else 0
+
+    # 获取最近10条日志
+    cur.execute("SELECT change_amount, reason, created_at FROM point_logs WHERE user_id = %s ORDER BY created_at DESC LIMIT 10", (user_id,))
+    logs = cur.fetchall()
+    conn.close()
+
+    log_text = ""
+    if not logs:
+        log_text = "暂无记录"
+    else:
+        for amount, reason, date_time in logs:
+            # 简单格式化日期
+            dt_str = date_time.strftime("%Y-%m-%d %H:%M")
+            sign = "+" if amount > 0 else ""
+            log_text += f"`{dt_str}` | {reason} | **{sign}{amount}**\n"
+
+    text = (
+        f"📜 **余额与明细**\n\n"
+        f"当前余额：**{points}** 积分\n\n"
+        f"📝 **最近记录：**\n"
+        f"{log_text}\n"
+    )
+    
+    keyboard = [[InlineKeyboardButton("🔙 返回积分中心", callback_data='btn_my_points')]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+
+async def signin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT points, last_signin_date FROM user_points WHERE user_id = %s", (user_id,))
+    row = cur.fetchone()
+    today = date.today()
+    if row and row[1] == today:
+        await query.message.reply_text("📅 今天已经签到过了，明天再来吧！")
+    else:
+        add_points = random.randint(3, 8)
+        new_points = (row[0] if row else 0) + add_points
+        cur.execute("INSERT INTO user_points (user_id, points, last_signin_date) VALUES (%s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET points=%s, last_signin_date=%s", (user_id, new_points, today, new_points, today))
+        conn.commit()
+        log_point_change(user_id, add_points, "每日签到") # 记录日志
+        await query.message.reply_text(f"✅ 签到成功！\n获得积分：**+{add_points}**\n当前总分：**{new_points}**", parse_mode=ParseMode.MARKDOWN)
+    conn.close()
+    await asyncio.sleep(1.5)
+    await jf_menu_handler(update, context)
+
+# ==========================================
+# 🎁 兑换系统 /dh
+# ==========================================
+async def dh_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    query = update.callback_query
+    if query: await query.answer()
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, cost FROM products ORDER BY id ASC")
+    products = cur.fetchall()
+    cur.execute("SELECT product_id FROM redemptions WHERE user_id = %s", (user_id,))
+    redeemed_ids = [r[0] for r in cur.fetchall()]
     conn.close()
     
-    kb = []
-    # 固定测试商品
-    kb.append([InlineKeyboardButton("😂 测试商品: 哈哈 (0积分)", callback_data='shop_confirm_test')])
+    text = "🎁 **积分兑换商城**\n\n👇 点击下方按钮进行兑换："
+    keyboard = []
     
-    for pid, name, cost in prods:
-        if pid in bought:
-            kb.append([InlineKeyboardButton(f"✅ 已兑换: {name}", callback_data=f'shop_show_{pid}')])
-        else:
-            kb.append([InlineKeyboardButton(f"🎁 {name} ({cost}积分)", callback_data=f'shop_confirm_{pid}')])
-            
-    kb.append([InlineKeyboardButton("🔙 返回积分中心", callback_data='menu_points')])
-    text = "🛍️ **积分兑换商城**\n\n请选择兑换商品："
-    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    btn_text = "🤣 哈哈 (✅ 已兑换)" if 0 in redeemed_ids else "🤣 测试按钮 (0积分)"
+    keyboard.append([InlineKeyboardButton(btn_text, callback_data="prod_click_0")])
+    
+    for pid, name, cost in products:
+        if pid in redeemed_ids: display_text = f"📦 {name} (✅ 已拥有)"
+        else: display_text = f"📦 {name} ({cost} 积分)"
+        keyboard.append([InlineKeyboardButton(display_text, callback_data=f"prod_click_{pid}")])
+    
+    keyboard.append([InlineKeyboardButton("🔙 返回积分中心", callback_data='btn_my_points')])
+    
+    target_reply = query.edit_message_text if query else update.message.reply_text
+    try: await target_reply(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+    except: await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
-async def process_shop(update: Update, context: ContextTypes.DEFAULT_TYPE, action, pid_str):
+async def handle_product_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user_id = str(update.effective_user.id)
-    
-    # --- 测试商品 ---
-    if pid_str == 'test':
-        if action == 'confirm':
-            kb = [[InlineKeyboardButton("✅ 确认 (0积分)", callback_data='shop_buy_test'), InlineKeyboardButton("❌ 取消", callback_data='menu_shop')]]
-            await query.edit_message_text("🤔 **确认兑换**\n\n商品：测试商品\n消耗：0 积分", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-        elif action == 'buy':
-            await query.answer("兑换成功！")
-            kb = [[InlineKeyboardButton("🔙 返回", callback_data='menu_shop')]]
-            await query.edit_message_text("😂 **内容展示**\n\n哈哈", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-        return
+    user_id = query.from_user.id
+    await query.answer()
+    try: prod_id = int(query.data.split('_')[-1])
+    except: return
 
-    # --- 真实商品 ---
-    pid = int(pid_str)
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT name, cost, content_type, content_data FROM shop_products WHERE id = %s", (pid,))
-    prod = cur.fetchone()
-    
-    if not prod:
-        conn.close()
-        await query.answer("商品不存在")
-        await shop_list(update, context)
-        return
-        
-    name, cost, ctype, cdata = prod
-    
-    if action == 'confirm':
-        kb = [[InlineKeyboardButton(f"✅ 确认消耗 {cost} 积分", callback_data=f'shop_buy_{pid}'), InlineKeyboardButton("❌ 取消", callback_data='menu_shop')]]
-        await query.edit_message_text(f"🤔 **确认兑换**\n\n商品：{name}\n消耗：**{cost}** 积分", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-        conn.close()
-        
-    elif action == 'buy':
-        # 检查余额
-        udata = get_user_data(user_id)
-        if udata['points'] < cost:
-            await query.answer("❌ 余额不足！", show_alert=True)
+    cur.execute("SELECT 1 FROM redemptions WHERE user_id = %s AND product_id = %s", (user_id, prod_id))
+    is_redeemed = cur.fetchone()
+
+    prod_name, prod_cost, prod_type, prod_val = "测试商品", 0, "text", "哈哈"
+    if prod_id != 0:
+        cur.execute("SELECT name, cost, content_type, content_val FROM products WHERE id = %s", (prod_id,))
+        prod = cur.fetchone()
+        if not prod:
             conn.close()
-            await shop_list(update, context)
+            await query.message.reply_text("⚠️ 商品已下架。")
+            await dh_menu_handler(update, context)
             return
-            
-        # 扣款发货
-        add_points(user_id, -cost, 'redeem', f'兑换: {name}')
-        cur.execute("INSERT INTO user_purchases (user_id, product_id) VALUES (%s, %s)", (user_id, pid))
+        prod_name, prod_cost, prod_type, prod_val = prod
+    conn.close()
+
+    if is_redeemed:
+        await deliver_product(update, context, prod_type, prod_val)
+        return
+
+    text = f"🛒 **确认兑换**\n\n商品：**{prod_name}**\n价格：**{prod_cost} 积分**\n\n是否确认兑换？"
+    keyboard = [[InlineKeyboardButton("✅ 确认兑换", callback_data=f"redeem_confirm_{prod_id}")], [InlineKeyboardButton("❌ 取消", callback_data="btn_dh_menu")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+async def handle_redeem_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+    try: prod_id = int(query.data.split('_')[-1])
+    except: return
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    prod_name, prod_cost, prod_type, prod_val = "测试商品", 0, "text", "哈哈"
+    if prod_id != 0:
+        cur.execute("SELECT name, cost, content_type, content_val FROM products WHERE id = %s", (prod_id,))
+        prod = cur.fetchone()
+        if not prod:
+            conn.close(); await query.message.reply_text("⚠️ 商品已下架。"); await dh_menu_handler(update, context); return
+        prod_name, prod_cost, prod_type, prod_val = prod
+
+    cur.execute("SELECT points FROM user_points WHERE user_id = %s", (user_id,))
+    row = cur.fetchone()
+    user_points = row[0] if row else 0
+
+    if user_points < prod_cost:
+        conn.close(); await query.message.reply_text("⚠️ **余额不足，兑换失败！**"); await asyncio.sleep(2); await dh_menu_handler(update, context); return
+
+    try:
+        new_points = user_points - prod_cost
+        cur.execute("UPDATE user_points SET points = %s WHERE user_id = %s", (new_points, user_id))
+        cur.execute("INSERT INTO redemptions (user_id, product_id) VALUES (%s, %s)", (user_id, prod_id))
         conn.commit()
         conn.close()
-        await query.answer("🎉 兑换成功！")
-        await deliver_content(update, ctype, cdata, name)
         
-    elif action == 'show':
-        conn.close()
-        await deliver_content(update, ctype, cdata, name)
-
-async def deliver_content(update, ctype, cdata, name):
-    kb = [[InlineKeyboardButton("🔙 返回商城", callback_data='menu_shop')]]
-    caption = f"📦 **{name}**"
-    try:
-        await update.callback_query.message.delete() # 删掉确认框
-        if ctype == 'text':
-            await update.callback_query.message.reply_text(f"{caption}\n\n{cdata}", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-        elif ctype == 'photo':
-            await update.callback_query.message.reply_photo(cdata, caption=caption, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-        elif ctype == 'video':
-            await update.callback_query.message.reply_video(cdata, caption=caption, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-        elif ctype == 'document':
-            await update.callback_query.message.reply_document(cdata, caption=caption, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        log_point_change(user_id, -prod_cost, f"兑换:{prod_name}") # 记录日志
+        
+        await query.message.reply_text(f"🎉 **兑换成功！**\n消耗 {prod_cost} 积分。", parse_mode=ParseMode.MARKDOWN)
+        await deliver_product(update, context, prod_type, prod_val)
+        await asyncio.sleep(2)
+        await dh_menu_handler(update, context)
     except Exception as e:
-        logger.error(f"Delivery failed: {e}")
+        logger.error(f"Redemption error: {e}"); conn.rollback(); conn.close(); await query.message.reply_text("⚠️ 系统错误")
 
-# === 排行榜与历史 ===
-async def view_stats(update: Update, context: ContextTypes.DEFAULT_TYPE, mode):
-    user_id = str(update.effective_user.id)
-    conn = get_db_connection()
-    cur = conn.cursor()
-    kb = [[InlineKeyboardButton("🔙 返回", callback_data='menu_points')]]
-    
-    if mode == 'history':
-        cur.execute("SELECT change_amount, description, created_at FROM point_history WHERE user_id = %s ORDER BY created_at DESC LIMIT 10", (user_id,))
-        rows = cur.fetchall()
-        text = "📜 **最近积分明细**\n\n" + "\n".join([f"`{r[2].strftime('%m-%d')}` | {'+' if r[0]>0 else ''}{r[0]} | {r[1]}" for r in rows])
-        if not rows: text += "暂无记录"
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-        
-    elif mode == 'rank':
-        three_days = datetime.now() - timedelta(days=3)
-        cur.execute("SELECT user_id, SUM(change_amount) as total FROM point_history WHERE change_amount > 0 AND created_at >= %s GROUP BY user_id ORDER BY total DESC LIMIT 10", (three_days,))
-        rows = cur.fetchall()
-        text = "🏆 **三天积分获取榜** (仅统计获取)\n\n"
-        my_rank = "未上榜"
-        for idx, (uid, total) in enumerate(rows):
-            if uid == user_id: my_rank = f"第 {idx+1} 名"
-            text += f"{idx+1}. 用户..{uid[-4:]} —— {total}分\n"
-        text += f"\n👤 **您的排名**：{my_rank}"
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    conn.close()
+async def deliver_product(update, context, p_type, p_val):
+    chat_id = update.effective_chat.id
+    try:
+        if p_type == 'text': await context.bot.send_message(chat_id, p_val)
+        elif p_type == 'photo': await context.bot.send_photo(chat_id, p_val)
+        elif p_type == 'video': await context.bot.send_video(chat_id, p_val)
+        elif p_type == 'document': await context.bot.send_document(chat_id, p_val)
+    except Exception as e: await context.bot.send_message(chat_id, f"⚠️ 发货出错: {e}")
 
-# === 管理后台 ===
-async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != str(ADMIN_ID): return
-    kb = [
-        [InlineKeyboardButton("➕ 添加商品", callback_data='adm_add'), InlineKeyboardButton("➖ 删除商品", callback_data='adm_del')],
-        [InlineKeyboardButton("🔗 绑定频道链接", callback_data='adm_bind')],
-        [InlineKeyboardButton("❌ 取消操作", callback_data='adm_cancel')]
+# ==========================================
+# 🛠 管理员系统
+# ==========================================
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id): return
+    keyboard = [
+        [InlineKeyboardButton("📂 获取文件ID", callback_data='btn_get_file_id')],
+        [InlineKeyboardButton("📚 频道绑定", callback_data='btn_bind_channel')],
+        [InlineKeyboardButton("🛍 商品管理 (上架/下架)", callback_data='btn_manage_products')]
     ]
-    await update.message.reply_text("🔧 **管理员后台**", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    await update.message.reply_text("🔧 **管理员后台**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+async def admin_prod_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query: await query.answer()
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("SELECT id, name, cost FROM products ORDER BY id ASC")
+    products = cur.fetchall(); conn.close()
+    text = "🛍 **商品管理面板**\n\n点击商品名称可 **下架删除**。\n点击【➕】添加新商品。"
+    keyboard = []
+    for pid, name, cost in products: keyboard.append([InlineKeyboardButton(f"🗑 {name} ({cost})", callback_data=f"admin_del_prod_{pid}")])
+    keyboard.append([InlineKeyboardButton("➕ 添加新商品", callback_data='btn_add_product')])
+    keyboard.append([InlineKeyboardButton("🔙 返回后台", callback_data='back_to_admin')])
+    func = query.edit_message_text if query else update.message.reply_text
+    await func(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+async def admin_add_prod_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    await query.edit_message_text("📝 **步骤 1/3：请输入商品名称**", parse_mode=ParseMode.MARKDOWN)
+    return ADMIN_PROD_WAIT_NAME
+
+async def admin_add_prod_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['new_prod_name'] = update.message.text.strip()
+    await update.message.reply_text("💰 **步骤 2/3：请输入所需积分**", parse_mode=ParseMode.MARKDOWN)
+    return ADMIN_PROD_WAIT_COST
+
+async def admin_add_prod_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        context.user_data['new_prod_cost'] = int(update.message.text.strip())
+        await update.message.reply_text("📦 **步骤 3/3：请发送商品内容** (文本/图片/视频)", parse_mode=ParseMode.MARKDOWN)
+        return ADMIN_PROD_WAIT_CONTENT
+    except: await update.message.reply_text("❌ 请输入数字"); return ADMIN_PROD_WAIT_COST
+
+async def admin_add_prod_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message; p_type = 'text'; p_val = ''
+    if msg.text: p_type = 'text'; p_val = msg.text
+    elif msg.photo: p_type = 'photo'; p_val = msg.photo[-1].file_id
+    elif msg.video: p_type = 'video'; p_val = msg.video.file_id
+    elif msg.document: p_type = 'document'; p_val = msg.document.file_id
+    
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("INSERT INTO products (name, cost, content_type, content_val) VALUES (%s, %s, %s, %s)", (context.user_data['new_prod_name'], context.user_data['new_prod_cost'], p_type, p_val))
+    conn.commit(); conn.close()
+    await update.message.reply_text("✅ 商品上架成功！"); await admin_panel(update, context)
+    return ConversationHandler.END
+
+async def admin_del_prod_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    prod_id = query.data.split('_')[-1]
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("SELECT name FROM products WHERE id = %s", (prod_id,)); res = cur.fetchone(); conn.close()
+    if not res: await admin_prod_menu(update, context); return
+    text = f"⚠️ **确认下架：{res[0]}**？"
+    keyboard = [[InlineKeyboardButton("✅ 确认删除", callback_data=f"admin_del_exec_{prod_id}")], [InlineKeyboardButton("❌ 取消", callback_data="btn_manage_products")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+async def admin_del_exec(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    prod_id = query.data.split('_')[-1]
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("DELETE FROM products WHERE id = %s", (prod_id,))
+    cur.execute("DELETE FROM redemptions WHERE product_id = %s", (prod_id,))
+    conn.commit(); conn.close()
+    await query.message.reply_text("✅ 已删除。"); await asyncio.sleep(1); await admin_prod_menu(update, context)
 
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data
+    query = update.callback_query; await query.answer()
+    if query.data == 'btn_get_file_id': await query.edit_message_text("📤 发送文件获取ID"); return ADMIN_WAITING_FOR_FILE
+    elif query.data == 'btn_bind_channel': await query.edit_message_text("🔗 发送: `命令 链接`", parse_mode=ParseMode.MARKDOWN); return ADMIN_WAITING_FOR_BINDING
+    elif query.data == 'back_to_admin': await admin_panel(update, context); return ConversationHandler.END
+
+# ==========================================
+# 充值与验证 (核心逻辑)
+# ==========================================
+async def recharge_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; user_id = query.from_user.id; await query.answer()
+    data = await get_user_point_data(user_id)
+    wx_used, ali_used, attempts, lockout = data[2], data[3], data[4], data[5]
+    if lockout and datetime.now() < lockout:
+        wait = int((lockout - datetime.now()).total_seconds() / 3600) + 1
+        await query.message.reply_text(f"⛔️ 充值锁定中，请 {wait} 小时后再试。"); return
+    text = "💎 **积分充值中心**\n✨ 5元 = 100积分\n⚠️ 微信支付宝各限购一次！"
+    keyboard = []
+    if not wx_used: keyboard.append([InlineKeyboardButton("💚 微信充值 (5元)", callback_data='btn_pay_wx')])
+    if not ali_used: keyboard.append([InlineKeyboardButton("💙 支付宝充值 (5元)", callback_data='btn_pay_ali')])
+    keyboard.append([InlineKeyboardButton("🔙 返回积分中心", callback_data='btn_my_points')])
+    if wx_used and ali_used: text += "\n🚫 优惠次数已用完。"
+    try: await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+    except: await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+async def pay_wx_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await send_media_msg(update, context, FILE_ID_WX_QR, "💚 **微信支付 5元**\n支付后点击下方验证。", InlineKeyboardMarkup([[InlineKeyboardButton("✅ 我已支付，开始验证", callback_data='btn_verify_wx')]]))
+
+async def pay_wx_verify_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await send_media_msg(update, context, FILE_ID_WX_HELP, "📝 **请输入微信交易单号**：")
+    return WAITING_FOR_WX_ORDER
+
+async def pay_ali_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await send_media_msg(update, context, FILE_ID_ALI_QR, "💙 **支付宝支付 5元**\n支付后点击下方验证。", InlineKeyboardMarkup([[InlineKeyboardButton("✅ 我已支付，开始验证", callback_data='btn_verify_ali')]]))
+
+async def pay_ali_verify_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await send_media_msg(update, context, FILE_ID_ALI_HELP, "📝 **请输入支付宝商家订单号**：")
+    return WAITING_FOR_ALI_ORDER
+
+async def check_recharge_order(update: Update, context: ContextTypes.DEFAULT_TYPE, method):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    conn = get_db_connection(); cur = conn.cursor()
+    valid = (method=='wx' and text.startswith('4200')) or (method=='ali' and text.startswith('4768'))
     
-    if data == 'adm_cancel':
-        context.user_data.clear()
-        await query.edit_message_text("操作已取消。")
+    if valid:
+        cur.execute("UPDATE user_points SET points=points+100, recharge_attempts=0 WHERE user_id=%s", (user_id,))
+        if method=='wx': cur.execute("UPDATE user_points SET wx_used=TRUE WHERE user_id=%s", (user_id,))
+        else: cur.execute("UPDATE user_points SET ali_used=TRUE WHERE user_id=%s", (user_id,))
+        conn.commit(); conn.close()
         
-    elif data == 'adm_add':
-        context.user_data['adm_state'] = 'add_name'
-        await query.edit_message_text("请输入新商品名称：")
+        log_point_change(user_id, 100, f"充值:{'微信' if method=='wx' else '支付宝'}") # 日志
         
-    elif data == 'adm_bind':
-        context.user_data['adm_state'] = 'bind_links'
-        await query.edit_message_text("请发送绑定格式：\n关键词\n链接1\n链接2...")
-        
-    elif data == 'adm_del':
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT id, name, is_active FROM shop_products ORDER BY id DESC")
-        rows = cur.fetchall()
-        conn.close()
-        if not rows:
-            await query.edit_message_text("没有商品。")
-            return
-        kb = []
-        for pid, name, active in rows:
-            status = "🟢" if active else "🔴"
-            kb.append([InlineKeyboardButton(f"{status} {name} (ID:{pid})", callback_data=f'adm_toggle_{pid}')])
-        kb.append([InlineKeyboardButton("🗑️ 彻底删除 (输入ID)", callback_data='adm_ask_del')])
-        await query.edit_message_text("点击切换上下架，或选择彻底删除：", reply_markup=InlineKeyboardMarkup(kb))
-        
-    elif data.startswith('adm_toggle_'):
-        pid = int(data.split('_')[-1])
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("UPDATE shop_products SET is_active = NOT is_active WHERE id = %s", (pid,))
+        await update.message.reply_text("🎉 **充值成功！**\n积分已到账。"); await asyncio.sleep(2); await jf_menu_handler(update, context)
+        return ConversationHandler.END
+    else:
+        cur.execute("SELECT recharge_attempts FROM user_points WHERE user_id=%s", (user_id,))
+        att = (cur.fetchone()[0] or 0) + 1
+        if att >= 2:
+            lock = datetime.now() + timedelta(hours=5)
+            cur.execute("UPDATE user_points SET recharge_attempts=%s, recharge_lockout=%s WHERE user_id=%s", (att, lock, user_id))
+            conn.commit(); conn.close()
+            await update.message.reply_text("❌ 失败2次，锁定5小时。")
+        else:
+            cur.execute("UPDATE user_points SET recharge_attempts=%s WHERE user_id=%s", (att, user_id))
+            conn.commit(); conn.close()
+            await update.message.reply_text("❌ 失败，请重试 (剩1次)。")
+        await asyncio.sleep(2); await jf_menu_handler(update, context)
+        return ConversationHandler.END
+
+# ==========================================
+# 杂项 & 转发 & 验证完整版
+# ==========================================
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text('已取消。')
+    await start(update, context); return ConversationHandler.END
+
+async def go_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try: await update.callback_query.answer(); await update.callback_query.delete_message()
+    except: pass
+    await start(update, context)
+
+async def handle_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    fid = msg.document.file_id if msg.document else (msg.video.file_id if msg.video else (msg.photo[-1].file_id if msg.photo else None))
+    await msg.reply_text(f"`{fid}`" if fid else "❌ 未知文件", parse_mode=ParseMode.MARKDOWN); return ConversationHandler.END
+
+async def handle_binding(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        cmd, link = update.message.text.strip().split()
+        chat_id, msg_id = parse_telegram_link(link)
+        if chat_id:
+            conn = get_db_connection(); cur = conn.cursor()
+            cur.execute("INSERT INTO msg_bindings VALUES (%s, %s, %s, 50) ON CONFLICT (command_trigger) DO UPDATE SET source_chat_id=EXCLUDED.source_chat_id, start_msg_id=EXCLUDED.start_msg_id", (cmd.upper(), chat_id, msg_id))
+            conn.commit(); conn.close(); await update.message.reply_text("✅ 绑定成功")
+        else: await update.message.reply_text("❌ 链接无效")
+    except: await update.message.reply_text("❌ 格式错误")
+    return ConversationHandler.END
+
+async def delete_msg_job(context: ContextTypes.DEFAULT_TYPE):
+    data = context.job.data
+    for mid in data['mids']: 
+        try: await context.bot.delete_message(data['cid'], mid) 
+        except: pass
+    await context.bot.send_message(data['cid'], "⏳ 消息已过期，请购买后获取。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 首页", callback_data="go_home")]]))
+
+async def handle_command_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text: return
+    cmd = update.message.text.strip().upper()
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("SELECT source_chat_id, start_msg_id, msg_count FROM msg_bindings WHERE command_trigger = %s", (cmd,))
+    res = cur.fetchone(); conn.close()
+    if not res: await start(update, context); return
+    try: await update.message.delete()
+    except: pass
+    mids = []
+    for i in range(res[2]):
+        try: 
+            m = await context.bot.copy_message(update.effective_chat.id, res[0], res[1]+i)
+            mids.append(m.message_id); await asyncio.sleep(0.05)
+        except: continue
+    if mids:
+        end_msg = await context.bot.send_message(update.effective_chat.id, "✅ 发送完毕", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💰 我的积分", callback_data="btn_my_points"), InlineKeyboardButton("🏠 首页", callback_data="go_home")]]))
+        mids.append(end_msg.message_id)
+        context.job_queue.run_once(delete_msg_job, 1200, data={'cid': update.effective_chat.id, 'mids': mids})
+    else: await context.bot.send_message(update.effective_chat.id, "❌ 获取内容失败")
+
+# --- 验证流程步骤 ---
+async def verify_step_1(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("SELECT lockout_until FROM user_verification WHERE user_id = %s", (query.from_user.id,)); res = cur.fetchone(); conn.close()
+    if res and res[0] and datetime.now() < res[0]:
+        h = int((res[0] - datetime.now()).total_seconds()/3600) + 1
+        await query.answer(f"验证已锁定，请等待 {h} 小时", show_alert=True); return
+    await send_media_msg(update, context, FILE_ID_VIP, "💎 VIP说明...", InlineKeyboardMarkup([[InlineKeyboardButton("✅ 我已付款，开始验证", callback_data='btn_paid_confirm')]]))
+
+async def verify_step_2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await send_media_msg(update, context, FILE_ID_TUTORIAL, "📝 请输入商户订单号：")
+    return USER_WAITING_FOR_ORDER
+
+async def verify_step_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """验证订单号完整逻辑"""
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    # 1. 成功情况
+    if text.startswith("20260"):
+        # 清除可能的错误记录
+        cur.execute("DELETE FROM user_verification WHERE user_id = %s", (user_id,))
         conn.commit()
         conn.close()
-        await query.answer("状态已更新")
+
+        success_text = "🎉 **验证成功！**"
+        keyboard = [[InlineKeyboardButton("🔗 点击加入群组", url=GROUP_LINK)]]
         
-    elif data == 'adm_ask_del':
-        context.user_data['adm_state'] = 'del_id'
-        await query.edit_message_text("请输入要彻底删除的商品 ID (数字)：")
-
-# === 全局消息处理 (路由中心) ===
-
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    text = update.message.text
-    state = context.user_data.get('state')
-    adm_state = context.user_data.get('adm_state')
-    
-    # 1. 管理员逻辑
-    if user_id == str(ADMIN_ID) and adm_state:
-        if adm_state == 'add_name':
-            context.user_data['new_name'] = text
-            context.user_data['adm_state'] = 'add_cost'
-            await update.message.reply_text("请输入所需积分 (数字)：")
-            
-        elif adm_state == 'add_cost':
-            if text.isdigit():
-                context.user_data['new_cost'] = int(text)
-                context.user_data['adm_state'] = 'add_content'
-                await update.message.reply_text("请发送商品内容 (文字/图片/视频/文件)：")
-            else:
-                await update.message.reply_text("必须是数字，请重试。")
-                
-        elif adm_state == 'add_content': # 仅处理文字内容
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("INSERT INTO shop_products (name, cost, content_type, content_data) VALUES (%s,%s,%s,%s)",
-                        (context.user_data['new_name'], context.user_data['new_cost'], 'text', text))
-            conn.commit()
-            conn.close()
-            await update.message.reply_text("✅ 商品上架成功！")
-            context.user_data.clear()
-            
-        elif adm_state == 'del_id':
-            if text.isdigit():
-                conn = get_db_connection()
-                cur = conn.cursor()
-                cur.execute("DELETE FROM shop_products WHERE id = %s", (int(text),))
-                conn.commit()
-                conn.close()
-                await update.message.reply_text("✅ 删除成功。")
-            context.user_data.clear()
-            
-        elif adm_state == 'bind_links':
-            lines = text.strip().split('\n')
-            if len(lines) >= 2:
-                cmd = lines[0].strip()
-                cnt = 0
-                for link in lines[1:]:
-                    cid, mid = parse_telegram_link(link.strip())
-                    if cid and mid:
-                        save_binding(cmd, cid, mid)
-                        cnt += 1
-                await update.message.reply_text(f"✅ 已绑定 {cnt} 条消息到命令 `{cmd}`", parse_mode='Markdown')
-            else:
-                await update.message.reply_text("❌ 格式错误。")
-            context.user_data.clear()
-        return
-
-    # 2. 用户订单输入逻辑
-    if state and state.startswith('waiting_'):
-        clean_text = text.strip()
-        udata = get_user_data(user_id)
+        await update.message.reply_text(success_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
         
-        # VIP 订单 (20260)
-        if state == 'waiting_vip_order':
-            if udata.get('vip_locked_until') and datetime.now() < udata['vip_locked_until']:
-                context.user_data.clear()
-                await start(update, context)
-                return
-
-            if clean_text.startswith("20260"):
-                # 成功
-                update_user_status(user_id, {'is_vip': True, 'vip_fail_count': 0, 'vip_locked_until': None})
-                kb = [[InlineKeyboardButton("👉 点击加入会员群", url="https://t.me/+495j5rWmApsxYzg9")]]
-                await update.message.reply_text("🎉 **验证成功！**\n\n欢迎加入尊贵的VIP会员群！", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-                context.user_data.clear()
-            else:
-                fails = udata.get('vip_fail_count', 0) + 1
-                if fails >= 2:
-                    lock_time = datetime.now() + timedelta(hours=5)
-                    update_user_status(user_id, {'vip_fail_count': fails, 'vip_locked_until': lock_time})
-                    await update.message.reply_text("❌ 连续失败2次，已锁定 5 小时。")
-                    context.user_data.clear()
-                    await start(update, context)
-                else:
-                    update_user_status(user_id, {'vip_fail_count': fails})
-                    await update.message.reply_text(f"❌ 未查询到订单，请重试 ({fails}/2)。")
-            return
-
-        # 充值订单 (4200/4768)
-        if state in ['waiting_wechat_order', 'waiting_alipay_order']:
-            if udata.get('recharge_locked_until') and datetime.now() < udata['recharge_locked_until']:
-                 await update.message.reply_text("⛔️ 充值已锁定。")
-                 context.user_data.clear()
-                 await points_menu(update, context)
-                 return
-                 
-            is_wechat = 'wechat' in state
-            valid = (is_wechat and clean_text.startswith("4200")) or (not is_wechat and clean_text.startswith("4768"))
-            
-            if valid:
-                add_points(user_id, 100, 'recharge', '微信充值' if is_wechat else '支付宝充值')
-                update_user_status(user_id, {'wechat_used' if is_wechat else 'alipay_used': True, 'recharge_fail_count': 0, 'recharge_locked_until': None})
-                await update.message.reply_text("🎉 **充值成功！** +100 积分", parse_mode='Markdown')
-                context.user_data.clear()
-                await points_menu(update, context)
-            else:
-                fails = udata.get('recharge_fail_count', 0) + 1
-                if fails >= 2:
-                    lock_time = datetime.now() + timedelta(hours=10)
-                    update_user_status(user_id, {'recharge_fail_count': fails, 'recharge_locked_until': lock_time})
-                    await update.message.reply_text("❌ 订单识别失败，充值功能锁定 10 小时。")
-                    context.user_data.clear()
-                    await points_menu(update, context)
-                else:
-                    update_user_status(user_id, {'recharge_fail_count': fails})
-                    await update.message.reply_text("❌ 识别失败，请检查单号重试。")
-            return
-
-    # 3. 隐秘转发逻辑 (关键词触发)
-    if text and not text.startswith('/'):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT from_chat_id, message_id FROM command_bindings WHERE command = %s", (text.strip().upper(),))
-        binds = cur.fetchall()
-        conn.close()
-        
-        if binds:
-            try: await update.message.delete() # 删指令
-            except: pass
-            
-            sent_ids = []
-            for cid, mid in binds:
-                try:
-                    msg = await context.bot.copy_message(chat_id=update.effective_chat.id, from_chat_id=cid, message_id=mid)
-                    sent_ids.append(msg.message_id)
-                except Exception as e:
-                    logger.error(f"Copy fail: {e}")
-            
-            if sent_ids:
-                context.job_queue.run_once(delayed_delete, 1200, data={'chat_id': update.effective_chat.id, 'msg_ids': sent_ids})
-            return
-
-        # 没匹配到命令 -> 回首页
+        # 延迟2秒跳转回首页
+        await asyncio.sleep(2)
         await start(update, context)
+        return ConversationHandler.END
+    
+    # 2. 失败情况
+    else:
+        # 获取当前尝试次数
+        cur.execute("SELECT attempt_count FROM user_verification WHERE user_id = %s", (user_id,))
+        row = cur.fetchone()
+        current_attempts = row[0] if row else 0
+        new_attempts = current_attempts + 1
 
-async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    # 管理员添加商品素材
-    if user_id == str(ADMIN_ID) and context.user_data.get('adm_state') == 'add_content':
-        ctype, cdata = 'unknown', ''
-        if update.message.photo: ctype, cdata = 'photo', update.message.photo[-1].file_id
-        elif update.message.video: ctype, cdata = 'video', update.message.video.file_id
-        elif update.message.document: ctype, cdata = 'document', update.message.document.file_id
-        
-        if ctype != 'unknown':
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("INSERT INTO shop_products (name, cost, content_type, content_data) VALUES (%s,%s,%s,%s)",
-                        (context.user_data['new_name'], context.user_data['new_cost'], ctype, cdata))
+        if new_attempts >= 2:
+            # 失败达到2次 -> 锁定5小时
+            lockout_time = datetime.now() + timedelta(hours=5)
+            
+            cur.execute("""
+                INSERT INTO user_verification (user_id, attempt_count, lockout_until)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id) 
+                DO UPDATE SET attempt_count = %s, lockout_until = %s
+            """, (user_id, new_attempts, lockout_time, new_attempts, lockout_time))
             conn.commit()
             conn.close()
-            await update.message.reply_text("✅ 商品(媒体)上架成功！")
-            context.user_data.clear()
-        return
 
-    # 管理员获取 ID (非状态下)
-    if user_id == str(ADMIN_ID):
-        fid = ''
-        if update.message.photo: fid = update.message.photo[-1].file_id
-        elif update.message.video: fid = update.message.video.file_id
-        elif update.message.document: fid = update.message.document.file_id
-        if fid: await update.message.reply_text(f"📄 File ID: `{fid}`", parse_mode='Markdown')
+            await update.message.reply_text(
+                "❌ 未查询到订单信息。\n"
+                "🚫 连续失败 2 次，系统已暂停验证。\n"
+                "请 5 小时后再试。",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            
+            # 失败锁定后，跳转回首页
+            await asyncio.sleep(2)
+            await start(update, context)
+            return ConversationHandler.END
+        else:
+            # 失败1次 -> 允许重试
+            cur.execute("""
+                INSERT INTO user_verification (user_id, attempt_count)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id) 
+                DO UPDATE SET attempt_count = %s
+            """, (user_id, new_attempts, new_attempts))
+            conn.commit()
+            conn.close()
 
-# === 按钮路由 ===
-async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = update.callback_query.data
-    if data == 'back_home': await start(update, context)
-    elif data == 'start_verify': await vip_flow(update, context, 'intro')
-    elif data == 'vip_input': await vip_flow(update, context, 'input')
-    
-    elif data == 'menu_points': await points_menu(update, context)
-    elif data == 'do_checkin': await handle_checkin(update, context)
-    elif data == 'menu_recharge': await recharge_menu(update, context)
-    elif data.startswith('pay_'): await show_payment(update, context, data.split('_')[1])
-    elif data.startswith('verify_pay_'): await verify_pay_prompt(update, context, data.split('_')[2])
-    
-    elif data == 'menu_shop': await shop_list(update, context)
-    elif data.startswith('shop_confirm_'): await process_shop(update, context, 'confirm', data.split('_')[2])
-    elif data.startswith('shop_buy_'): await process_shop(update, context, 'buy', data.split('_')[2])
-    elif data.startswith('shop_show_'): await process_shop(update, context, 'show', data.split('_')[2])
-    
-    elif data == 'view_history': await view_stats(update, context, 'history')
-    elif data == 'view_rank': await view_stats(update, context, 'rank')
-    
-    elif data.startswith('adm_'): await admin_callback(update, context)
+            await update.message.reply_text(
+                "❌ 未查询到订单信息，请重试。\n"
+                "(您还有 1 次尝试机会)", 
+                parse_mode=ParseMode.MARKDOWN
+            )
+            # 保持在等待输入状态
+            return USER_WAITING_FOR_ORDER
 
+# ==========================================
+# 🚀 主程序
+# ==========================================
 if __name__ == '__main__':
-    if DATABASE_URL: init_db()
+    init_db()
+    if not BOT_TOKEN: exit("BOT_TOKEN missing")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # Admin
+    app.add_handler(ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(admin_callback, pattern='^(btn_get_file_id|btn_bind_channel)$'),
+            CallbackQueryHandler(admin_prod_menu, pattern='^btn_manage_products$'),
+            CallbackQueryHandler(admin_add_prod_start, pattern='^btn_add_product$')
+        ],
+        states={
+            ADMIN_WAITING_FOR_FILE: [MessageHandler(filters.ATTACHMENT|filters.PHOTO, handle_file_id)],
+            ADMIN_WAITING_FOR_BINDING: [MessageHandler(filters.TEXT, handle_binding)],
+            ADMIN_PROD_WAIT_NAME: [MessageHandler(filters.TEXT, admin_add_prod_name)],
+            ADMIN_PROD_WAIT_COST: [MessageHandler(filters.TEXT, admin_add_prod_cost)],
+            ADMIN_PROD_WAIT_CONTENT: [MessageHandler(filters.ALL, admin_add_prod_content)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel), CallbackQueryHandler(admin_panel, pattern='^back_to_admin$')]
+    ))
+
+    # Verify
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(verify_step_2, pattern='^btn_paid_confirm$')],
+        states={USER_WAITING_FOR_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, verify_step_3)]},
+        fallbacks=[CommandHandler('cancel', cancel)]
+    ))
     
+    # Recharge
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(pay_wx_verify_step, pattern='^btn_verify_wx$')],
+        states={WAITING_FOR_WX_ORDER: [MessageHandler(filters.TEXT, lambda u,c: check_recharge_order(u,c,'wx'))]},
+        fallbacks=[CommandHandler('cancel', cancel)]
+    ))
+    app.add_handler(ConversationHandler(
+        entry_points=[CallbackQueryHandler(pay_ali_verify_step, pattern='^btn_verify_ali$')],
+        states={WAITING_FOR_ALI_ORDER: [MessageHandler(filters.TEXT, lambda u,c: check_recharge_order(u,c,'ali'))]},
+        fallbacks=[CommandHandler('cancel', cancel)]
+    ))
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin_menu))
-    app.add_handler(CallbackQueryHandler(callback_router))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-    app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO | filters.VIDEO, file_handler))
+    app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("jf", jf_menu_handler))
+    app.add_handler(CommandHandler("dh", dh_menu_handler))
     
-    print("Bot is running...")
+    app.add_handler(CallbackQueryHandler(jf_menu_handler, pattern='^btn_my_points$'))
+    app.add_handler(CallbackQueryHandler(balance_log_handler, pattern='^btn_balance_log$'))
+    app.add_handler(CallbackQueryHandler(dh_menu_handler, pattern='^btn_dh_menu$'))
+    app.add_handler(CallbackQueryHandler(signin_handler, pattern='^btn_signin$'))
+    app.add_handler(CallbackQueryHandler(recharge_menu_handler, pattern='^btn_recharge_menu$'))
+    app.add_handler(CallbackQueryHandler(pay_wx_start, pattern='^btn_pay_wx$'))
+    app.add_handler(CallbackQueryHandler(pay_ali_start, pattern='^btn_pay_ali$'))
+    app.add_handler(CallbackQueryHandler(handle_product_click, pattern='^prod_click_'))
+    app.add_handler(CallbackQueryHandler(handle_redeem_confirm, pattern='^redeem_confirm_'))
+    app.add_handler(CallbackQueryHandler(admin_del_prod_confirm, pattern='^admin_del_prod_'))
+    app.add_handler(CallbackQueryHandler(admin_del_exec, pattern='^admin_del_exec_'))
+    app.add_handler(CallbackQueryHandler(verify_step_1, pattern='^btn_start_verify$'))
+    app.add_handler(CallbackQueryHandler(go_home, pattern='^go_home$'))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command_forward))
+
+    print("Bot is running with Full Features...")
     app.run_polling()
