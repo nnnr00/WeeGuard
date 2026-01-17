@@ -11,13 +11,12 @@ from telegram.ext import (
 )
 
 # ================= 配置区域 =================
-# 部署到 Railway 后，这些值会自动从环境变量获取
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 DATABASE_URL = os.getenv("DATABASE_URL")
-# 管理员ID，格式: 123456,789012
+# 管理员ID，从环境变量读取
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
-# --- 图片配置 (请在部署后获取File ID填入双引号内) ---
+# --- 图片配置 (请部署后获取ID填入) ---
 VIP_IMAGE_FILE_ID = ""  
 TUTORIAL_IMAGE_FILE_ID = "" 
 WECHAT_PAY_IMAGE = ""       
@@ -25,7 +24,7 @@ WECHAT_TUTORIAL_IMAGE = ""
 ALIPAY_PAY_IMAGE = ""       
 ALIPAY_TUTORIAL_IMAGE = ""  
 
-GROUP_LINK = "https://t.me/YourGroupLink" # 请修改群组链接
+GROUP_LINK = "https://t.me/YourGroupLink" 
 
 # ================= 日志设置 =================
 logging.basicConfig(
@@ -58,42 +57,29 @@ def get_db_connection():
     return conn
 
 def init_db():
-    """初始化所有数据库表"""
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # 1. VIP用户状态表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS user_status (
+    # 表结构定义
+    tables = [
+        """CREATE TABLE IF NOT EXISTS user_status (
             user_id BIGINT PRIMARY KEY,
             attempts INT DEFAULT 0,
             locked_until TIMESTAMP
-        )
-    """)
-    
-    # 2. 转发命令表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS forward_commands (
+        )""",
+        """CREATE TABLE IF NOT EXISTS forward_commands (
             id SERIAL PRIMARY KEY,
             trigger_text TEXT UNIQUE NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # 3. 转发内容表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS forward_contents (
+        )""",
+        """CREATE TABLE IF NOT EXISTS forward_contents (
             id SERIAL PRIMARY KEY,
             cmd_id INT REFERENCES forward_commands(id) ON DELETE CASCADE,
             source_chat_id BIGINT,
             source_message_id INT,
             message_type VARCHAR(20)
-        )
-    """)
-    
-    # 4. 积分与充值表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS user_points (
+        )""",
+        """CREATE TABLE IF NOT EXISTS user_points (
             user_id BIGINT PRIMARY KEY,
             points INT DEFAULT 0,
             last_checkin DATE,
@@ -101,53 +87,44 @@ def init_db():
             alipay_used BOOLEAN DEFAULT FALSE,
             recharge_attempts INT DEFAULT 0,
             recharge_locked_until TIMESTAMP
-        )
-    """)
-
-    # 5. 商品表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS exchange_products (
+        )""",
+        """CREATE TABLE IF NOT EXISTS exchange_products (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             cost INT NOT NULL,
             content_type VARCHAR(20),
             content_value TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # 6. 用户兑换记录表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS user_redemptions (
+        )""",
+        """CREATE TABLE IF NOT EXISTS user_redemptions (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
             product_id INT,
             redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, product_id)
-        )
-    """)
-
-    # 7. 积分变动历史表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS point_history (
+        )""",
+        """CREATE TABLE IF NOT EXISTS point_history (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
             change_amount INT,
             reason TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        )"""
+    ]
+    
+    for table_sql in tables:
+        cur.execute(table_sql)
     
     conn.commit()
     cur.close()
     conn.close()
 
-# --- 积分历史记录操作 ---
+# --- 数据库操作函数 ---
+# 积分相关
 def add_point_history(user_id, amount, reason):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("INSERT INTO point_history (user_id, change_amount, reason) VALUES (%s, %s, %s)",
-                (user_id, amount, reason))
+    cur.execute("INSERT INTO point_history (user_id, change_amount, reason) VALUES (%s, %s, %s)", (user_id, amount, reason))
     conn.commit()
     cur.close()
     conn.close()
@@ -155,24 +132,16 @@ def add_point_history(user_id, amount, reason):
 def get_user_history(user_id, limit=10):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT change_amount, reason, created_at 
-        FROM point_history WHERE user_id = %s 
-        ORDER BY id DESC LIMIT %s
-    """, (user_id, limit))
+    cur.execute("SELECT change_amount, reason, created_at FROM point_history WHERE user_id = %s ORDER BY id DESC LIMIT %s", (user_id, limit))
     rows = cur.fetchall()
     cur.close()
     conn.close()
     return rows
 
-# --- 积分与充值操作 ---
 def get_points_data(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT points, last_checkin, wechat_used, alipay_used, recharge_attempts, recharge_locked_until 
-        FROM user_points WHERE user_id = %s
-    """, (user_id,))
+    cur.execute("SELECT points, last_checkin, wechat_used, alipay_used, recharge_attempts, recharge_locked_until FROM user_points WHERE user_id = %s", (user_id,))
     res = cur.fetchone()
     cur.close()
     conn.close()
@@ -184,23 +153,15 @@ def perform_checkin(user_id):
     current_points = data[0]
     last_date = data[1]
     today = date.today()
-    
-    if last_date == today:
-        return False, current_points, 0 
-    
+    if last_date == today: return False, current_points, 0 
     add_pts = random.randint(3, 8)
     new_points = current_points + add_pts
-    
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO user_points (user_id, points, last_checkin) VALUES (%s, %s, %s)
-        ON CONFLICT (user_id) DO UPDATE SET points = %s, last_checkin = %s
-    """, (user_id, new_points, today, new_points, today))
+    cur.execute("INSERT INTO user_points (user_id, points, last_checkin) VALUES (%s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET points = %s, last_checkin = %s", (user_id, new_points, today, new_points, today))
     conn.commit()
     cur.close()
     conn.close()
-    
     add_point_history(user_id, add_pts, "📅 每日签到")
     return True, new_points, add_pts
 
@@ -209,26 +170,18 @@ def success_recharge(user_id, method):
     cur = conn.cursor()
     field = "wechat_used" if method == 'wechat' else "alipay_used"
     amount = 100
-    cur.execute(f"""
-        UPDATE user_points 
-        SET points = points + %s, {field} = TRUE, recharge_attempts = 0, recharge_locked_until = NULL 
-        WHERE user_id = %s
-    """, (amount, user_id))
+    cur.execute(f"UPDATE user_points SET points = points + %s, {field} = TRUE, recharge_attempts = 0, recharge_locked_until = NULL WHERE user_id = %s", (amount, user_id))
     conn.commit()
     cur.close()
     conn.close()
-    
     reason = "💚 微信充值" if method == 'wechat' else "💙 支付宝充值"
     add_point_history(user_id, amount, reason)
 
-# --- 商品与兑换操作 ---
+# 商品相关
 def add_product(name, cost, c_type, c_val):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO exchange_products (name, cost, content_type, content_value) 
-        VALUES (%s, %s, %s, %s)
-    """, (name, cost, c_type, c_val))
+    cur.execute("INSERT INTO exchange_products (name, cost, content_type, content_value) VALUES (%s, %s, %s, %s)", (name, cost, c_type, c_val))
     conn.commit()
     cur.close()
     conn.close()
@@ -278,18 +231,16 @@ def execute_redemption(user_id, prod_id, cost, name):
         cur.execute("INSERT INTO user_redemptions (user_id, product_id) VALUES (%s, %s)", (user_id, prod_id))
         conn.commit()
         success = True
-    except Exception:
+    except:
         conn.rollback()
         success = False
     finally:
         cur.close()
         conn.close()
-    
-    if success:
-        add_point_history(user_id, -cost, f"🎁 兑换: {name}")
+    if success: add_point_history(user_id, -cost, f"🎁 兑换: {name}")
     return success
 
-# --- DB基础工具 ---
+# 用户状态 & 转发库相关
 def get_user_state(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -302,10 +253,7 @@ def get_user_state(user_id):
 def update_fail_attempt(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO user_status (user_id, attempts) VALUES (%s, 1)
-        ON CONFLICT (user_id) DO UPDATE SET attempts = user_status.attempts + 1
-    """, (user_id,))
+    cur.execute("INSERT INTO user_status (user_id, attempts) VALUES (%s, 1) ON CONFLICT (user_id) DO UPDATE SET attempts = user_status.attempts + 1", (user_id,))
     conn.commit()
     cur.close()
     conn.close()
@@ -314,10 +262,7 @@ def lock_user(user_id, hours=5):
     unlock_time = datetime.now() + timedelta(hours=hours)
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO user_status (user_id, attempts, locked_until) VALUES (%s, 2, %s)
-        ON CONFLICT (user_id) DO UPDATE SET locked_until = %s
-    """, (user_id, unlock_time, unlock_time))
+    cur.execute("INSERT INTO user_status (user_id, attempts, locked_until) VALUES (%s, 2, %s) ON CONFLICT (user_id) DO UPDATE SET locked_until = %s", (user_id, unlock_time, unlock_time))
     conn.commit()
     cur.close()
     conn.close()
@@ -334,9 +279,7 @@ def lock_recharge(user_id):
     unlock_time = datetime.now() + timedelta(hours=5)
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""
-        UPDATE user_points SET recharge_attempts = 2, recharge_locked_until = %s WHERE user_id = %s
-    """, (unlock_time, user_id))
+    cur.execute("UPDATE user_points SET recharge_attempts = 2, recharge_locked_until = %s WHERE user_id = %s", (unlock_time, user_id))
     conn.commit()
     cur.close()
     conn.close()
@@ -344,15 +287,11 @@ def lock_recharge(user_id):
 def fail_recharge_attempt(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO user_points (user_id, recharge_attempts) VALUES (%s, 1)
-        ON CONFLICT (user_id) DO UPDATE SET recharge_attempts = user_points.recharge_attempts + 1
-    """, (user_id,))
+    cur.execute("INSERT INTO user_points (user_id, recharge_attempts) VALUES (%s, 1) ON CONFLICT (user_id) DO UPDATE SET recharge_attempts = user_points.recharge_attempts + 1", (user_id,))
     conn.commit()
     cur.close()
     conn.close()
 
-# 转发库DB
 def add_command(trigger):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -371,8 +310,7 @@ def add_command(trigger):
 def add_content(cmd_id, chat_id, message_id, msg_type):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("INSERT INTO forward_contents (cmd_id, source_chat_id, source_message_id, message_type) VALUES (%s, %s, %s, %s)",
-        (cmd_id, chat_id, message_id, msg_type))
+    cur.execute("INSERT INTO forward_contents (cmd_id, source_chat_id, source_message_id, message_type) VALUES (%s, %s, %s, %s)", (cmd_id, chat_id, message_id, msg_type))
     conn.commit()
     cur.close()
     conn.close()
@@ -467,7 +405,6 @@ async def points_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📜 余额记录", callback_data='point_history')], 
         [InlineKeyboardButton("🏠 返回首页", callback_data='go_home')]
     ]
-    
     if query: await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
     else: await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
     return ConversationHandler.END
@@ -490,7 +427,6 @@ async def point_history_view(update: Update, context: ContextTypes.DEFAULT_TYPE)
     data = get_points_data(user_id)
     current_points = data[0]
     history = get_user_history(user_id, limit=10)
-    
     text = f"📜 <b>余额与使用记录</b>\n\n💎 当前余额：<b>{current_points}</b>\n\n<b>--- 最近 10 条记录 ---</b>\n"
     if not history: text += "暂无记录"
     else:
@@ -498,7 +434,6 @@ async def point_history_view(update: Update, context: ContextTypes.DEFAULT_TYPE)
             symbol = "+" if amount > 0 else ""
             time_str = created_at.strftime('%m-%d %H:%M')
             text += f"▪️ <code>{time_str}</code> | <b>{symbol}{amount}</b> | {reason}\n"
-            
     keyboard = [[InlineKeyboardButton("🔙 返回积分中心", callback_data='points_home')]]
     await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
@@ -516,16 +451,13 @@ async def exchange_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💎 您的积分：<b>{points}</b>\n\n"
         "👇 点击下方商品进行兑换："
     )
-    
     keyboard = []
     keyboard.append([InlineKeyboardButton("🤡 测试商品 (0积分)", callback_data='redeem_test')])
-    
     products = get_all_products()
     for pid, name, cost in products:
         is_owned = check_is_redeemed(user_id, pid)
         status = "✅已拥有" if is_owned else f"💎{cost}"
         keyboard.append([InlineKeyboardButton(f"{name} ({status})", callback_data=f'redeem_prod_{pid}')])
-        
     keyboard.append([InlineKeyboardButton("🔙 返回积分中心", callback_data='points_home')])
     
     if query: await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
@@ -554,11 +486,7 @@ async def confirm_redemption(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return await exchange_menu(update, context)
         
     name, cost = prod[0], prod[1]
-    text = (
-        f"🛒 <b>确认兑换？</b>\n\n"
-        f"📦 商品：<b>{name}</b>\n"
-        f"💰 价格：<b>{cost} 积分</b>\n"
-    )
+    text = f"🛒 <b>确认兑换？</b>\n\n📦 商品：<b>{name}</b>\n💰 价格：<b>{cost} 积分</b>\n"
     keyboard = [
         [InlineKeyboardButton("✅ 确认兑换", callback_data=f'do_buy_{prod_id}')],
         [InlineKeyboardButton("❌ 取消", callback_data='exchange_menu')]
@@ -604,7 +532,6 @@ async def recharge_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    
     data = get_points_data(user_id)
     locked_until = data[5]
     if locked_until and locked_until > datetime.now():
@@ -631,7 +558,6 @@ async def start_recharge_flow(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     user_id = query.from_user.id
     mode = query.data
-    
     data = get_points_data(user_id)
     if data[5] and data[5] > datetime.now():
         await query.message.reply_text("🚫 充值锁定中")
@@ -666,7 +592,6 @@ async def ask_recharge_order(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         text = "📝 请在支付宝账单详情找到<b>商家订单号</b>并发送。"
         img = ALIPAY_TUTORIAL_IMAGE
-    
     if img: await query.message.reply_photo(img, caption=text, parse_mode='HTML')
     else: await query.message.reply_text(text, parse_mode='HTML')
     return WAITING_RECHARGE_ORDER
@@ -675,7 +600,6 @@ async def verify_recharge_order(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     order_text = update.message.text.strip()
     rtype = context.user_data.get('recharge_type')
-    
     valid = False
     if rtype == 'wechat' and order_text.startswith("4200") and order_text.isdigit(): valid = True
     elif rtype == 'alipay' and order_text.startswith("4768") and order_text.isdigit(): valid = True
@@ -697,8 +621,10 @@ async def verify_recharge_order(update: Update, context: ContextTypes.DEFAULT_TY
             await update.message.reply_text("❌ 识别失败，请核对。还剩 1 次机会。", parse_mode='HTML')
             return WAITING_RECHARGE_ORDER
 
-# ================= 管理员后台 =================
+# ================= 🛡️ 管理员后台逻辑 (全量加强版) =================
+
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin Entry Point"""
     user_id = update.effective_user.id
     if not is_admin(user_id): return None
     
@@ -713,107 +639,186 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else: await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
     return ADMIN_SELECT
 
-# File ID Logic
-async def admin_file_id_entry(u, c):
-    q=u.callback_query; await q.answer()
-    await q.message.edit_text("🖼 请发送图片、视频或文件获取 ID。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='back_to_admin')]]))
-    return ADMIN_GET_FILE
-async def admin_process_file(u, c):
-    fid = "Unknown"
-    if u.message.photo: fid=u.message.photo[-1].file_id
-    elif u.message.video: fid=u.message.video.file_id
-    elif u.message.document: fid=u.message.document.file_id
-    await u.message.reply_text(f"📝 <b>File ID:</b>\n<code>{fid}</code>", parse_mode='HTML')
+# --- 1. File ID 工具 ---
+async def admin_file_id_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    text = "🖼 <b>File ID 提取工具</b>\n\n请发送：图片、视频、文件、音频等。\n机器人将回复 File ID。"
+    keyboard = [[InlineKeyboardButton("🔙 返回菜单", callback_data='back_to_admin')]]
+    await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
     return ADMIN_GET_FILE
 
-# Forward Lib Logic
-async def admin_lib_menu(u, c):
-    q=u.callback_query; await q.answer()
-    cmds=get_all_commands()
-    kb=[[InlineKeyboardButton("➕ 添加命令",callback_data='add_new_cmd')]]
-    for i,t in cmds: kb.append([InlineKeyboardButton(f"命令: {t}",callback_data=f'view_c_{i}'), InlineKeyboardButton("🗑",callback_data=f'del_cmd_{i}')])
-    kb.append([InlineKeyboardButton("🔙 返回菜单", callback_data='back_to_admin')])
-    await q.message.edit_text("📚 转发库管理", reply_markup=InlineKeyboardMarkup(kb))
+async def admin_process_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    fid = "未识别的文件类型"
+    if msg.photo: fid = msg.photo[-1].file_id
+    elif msg.video: fid = msg.video.file_id
+    elif msg.document: fid = msg.document.file_id
+    elif msg.audio: fid = msg.audio.file_id
+    elif msg.voice: fid = msg.voice.file_id
+    elif msg.sticker: fid = msg.sticker.file_id
+    
+    await msg.reply_text(f"📝 <b>File ID:</b>\n<code>{fid}</code>", parse_mode='HTML')
+    return ADMIN_GET_FILE
+
+# --- 2. 频道转发库 ---
+async def admin_lib_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    commands = get_all_commands()
+    keyboard = [[InlineKeyboardButton("➕ 添加新命令", callback_data='add_new_cmd')]]
+    
+    for cmd_id, trigger in commands:
+        keyboard.append([
+            InlineKeyboardButton(f"命令: {trigger}", callback_data=f'view_c_{cmd_id}'), # 这里view只是占位，暂无详细查看
+            InlineKeyboardButton("🗑 删除", callback_data=f'del_cmd_{cmd_id}')
+        ])
+    keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data='back_to_admin')])
+    
+    await query.message.edit_text("📚 <b>频道转发库管理</b>\n\n点击下方按钮管理。", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
     return ADMIN_LIB_MENU
-async def admin_add_cmd_start(u,c):
-    q=u.callback_query; await q.answer()
-    await q.message.edit_text("✏️ 请输入触发关键词：")
+
+async def admin_add_cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text("✏️ <b>请输入触发关键词：</b>\n例如：VIP1、教程")
     return ADMIN_ADD_CMD_NAME
-async def admin_save_cmd_name(u,c):
-    t=u.message.text.strip(); cid=add_command(t)
-    if not cid: 
-        await u.message.reply_text("❌ 已存在")
+
+async def admin_save_cmd_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    trigger = update.message.text.strip()
+    cmd_id = add_command(trigger)
+    if not cmd_id:
+        await update.message.reply_text("❌ 该命令已存在，请重试：")
         return ADMIN_ADD_CMD_NAME
-    c.user_data.update({'cur_cmd_id':cid, 'cnt':0})
-    await u.message.reply_text("📥 请发送内容（Max 100条），完成后点按钮。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ 完成绑定",callback_data='finish_binding')]]))
+    
+    context.user_data.update({'cur_cmd_id': cmd_id, 'cnt': 0})
+    await update.message.reply_text(
+        f"✅ 命令 <b>{trigger}</b> 创建成功！\n\n"
+        "📥 <b>请发送内容 (上限100条)：</b>\n"
+        "支持：文本、图片、视频、文件、转发消息。\n\n"
+        "发送完毕后，点击下方按钮完成。",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ 我已完成绑定", callback_data='finish_binding')]]),
+        parse_mode='HTML'
+    )
     return ADMIN_ADD_CONTENT
-async def admin_save_content(u,c):
-    cnt=c.user_data.get('cnt',0)
-    if cnt>=100: return
-    mt='text'; m=u.message
-    if m.photo: mt='photo'
-    elif m.video: mt='video'
-    elif m.document: mt='document'
-    add_content(c.user_data['cur_cmd_id'], m.chat_id, m.message_id, mt)
-    c.user_data['cnt']=cnt+1
-    return ADMIN_ADD_CONTENT
-async def admin_finish_binding(u,c):
-    q=u.callback_query; await q.answer()
-    await q.message.reply_text("✅ 绑定完成")
-    return await admin_lib_menu(u,c)
-async def admin_delete_cmd(u,c):
-    q=u.callback_query; cid=q.data.split('_')[-1]
-    delete_command(cid); await q.answer("已删除", show_alert=True)
-    return await admin_lib_menu(u,c)
 
-# Product Logic
-async def admin_prod_menu(u, c):
-    q=u.callback_query; await q.answer()
+async def admin_save_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cnt = context.user_data.get('cnt', 0)
+    if cnt >= 100: return ADMIN_ADD_CONTENT
+    
+    msg = update.message
+    msg_type = 'text'
+    if msg.photo: msg_type = 'photo'
+    elif msg.video: msg_type = 'video'
+    elif msg.document: msg_type = 'document'
+    
+    add_content(context.user_data['cur_cmd_id'], msg.chat_id, msg.message_id, msg_type)
+    context.user_data['cnt'] = cnt + 1
+    return ADMIN_ADD_CONTENT
+
+async def admin_finish_binding(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text("🎉 <b>绑定完成！</b>", parse_mode='HTML')
+    return await admin_lib_menu(update, context)
+
+async def admin_delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    cmd_id = query.data.split('_')[-1]
+    delete_command(cmd_id)
+    await query.answer("🗑 已删除", show_alert=True)
+    return await admin_lib_menu(update, context)
+
+# --- 3. 商品管理 ---
+async def admin_prod_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
     prods = get_all_products()
-    kb = [[InlineKeyboardButton("➕ 添加新商品", callback_data='add_new_prod')]]
-    for pid, name, cost in prods: kb.append([InlineKeyboardButton(f"{name} ({cost})", callback_data=f'manage_prod_{pid}')])
-    kb.append([InlineKeyboardButton("🔙 返回主菜单", callback_data='back_to_admin')])
-    await q.message.edit_text("🛍 商品管理", reply_markup=InlineKeyboardMarkup(kb))
+    keyboard = [[InlineKeyboardButton("➕ 添加新商品", callback_data='add_new_prod')]]
+    
+    for pid, name, cost in prods:
+        keyboard.append([InlineKeyboardButton(f"{name} ({cost}分)", callback_data=f'manage_prod_{pid}')])
+    keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data='back_to_admin')])
+    
+    await query.message.edit_text("🛍 <b>商品管理 (积分兑换)</b>\n\n点击商品进行管理或删除。", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
     return ADMIN_PROD_MENU
-async def admin_add_prod_start(u, c):
-    q=u.callback_query; await q.answer()
-    await q.message.reply_text("✏️ 请输入商品名称：")
+
+async def admin_add_prod_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text("✏️ <b>请输入商品名称：</b>\n例如：高级教程")
     return ADMIN_ADD_PROD_NAME
-async def admin_save_prod_name(u, c):
-    c.user_data['new_prod_name'] = u.message.text
-    await u.message.reply_text("💰 请输入兑换积分（数字）：")
+
+async def admin_save_prod_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['new_prod_name'] = update.message.text
+    await update.message.reply_text("💰 <b>请输入兑换所需积分：</b>\n(必须是数字)")
     return ADMIN_ADD_PROD_COST
-async def admin_save_prod_cost(u, c):
-    try: c.user_data['new_prod_cost'] = int(u.message.text)
-    except: return ADMIN_ADD_PROD_COST
-    await u.message.reply_text("📥 请发送商品内容（文本/图片/视频）：")
+
+async def admin_save_prod_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        cost = int(update.message.text)
+        if cost < 0: raise ValueError
+        context.user_data['new_prod_cost'] = cost
+    except:
+        await update.message.reply_text("❌ 格式错误，请输入正整数：")
+        return ADMIN_ADD_PROD_COST
+        
+    await update.message.reply_text("📥 <b>请发送商品内容：</b>\n(支持 文本、图片、视频)")
     return ADMIN_ADD_PROD_CONTENT
-async def admin_save_prod_content(u, c):
-    msg = u.message
-    c_type = 'text'; c_val = msg.text
-    if msg.photo: c_type='photo'; c_val=msg.photo[-1].file_id
-    elif msg.video: c_type='video'; c_val=msg.video.file_id
-    add_product(c.user_data['new_prod_name'], c.user_data['new_prod_cost'], c_type, c_val)
-    await u.message.reply_text("✅ 上架成功！", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data='admin_prod_menu')]]))
-    return ADMIN_PROD_MENU
-async def admin_manage_prod(u, c):
-    q=u.callback_query; await q.answer()
-    pid = int(q.data.split('_')[-1])
-    kb = [[InlineKeyboardButton("🗑 确认删除", callback_data=f'confirm_del_prod_{pid}'), InlineKeyboardButton("🔙 取消", callback_data='admin_prod_menu')]]
-    await q.message.edit_text("❓ 确认下架此商品？", reply_markup=InlineKeyboardMarkup(kb))
-    return ADMIN_PROD_MENU
-async def admin_delete_prod_confirm(u, c):
-    q=u.callback_query; pid=int(q.data.split('_')[-1])
-    delete_product(pid); await q.answer("🗑 已删除", show_alert=True)
-    return await admin_prod_menu(u, c)
 
-async def admin_exit(u,c):
-    q=u.callback_query; await q.answer()
-    await send_home_logic(c.bot, q.message.chat_id)
+async def admin_save_prod_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    c_type = 'text'
+    c_val = msg.text
+    
+    if msg.photo:
+        c_type = 'photo'
+        c_val = msg.photo[-1].file_id
+    elif msg.video:
+        c_type = 'video'
+        c_val = msg.video.file_id
+    
+    add_product(context.user_data['new_prod_name'], context.user_data['new_prod_cost'], c_type, c_val)
+    
+    await update.message.reply_text("✅ <b>商品上架成功！</b>", parse_mode='HTML')
+    
+    # 模拟返回菜单
+    keyboard = [[InlineKeyboardButton("🔙 返回商品列表", callback_data='admin_prod_menu')]]
+    await update.message.reply_text("点击返回", reply_markup=InlineKeyboardMarkup(keyboard))
+    return ADMIN_PROD_MENU
+
+async def admin_manage_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    pid = int(query.data.split('_')[-1])
+    
+    keyboard = [
+        [InlineKeyboardButton("🗑 确认删除此商品", callback_data=f'confirm_del_prod_{pid}')],
+        [InlineKeyboardButton("🔙 返回列表", callback_data='admin_prod_menu')]
+    ]
+    await query.message.edit_text("❓ <b>确认下架？</b>\n下架后用户将无法兑换。", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+    return ADMIN_PROD_MENU
+
+async def admin_delete_prod_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    pid = int(query.data.split('_')[-1])
+    delete_product(pid)
+    await query.answer("🗑 商品已删除", show_alert=True)
+    return await admin_prod_menu(update, context)
+
+async def admin_exit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("已退出管理后台")
+    await send_home_logic(context.bot, query.message.chat_id)
     return ConversationHandler.END
-async def back_to_admin(u,c): return await admin_start(u,c)
 
-# VIP Logic
+async def back_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await admin_start(update, context)
+
+
+# ================= VIP 和 首页 逻辑 =================
 async def handle_start_verify_click(u, c):
     q=u.callback_query; await q.answer()
     uid=q.from_user.id
@@ -822,16 +827,18 @@ async def handle_start_verify_click(u, c):
         await q.message.reply_text(f"🚫 锁定中，请等待。")
         return ConversationHandler.END
     kb=[[InlineKeyboardButton("✅ 我已付款，开始验证", callback_data='paid_confirm')]]
-    txt="💎 VIP会员特权说明...\n专属通道\n优先审核\n7x24小时客服"
+    txt="💎 <b>VIP会员特权说明：</b>\n✅ 专属中转通道\n✅ 优先审核入群\n✅ 7x24小时客服支持\n✅ 定期福利活动"
     if VIP_IMAGE_FILE_ID: await q.message.reply_photo(VIP_IMAGE_FILE_ID, caption=txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
     else: await q.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
     return ConversationHandler.END
+
 async def handle_paid_click(u,c):
     q=u.callback_query; await q.answer()
-    txt="🔍 请在订单详情查找订单号并发送。"
+    txt="🔍 <b>请提供您的订单号进行核验</b>\n\n请在微信/支付宝账单中找到交易单号。"
     if TUTORIAL_IMAGE_FILE_ID: await q.message.reply_photo(TUTORIAL_IMAGE_FILE_ID, caption=txt, parse_mode='HTML')
     else: await q.message.reply_text(txt, parse_mode='HTML')
     return WAITING_FOR_ORDER
+
 async def check_order(u,c):
     uid=u.effective_user.id; txt=u.message.text.strip()
     if txt.startswith("20260"):
@@ -889,18 +896,21 @@ if __name__ == '__main__':
     init_db()
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # 1. 积分充值 Conversation
     recharge_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_recharge_flow, pattern='^pay_(wechat|alipay)$')],
         states={WAITING_RECHARGE_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, verify_recharge_order)]},
         fallbacks=[CommandHandler('start', start_command), CallbackQueryHandler(points_home, pattern='^points_home$')]
     )
 
+    # 2. VIP验证 Conversation
     vip_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(handle_paid_click, pattern='^paid_confirm$')],
         states={WAITING_FOR_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_order)]},
         fallbacks=[CommandHandler('start', start_command)],
     )
 
+    # 3. 管理员后台 Conversation (全量补全)
     admin_conv = ConversationHandler(
         entry_points=[CommandHandler('admin', admin_start)],
         states={
@@ -910,15 +920,22 @@ if __name__ == '__main__':
                 CallbackQueryHandler(admin_prod_menu, pattern='^admin_prod_menu$'),
                 CallbackQueryHandler(admin_exit, pattern='^admin_exit$')
             ],
-            ADMIN_GET_FILE: [MessageHandler(filters.ALL & ~filters.COMMAND, admin_process_file), CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$')],
+            ADMIN_GET_FILE: [
+                MessageHandler(filters.ALL & ~filters.COMMAND, admin_process_file), 
+                CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$')
+            ],
             ADMIN_LIB_MENU: [
                 CallbackQueryHandler(admin_add_cmd_start, pattern='^add_new_cmd$'),
                 CallbackQueryHandler(admin_delete_cmd, pattern='^del_cmd_'),
                 CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$'),
+                # 处理查看按钮，虽然暂无详细查看逻辑，但也需要响应以防报错
                 CallbackQueryHandler(admin_lib_menu, pattern='^view_c_') 
             ],
             ADMIN_ADD_CMD_NAME: [MessageHandler(filters.TEXT, admin_save_cmd_name)],
-            ADMIN_ADD_CONTENT: [MessageHandler(filters.ALL, admin_save_content), CallbackQueryHandler(admin_finish_binding, pattern='^finish_binding$')],
+            ADMIN_ADD_CONTENT: [
+                MessageHandler(filters.ALL, admin_save_content), 
+                CallbackQueryHandler(admin_finish_binding, pattern='^finish_binding$')
+            ],
             ADMIN_PROD_MENU: [
                 CallbackQueryHandler(admin_add_prod_start, pattern='^add_new_prod$'),
                 CallbackQueryHandler(admin_manage_prod, pattern='^manage_prod_'),
@@ -932,10 +949,12 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('start', start_command)]
     )
 
+    # 注册 Handlers
     application.add_handler(admin_conv)
     application.add_handler(recharge_conv)
     application.add_handler(vip_conv)
 
+    # 独立按钮与命令
     application.add_handler(CommandHandler('jf', points_home))
     application.add_handler(CommandHandler('dh', exchange_menu))
     application.add_handler(CallbackQueryHandler(points_home, pattern='^points_home$'))
@@ -951,5 +970,5 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, catch_all_message))
 
-    print("Bot is running...")
+    print("Bot is running with FULL Admin features...")
     application.run_polling()
