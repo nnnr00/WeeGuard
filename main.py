@@ -119,7 +119,7 @@ def init_db():
             );
         """)
 
-        # 6. 积分变动日志表 (新)
+        # 6. 积分变动日志表
         cur.execute("""
             CREATE TABLE IF NOT EXISTS point_logs (
                 id SERIAL PRIMARY KEY,
@@ -220,14 +220,14 @@ async def jf_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📅 每日签到", callback_data='btn_signin')],
         [InlineKeyboardButton("💎 积分充值", callback_data='btn_recharge_menu')],
         [InlineKeyboardButton("🎁 兑换中心", callback_data='btn_dh_menu')],
-        [InlineKeyboardButton("📜 余额/明细", callback_data='btn_balance_log')], # 新增按钮
+        [InlineKeyboardButton("📜 余额/明细", callback_data='btn_balance_log')],
         [InlineKeyboardButton("🏠 返回首页", callback_data='go_home')]
     ]
     
     try: await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
     except: await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
-# --- 余额明细 (新功能) ---
+# --- 余额明细 ---
 async def balance_log_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -235,13 +235,10 @@ async def balance_log_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     conn = get_db_connection()
     cur = conn.cursor()
-    
-    # 获取当前积分
     cur.execute("SELECT points FROM user_points WHERE user_id = %s", (user_id,))
     res = cur.fetchone()
     points = res[0] if res else 0
 
-    # 获取最近10条日志
     cur.execute("SELECT change_amount, reason, created_at FROM point_logs WHERE user_id = %s ORDER BY created_at DESC LIMIT 10", (user_id,))
     logs = cur.fetchall()
     conn.close()
@@ -251,7 +248,6 @@ async def balance_log_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         log_text = "暂无记录"
     else:
         for amount, reason, date_time in logs:
-            # 简单格式化日期
             dt_str = date_time.strftime("%Y-%m-%d %H:%M")
             sign = "+" if amount > 0 else ""
             log_text += f"`{dt_str}` | {reason} | **{sign}{amount}**\n"
@@ -265,7 +261,6 @@ async def balance_log_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     keyboard = [[InlineKeyboardButton("🔙 返回积分中心", callback_data='btn_my_points')]]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
-
 
 async def signin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -283,7 +278,7 @@ async def signin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_points = (row[0] if row else 0) + add_points
         cur.execute("INSERT INTO user_points (user_id, points, last_signin_date) VALUES (%s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET points=%s, last_signin_date=%s", (user_id, new_points, today, new_points, today))
         conn.commit()
-        log_point_change(user_id, add_points, "每日签到") # 记录日志
+        log_point_change(user_id, add_points, "每日签到")
         await query.message.reply_text(f"✅ 签到成功！\n获得积分：**+{add_points}**\n当前总分：**{new_points}**", parse_mode=ParseMode.MARKDOWN)
     conn.close()
     await asyncio.sleep(1.5)
@@ -386,7 +381,7 @@ async def handle_redeem_confirm(update: Update, context: ContextTypes.DEFAULT_TY
         conn.commit()
         conn.close()
         
-        log_point_change(user_id, -prod_cost, f"兑换:{prod_name}") # 记录日志
+        log_point_change(user_id, -prod_cost, f"兑换:{prod_name}")
         
         await query.message.reply_text(f"🎉 **兑换成功！**\n消耗 {prod_cost} 积分。", parse_mode=ParseMode.MARKDOWN)
         await deliver_product(update, context, prod_type, prod_val)
@@ -529,16 +524,21 @@ async def check_recharge_order(update: Update, context: ContextTypes.DEFAULT_TYP
     valid = (method=='wx' and text.startswith('4200')) or (method=='ali' and text.startswith('4768'))
     
     if valid:
+        # === 成功 ===
         cur.execute("UPDATE user_points SET points=points+100, recharge_attempts=0 WHERE user_id=%s", (user_id,))
         if method=='wx': cur.execute("UPDATE user_points SET wx_used=TRUE WHERE user_id=%s", (user_id,))
         else: cur.execute("UPDATE user_points SET ali_used=TRUE WHERE user_id=%s", (user_id,))
         conn.commit(); conn.close()
         
-        log_point_change(user_id, 100, f"充值:{'微信' if method=='wx' else '支付宝'}") # 日志
+        log_point_change(user_id, 100, f"充值:{'微信' if method=='wx' else '支付宝'}")
         
-        await update.message.reply_text("🎉 **充值成功！**\n积分已到账。"); await asyncio.sleep(2); await jf_menu_handler(update, context)
+        # 成功 -> 跳转到首页
+        await update.message.reply_text("🎉 **充值成功！**\n获得 100 积分。")
+        await asyncio.sleep(2)
+        await start(update, context) # 跳转到首页 /start
         return ConversationHandler.END
     else:
+        # === 失败 ===
         cur.execute("SELECT recharge_attempts FROM user_points WHERE user_id=%s", (user_id,))
         att = (cur.fetchone()[0] or 0) + 1
         if att >= 2:
@@ -550,7 +550,10 @@ async def check_recharge_order(update: Update, context: ContextTypes.DEFAULT_TYP
             cur.execute("UPDATE user_points SET recharge_attempts=%s WHERE user_id=%s", (att, user_id))
             conn.commit(); conn.close()
             await update.message.reply_text("❌ 失败，请重试 (剩1次)。")
-        await asyncio.sleep(2); await jf_menu_handler(update, context)
+        
+        # 失败 -> 跳转回积分页
+        await asyncio.sleep(2)
+        await jf_menu_handler(update, context) # 跳转回积分页 /jf
         return ConversationHandler.END
 
 # ==========================================
@@ -610,7 +613,7 @@ async def handle_command_forward(update: Update, context: ContextTypes.DEFAULT_T
         context.job_queue.run_once(delete_msg_job, 1200, data={'cid': update.effective_chat.id, 'mids': mids})
     else: await context.bot.send_message(update.effective_chat.id, "❌ 获取内容失败")
 
-# --- 验证流程步骤 ---
+# --- 验证流程步骤 (完整) ---
 async def verify_step_1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     conn = get_db_connection(); cur = conn.cursor()
@@ -633,9 +636,7 @@ async def verify_step_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # 1. 成功情况
     if text.startswith("20260"):
-        # 清除可能的错误记录
         cur.execute("DELETE FROM user_verification WHERE user_id = %s", (user_id,))
         conn.commit()
         conn.close()
@@ -644,61 +645,39 @@ async def verify_step_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("🔗 点击加入群组", url=GROUP_LINK)]]
         
         await update.message.reply_text(success_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
-        
-        # 延迟2秒跳转回首页
         await asyncio.sleep(2)
         await start(update, context)
         return ConversationHandler.END
-    
-    # 2. 失败情况
     else:
-        # 获取当前尝试次数
         cur.execute("SELECT attempt_count FROM user_verification WHERE user_id = %s", (user_id,))
         row = cur.fetchone()
         current_attempts = row[0] if row else 0
         new_attempts = current_attempts + 1
 
         if new_attempts >= 2:
-            # 失败达到2次 -> 锁定5小时
             lockout_time = datetime.now() + timedelta(hours=5)
-            
             cur.execute("""
                 INSERT INTO user_verification (user_id, attempt_count, lockout_until)
                 VALUES (%s, %s, %s)
-                ON CONFLICT (user_id) 
-                DO UPDATE SET attempt_count = %s, lockout_until = %s
+                ON CONFLICT (user_id) DO UPDATE SET attempt_count = %s, lockout_until = %s
             """, (user_id, new_attempts, lockout_time, new_attempts, lockout_time))
             conn.commit()
             conn.close()
 
-            await update.message.reply_text(
-                "❌ 未查询到订单信息。\n"
-                "🚫 连续失败 2 次，系统已暂停验证。\n"
-                "请 5 小时后再试。",
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
-            # 失败锁定后，跳转回首页
+            await update.message.reply_text("❌ 未查询到订单信息。\n🚫 连续失败 2 次，系统已暂停验证。\n请 5 小时后再试。", parse_mode=ParseMode.MARKDOWN)
             await asyncio.sleep(2)
             await start(update, context)
             return ConversationHandler.END
         else:
-            # 失败1次 -> 允许重试
             cur.execute("""
                 INSERT INTO user_verification (user_id, attempt_count)
                 VALUES (%s, %s)
-                ON CONFLICT (user_id) 
-                DO UPDATE SET attempt_count = %s
+                ON CONFLICT (user_id) DO UPDATE SET attempt_count = %s
             """, (user_id, new_attempts, new_attempts))
             conn.commit()
             conn.close()
 
-            await update.message.reply_text(
-                "❌ 未查询到订单信息，请重试。\n"
-                "(您还有 1 次尝试机会)", 
-                parse_mode=ParseMode.MARKDOWN
-            )
-            # 保持在等待输入状态
+            await update.message.reply_text("❌ 未查询到订单信息，请重试。\n(您还有 1 次尝试机会)", parse_mode=ParseMode.MARKDOWN)
             return USER_WAITING_FOR_ORDER
 
 # ==========================================
