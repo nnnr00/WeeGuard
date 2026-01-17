@@ -33,19 +33,19 @@ GROUP_INVITE_LINK = os.getenv('GROUP_INVITE_LINK', 'https://t.me/your_group')
 WAITING_FOR_FILE = 1
 WAITING_FOR_ORDER = 2
 
-# 用户验证失败记录
+# 用户验证失败记录 {user_id: {'count': int, 'locked_until': datetime}}
 user_locks = {}
 
-# 频道转发库存储
+# 频道转发库存储 {command: {'chat_id': int, 'message_ids': [int, ...], 'created_by': int}}
 forward_library = {}
 
-# 临时存储正在创建的命令
+# 临时存储正在创建的命令 {user_id: {'command': str, 'chat_id': int, 'message_ids': []}}
 temp_commands = {}
 
-# 用户消息删除任务
+# 用户消息删除任务 {chat_id: {message_id: task}}
 delete_tasks = {}
 
-# File ID 临时存储
+# File ID 临时存储（管理员获取）
 file_id_storage = {
     'PAYMENT_IMAGE': '',
     'TUTORIAL_IMAGE': '',
@@ -57,19 +57,19 @@ file_id_storage = {
 
 # ============== 积分系统数据 ==============
 
-# 用户积分
+# 用户积分 {user_id: points}
 user_points = {}
 
-# 签到记录
+# 签到记录 {user_id: last_signin_date}
 signin_records = {}
 
-# 充值记录
+# 充值记录 {user_id: {'wechat': bool, 'alipay': bool}}
 recharge_records = {}
 
-# 充值失败记录
+# 充值失败记录 {user_id: {'wechat': {'count': int, 'locked_until': datetime}, 'alipay': {...}}}
 recharge_locks = {}
 
-# 等待充值订单号输入
+# 等待充值订单号输入 {user_id: {'type': 'wechat'/'alipay', 'attempt': int}}
 waiting_recharge_order = {}
 
 # ============== 兑换系统数据 ==============
@@ -217,10 +217,12 @@ def is_recharge_locked(user_id: int, pay_type: str) -> tuple[bool, datetime]:
         return False, None
     
     lock_info = recharge_locks[user_id][pay_type]
-    if lock_info['locked_until'] > datetime.now():
+    if lock_info.get('locked_until') and lock_info['locked_until'] > datetime.now():
         return True, lock_info['locked_until']
     else:
-        del recharge_locks[user_id][pay_type]
+        # 锁定时间已过，清除
+        if 'locked_until' in lock_info and lock_info['locked_until'] <= datetime.now():
+            recharge_locks[user_id][pay_type] = {'count': 0, 'locked_until': None}
         return False, None
 
 def record_recharge_failed(user_id: int, pay_type: str):
@@ -233,9 +235,12 @@ def record_recharge_failed(user_id: int, pay_type: str):
     
     recharge_locks[user_id][pay_type]['count'] += 1
     
+    # 失败2次，锁定10小时
     if recharge_locks[user_id][pay_type]['count'] >= 2:
         recharge_locks[user_id][pay_type]['locked_until'] = datetime.now() + timedelta(hours=10)
-        recharge_locks[user_id][pay_type]['count'] = 0
+        recharge_locks[user_id][pay_type]['count'] = 0  # 重置计数
+        return True  # 返回True表示已锁定
+    return False  # 返回False表示未锁定
 
 def get_recharge_attempts(user_id: int, pay_type: str) -> int:
     """获取充值失败次数"""
@@ -611,8 +616,7 @@ async def handle_product_content_input(update: Update, context: ContextTypes.DEF
     
     await asyncio.sleep(1)
     
-    # 返回商品管理页面（需要构造一个临时的 query 对象）
-    # 这里直接发送新消息
+    # 返回商品管理页面
     keyboard = [
         [InlineKeyboardButton("📦 商品管理", callback_data="product_management")],
         [InlineKeyboardButton("🔙 返回后台", callback_data="back_to_admin")]
@@ -747,13 +751,15 @@ async def show_recharge_menu(query, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = []
     
+    # 微信充值按钮
     if wechat_recharged:
         wechat_text = "💚 微信支付（已使用）"
         wechat_callback = "recharge_used"
     elif wechat_locked:
         time_left = wechat_unlock_time - datetime.now()
         hours = int(time_left.total_seconds() // 3600)
-        wechat_text = f"💚 微信支付（{hours}小时后重试）"
+        minutes = int((time_left.total_seconds() % 3600) // 60)
+        wechat_text = f"💚 微信支付（{hours}小时{minutes}分钟后重试）"
         wechat_callback = "recharge_locked_wechat"
     else:
         wechat_text = "💚 微信支付"
@@ -761,13 +767,15 @@ async def show_recharge_menu(query, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard.append([InlineKeyboardButton(wechat_text, callback_data=wechat_callback)])
     
+    # 支付宝充值按钮
     if alipay_recharged:
         alipay_text = "💙 支付宝支付（已使用）"
         alipay_callback = "recharge_used"
     elif alipay_locked:
         time_left = alipay_unlock_time - datetime.now()
         hours = int(time_left.total_seconds() // 3600)
-        alipay_text = f"💙 支付宝支付（{hours}小时后重试）"
+        minutes = int((time_left.total_seconds() % 3600) // 60)
+        alipay_text = f"💙 支付宝支付（{hours}小时{minutes}分钟后重试）"
         alipay_callback = "recharge_locked_alipay"
     else:
         alipay_text = "💙 支付宝支付"
@@ -794,7 +802,8 @@ async def handle_recharge_wechat(query, context: ContextTypes.DEFAULT_TYPE):
     if locked:
         time_left = unlock_time - datetime.now()
         hours = int(time_left.total_seconds() // 3600)
-        await query.answer(f"⏰ 请等待 {hours} 小时后重试", show_alert=True)
+        minutes = int((time_left.total_seconds() % 3600) // 60)
+        await query.answer(f"⏰ 请等待 {hours}小时{minutes}分钟后重试", show_alert=True)
         return
     
     text = (
@@ -873,7 +882,8 @@ async def handle_recharge_alipay(query, context: ContextTypes.DEFAULT_TYPE):
     if locked:
         time_left = unlock_time - datetime.now()
         hours = int(time_left.total_seconds() // 3600)
-        await query.answer(f"⏰ 请等待 {hours} 小时后重试", show_alert=True)
+        minutes = int((time_left.total_seconds() % 3600) // 60)
+        await query.answer(f"⏰ 请等待 {hours}小时{minutes}分钟后重试", show_alert=True)
         return
     
     text = (
@@ -961,6 +971,7 @@ async def handle_recharge_order_input(update: Update, context: ContextTypes.DEFA
         is_valid = verify_alipay_order(order_number)
     
     if is_valid:
+        # 验证成功
         add_points(user_id, 100)
         mark_recharged(user_id, pay_type)
         total_points = get_user_points(user_id)
@@ -994,11 +1005,46 @@ async def handle_recharge_order_input(update: Update, context: ContextTypes.DEFA
         await show_points_page(temp_update, context)
         
     else:
-        record_recharge_failed(user_id, pay_type)
+        # 验证失败 - 修复的关键部分
+        is_locked = record_recharge_failed(user_id, pay_type)
         current_attempt = get_recharge_attempts(user_id, pay_type)
         attempts_left = 2 - current_attempt
         
-        if attempts_left > 0:
+        if is_locked:
+            # 已经失败2次，被锁定
+            locked, unlock_time = is_recharge_locked(user_id, pay_type)
+            time_left = unlock_time - datetime.now()
+            hours = int(time_left.total_seconds() // 3600)
+            minutes = int((time_left.total_seconds() % 3600) // 60)
+            
+            pay_name = "微信支付" if pay_type == 'wechat' else "支付宝支付"
+            
+            lock_text = (
+                f"❌ *订单号识别失败*\n\n"
+                f"⚠️ 验证失败次数过多\n"
+                f"🔒 {pay_name}已被封禁\n"
+                f"⏰ 请在 {hours}小时{minutes}分钟 后重试\n\n"
+                f"正在返回积分页面..."
+            )
+            
+            await update.message.reply_text(lock_text, parse_mode='Markdown')
+            
+            # 清除等待状态
+            del waiting_recharge_order[user_id]
+            context.user_data.clear()
+            
+            await asyncio.sleep(2)
+            
+            class TempUpdate:
+                def __init__(self, message):
+                    self.message = message
+                    self.callback_query = None
+                    self.effective_user = message.from_user
+            
+            temp_update = TempUpdate(update.message)
+            await show_points_page(temp_update, context)
+        else:
+            # 还有机会重试
             fail_text = (
                 f"❌ *订单号识别失败*\n\n"
                 f"⚠️ 剩余尝试次数：{attempts_left} 次\n\n"
@@ -1007,37 +1053,6 @@ async def handle_recharge_order_input(update: Update, context: ContextTypes.DEFA
             
             waiting_recharge_order[user_id]['attempt'] = current_attempt
             await update.message.reply_text(fail_text, parse_mode='Markdown')
-        else:
-            locked, unlock_time = is_recharge_locked(user_id, pay_type)
-            
-            if locked:
-                time_left = unlock_time - datetime.now()
-                hours = int(time_left.total_seconds() // 3600)
-                
-                pay_name = "微信支付" if pay_type == 'wechat' else "支付宝支付"
-                
-                lock_text = (
-                    f"❌ *订单号识别失败*\n\n"
-                    f"⚠️ 验证失败次数过多\n"
-                    f"⏰ 请在 {hours} 小时后重试\n\n"
-                    f"正在返回积分页面..."
-                )
-                
-                await update.message.reply_text(lock_text, parse_mode='Markdown')
-                
-                del waiting_recharge_order[user_id]
-                context.user_data.clear()
-                
-                await asyncio.sleep(2)
-                
-                class TempUpdate:
-                    def __init__(self, message):
-                        self.message = message
-                        self.callback_query = None
-                        self.effective_user = message.from_user
-                
-                temp_update = TempUpdate(update.message)
-                await show_points_page(temp_update, context)
     
     return True
 
@@ -1047,23 +1062,30 @@ def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
 
 def is_user_locked(user_id: int) -> tuple[bool, datetime]:
+    """检查用户是否被锁定"""
     if user_id in user_locks:
         lock_info = user_locks[user_id]
-        if lock_info['locked_until'] > datetime.now():
+        if lock_info.get('locked_until') and lock_info['locked_until'] > datetime.now():
             return True, lock_info['locked_until']
         else:
-            del user_locks[user_id]
+            # 锁定时间已过，清除
+            if 'locked_until' in lock_info and lock_info['locked_until'] <= datetime.now():
+                del user_locks[user_id]
     return False, None
 
 def record_failed_attempt(user_id: int):
+    """记录验证失败 - 修复的关键部分"""
     if user_id not in user_locks:
         user_locks[user_id] = {'count': 0, 'locked_until': None}
     
     user_locks[user_id]['count'] += 1
     
+    # 失败2次，锁定5小时
     if user_locks[user_id]['count'] >= 2:
         user_locks[user_id]['locked_until'] = datetime.now() + timedelta(hours=5)
-        user_locks[user_id]['count'] = 0
+        user_locks[user_id]['count'] = 0  # 重置计数
+        return True  # 返回True表示已锁定
+    return False  # 返回False表示未锁定
 
 def clear_user_attempts(user_id: int):
     if user_id in user_locks:
@@ -1072,7 +1094,7 @@ def clear_user_attempts(user_id: int):
 def verify_order_number(order_number: str) -> bool:
     return order_number.startswith('20260')
 
-def extract_channel_id(text: str) -> int:
+def extract_channel_id(text: str) -> str:
     patterns = [
         r't\.me/([a-zA-Z0-9_]+)',
         r'@([a-zA-Z0-9_]+)'
@@ -1200,9 +1222,10 @@ async def handle_normal_message(update: Update, context: ContextTypes.DEFAULT_TY
     reply_markup = get_home_keyboard(user_id)
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# ============== 验证流程 ==============
+# ============== 验证流程 - 修复的关键部分 ==============
 
 async def handle_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理VIP验证订单号输入"""
     if not context.user_data.get('awaiting_order'):
         await handle_normal_message(update, context)
         return
@@ -1211,6 +1234,7 @@ async def handle_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     order_number = update.message.text.strip()
     
     if verify_order_number(order_number):
+        # 验证成功
         clear_user_attempts(user_id)
         context.user_data.clear()
         
@@ -1237,18 +1261,11 @@ async def handle_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await start(update, context)
         
     else:
-        record_failed_attempt(user_id)
-        current_count = user_locks.get(user_id, {}).get('count', 0)
-        attempts_left = 2 - current_count
+        # 验证失败 - 修复的关键部分
+        is_locked = record_failed_attempt(user_id)
         
-        if attempts_left > 0:
-            fail_text = (
-                "❌ *未查询到订单信息*\n\n"
-                f"剩余尝试次数：{attempts_left}\n\n"
-                "请检查订单号是否正确，然后重新输入："
-            )
-            await update.message.reply_text(fail_text, parse_mode='Markdown')
-        else:
+        if is_locked:
+            # 已经失败2次，被锁定
             locked, unlock_time = is_user_locked(user_id)
             time_left = unlock_time - datetime.now()
             hours = int(time_left.total_seconds() // 3600)
@@ -1256,14 +1273,26 @@ async def handle_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             
             lock_text = (
                 "❌ *验证失败次数过多*\n\n"
+                f"🔒 开始验证已被封禁\n"
                 f"⏰ 请在 {hours}小时{minutes}分钟 后重试\n\n"
-                "正在返回首页..."
+                f"正在返回首页..."
             )
             
             await update.message.reply_text(lock_text, parse_mode='Markdown')
             context.user_data.clear()
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
             await start(update, context)
+        else:
+            # 还有机会重试
+            current_count = user_locks.get(user_id, {}).get('count', 0)
+            attempts_left = 2 - current_count
+            
+            fail_text = (
+                "❌ *未查询到订单信息*\n\n"
+                f"⚠️ 剩余尝试次数：{attempts_left} 次\n\n"
+                f"请检查订单号是否正确，然后重新输入："
+            )
+            await update.message.reply_text(fail_text, parse_mode='Markdown')
 
 # ============== 管理员后台 ==============
 
@@ -1715,7 +1744,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if locked:
             time_left = unlock_time - datetime.now()
             hours = int(time_left.total_seconds() // 3600)
-            await query.answer(f"⏰ 请等待 {hours} 小时后重试", show_alert=True)
+            minutes = int((time_left.total_seconds() % 3600) // 60)
+            await query.answer(f"⏰ 微信支付已被封禁，请等待 {hours}小时{minutes}分钟后重试", show_alert=True)
         return
     
     if data == "recharge_locked_alipay":
@@ -1723,7 +1753,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if locked:
             time_left = unlock_time - datetime.now()
             hours = int(time_left.total_seconds() // 3600)
-            await query.answer(f"⏰ 请等待 {hours} 小时后重试", show_alert=True)
+            minutes = int((time_left.total_seconds() % 3600) // 60)
+            await query.answer(f"⏰ 支付宝支付已被封禁，请等待 {hours}小时{minutes}分钟后重试", show_alert=True)
         return
     
     # 锁定状态
@@ -1733,11 +1764,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             time_left = unlock_time - datetime.now()
             hours = int(time_left.total_seconds() // 3600)
             minutes = int((time_left.total_seconds() % 3600) // 60)
-            await query.answer(f"⏰ 请等待 {hours}小时{minutes}分钟后重试", show_alert=True)
+            await query.answer(f"⏰ 开始验证已被封禁，请等待 {hours}小时{minutes}分钟后重试", show_alert=True)
         return
     
     # 开始验证
     if data == "start_verify":
+        # 检查是否被锁定
+        locked, unlock_time = is_user_locked(user_id)
+        if locked:
+            time_left = unlock_time - datetime.now()
+            hours = int(time_left.total_seconds() // 3600)
+            minutes = int((time_left.total_seconds() % 3600) // 60)
+            await query.answer(f"⏰ 开始验证已被封禁，请等待 {hours}小时{minutes}分钟后重试", show_alert=True)
+            return
+        
         context.user_data['in_verification'] = True
         
         vip_text = (
@@ -1945,64 +1985,94 @@ def main():
     # 回调处理
     application.add_handler(CallbackQueryHandler(button_callback))
     
-    # 文件处理（管理员）
+    # 统一的媒体处理器
+    async def unified_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """统一的媒体处理器"""
+        user_id = update.effective_user.id
+        
+        # 只处理管理员的媒体
+        if not is_admin(user_id):
+            return
+        
+        # 优先级1: 获取文件ID
+        if context.user_data.get('admin_getting_file'):
+            await handle_admin_file(update, context)
+            return
+        
+        # 优先级2: 商品内容上传
+        if context.user_data.get('waiting_product_content'):
+            await handle_product_content_input(update, context)
+            return
+        
+        # 优先级3: 转发库内容
+        if context.user_data.get('waiting_content'):
+            await handle_content_input(update, context)
+            return
+    
+    # 媒体处理（图片、视频、文档等）
     application.add_handler(MessageHandler(
         (filters.PHOTO | filters.VIDEO | filters.Document.ALL | 
          filters.AUDIO | filters.VOICE | filters.Sticker.ALL | 
          filters.ANIMATION) & filters.User(ADMIN_ID),
-        handle_admin_file
+        unified_media_handler
+    ))
+    
+    # 转发消息处理
+    async def forwarded_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """转发消息处理器"""
+        if context.user_data.get('waiting_content'):
+            await handle_content_input(update, context)
+    
+    application.add_handler(MessageHandler(
+        filters.FORWARDED & filters.User(ADMIN_ID),
+        forwarded_handler
     ))
     
     # 文本消息处理
     async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # 充值订单号输入
+        """统一的文本消息处理器"""
+        user_id = update.effective_user.id
+        
+        # 优先级1: 充值订单号输入
         if context.user_data.get('waiting_recharge_order'):
             handled = await handle_recharge_order_input(update, context)
             if handled:
                 return
         
-        # 商品名称输入
-        if context.user_data.get('waiting_product_name'):
-            await handle_product_name_input(update, context)
-            return
+        # 优先级2: 商品管理（仅管理员）
+        if is_admin(user_id):
+            if context.user_data.get('waiting_product_name'):
+                await handle_product_name_input(update, context)
+                return
+            
+            if context.user_data.get('waiting_product_points'):
+                await handle_product_points_input(update, context)
+                return
+            
+            # 商品内容（文本）
+            if context.user_data.get('waiting_product_content'):
+                await handle_product_content_input(update, context)
+                return
         
-        # 商品积分输入
-        if context.user_data.get('waiting_product_points'):
-            await handle_product_points_input(update, context)
-            return
-        
-        # 等待命令名称
-        if context.user_data.get('waiting_command_name'):
+        # 优先级3: 转发库命令名称（仅管理员）
+        if is_admin(user_id) and context.user_data.get('waiting_command_name'):
             await handle_command_name_input(update, context)
-        # 等待内容输入
-        elif context.user_data.get('waiting_content'):
+            return
+        
+        # 优先级4: 转发库内容（仅管理员）
+        if is_admin(user_id) and context.user_data.get('waiting_content'):
             await handle_content_input(update, context)
-        # 等待订单号
-        elif context.user_data.get('awaiting_order'):
+            return
+        
+        # 优先级5: VIP验证订单号
+        if context.user_data.get('awaiting_order'):
             await handle_order_input(update, context)
-        # 其他情况
-        else:
-            await handle_normal_message(update, context)
+            return
+        
+        # 其他情况：检查是否为转发库命令或返回首页
+        await handle_normal_message(update, context)
     
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-    
-    # 媒体消息处理（商品内容）
-    async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if context.user_data.get('waiting_product_content'):
-            await handle_product_content_input(update, context)
-        elif context.user_data.get('waiting_content'):
-            await handle_content_input(update, context)
-    
-    application.add_handler(MessageHandler(
-        (filters.PHOTO | filters.VIDEO | filters.Document.ALL) & filters.User(ADMIN_ID) & ~filters.COMMAND,
-        media_handler
-    ))
-    
-    # 转发消息处理
-    application.add_handler(MessageHandler(
-        filters.FORWARDED & filters.User(ADMIN_ID),
-        handle_content_input
-    ))
     
     logger.info("🤖 机器人启动中...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
