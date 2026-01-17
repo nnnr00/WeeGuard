@@ -1937,24 +1937,32 @@ async def handle_command_name_input(update: Update, context: ContextTypes.DEFAUL
     return True
 
 async def handle_content_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """处理内容输入 - 关键修复"""
+    """处理内容输入 - 支持所有类型（完整修复版）"""
     if not context.user_data.get('waiting_content'):
-        logger.info(f"⚠️ 用户 {update.effective_user.id} 状态不匹配，跳过内容处理")
+        logger.info(f"⚠️ 用户 {update.effective_user.id} 状态不匹配 waiting_content")
         return False
     
     user_id = update.effective_user.id
     
-    logger.info(f"📥 用户 {user_id} 添加内容")
+    logger.info(f"📥 [内容添加] 用户 {user_id} 添加内容")
+    logger.info(f"   temp_commands 存在: {user_id in temp_commands}")
     
     # 检查临时数据
     if user_id not in temp_commands:
-        logger.error(f"❌ 用户 {user_id} 临时数据不存在")
-        await update.message.reply_text("❌ 会话已过期，请重新开始")
+        logger.error(f"❌ [错误] temp_commands[{user_id}] 不存在")
+        logger.error(f"   当前 temp_commands 的用户: {list(temp_commands.keys())}")
+        
+        await update.message.reply_text(
+            "❌ 会话已过期，请重新开始\n\n"
+            "请使用 /admin → 📚 频道转发库 → ➕ 添加新命令"
+        )
         context.user_data.clear()
         return True
     
     message = update.message
     temp_cmd = temp_commands[user_id]
+    
+    logger.info(f"   当前临时数据: {temp_cmd}")
     
     # 检查消息数量限制
     if len(temp_cmd['message_ids']) >= 100:
@@ -1963,90 +1971,110 @@ async def handle_content_input(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return True
     
-    # 处理不同类型的内容
-    if message.text and ('t.me/' in message.text or '@' in message.text):
+    # ============== 处理不同类型的内容（核心修复）==============
+    
+    content_type = None
+    
+    # 1. 转发的消息（优先处理）
+    if message.forward_from_chat:
+        chat_id = message.forward_from_chat.id
+        username = getattr(message.forward_from_chat, 'username', None) or "未知频道"
+        temp_cmd['chat_id'] = chat_id
+        temp_cmd['message_ids'].append(message.message_id)
+        content_type = f"转发消息（来自 @{username}）"
+        logger.info(f"↗️ [转发] 频道ID: {chat_id}, 用户名: {username}")
+    
+    # 2. 频道链接（t.me/...）
+    elif message.text and ('t.me/' in message.text or '@' in message.text):
         channel_id = extract_channel_id(message.text)
         if channel_id:
             temp_cmd['chat_id'] = channel_id
-            logger.info(f"📡 识别到频道ID: {channel_id}")
+            content_type = f"频道链接（{channel_id}）"
+            logger.info(f"🔗 [链接] 频道ID: {channel_id}")
+        else:
+            content_type = "文本消息"
+            logger.info(f"📝 [文本] 内容: {message.text[:50]}")
         temp_cmd['message_ids'].append(message.message_id)
-    elif message.forward_from_chat:
-        chat_id = message.forward_from_chat.id
-        temp_cmd['chat_id'] = chat_id
+    
+    # 3. 纯文本
+    elif message.text:
         temp_cmd['message_ids'].append(message.message_id)
-        logger.info(f"↗️ 识别到转发频道ID: {chat_id}")
+        content_type = "文本消息"
+        logger.info(f"📝 [文本] 内容: {message.text[:50]}")
+    
+    # 4. 图片
+    elif message.photo:
+        temp_cmd['message_ids'].append(message.message_id)
+        content_type = "图片"
+        logger.info(f"🖼 [图片] 已添加")
+    
+    # 5. 视频
+    elif message.video:
+        temp_cmd['message_ids'].append(message.message_id)
+        content_type = "视频"
+        logger.info(f"🎬 [视频] 已添加")
+    
+    # 6. 文档
+    elif message.document:
+        temp_cmd['message_ids'].append(message.message_id)
+        file_name = getattr(message.document, 'file_name', None) or "未命名文件"
+        content_type = f"文档（{file_name}）"
+        logger.info(f"📄 [文档] 文件名: {file_name}")
+    
+    # 7. 音频
+    elif message.audio:
+        temp_cmd['message_ids'].append(message.message_id)
+        content_type = "音频"
+        logger.info(f"🎵 [音频] 已添加")
+    
+    # 8. 语音
+    elif message.voice:
+        temp_cmd['message_ids'].append(message.message_id)
+        content_type = "语音消息"
+        logger.info(f"🎤 [语音] 已添加")
+    
+    # 9. 贴纸
+    elif message.sticker:
+        temp_cmd['message_ids'].append(message.message_id)
+        content_type = "贴纸"
+        logger.info(f"🎨 [贴纸] 已添加")
+    
+    # 10. 动画/GIF
+    elif message.animation:
+        temp_cmd['message_ids'].append(message.message_id)
+        content_type = "GIF动画"
+        logger.info(f"🎞 [动画] 已添加")
+    
     else:
-        temp_cmd['message_ids'].append(message.message_id)
+        logger.warning(f"⚠️ [未知类型] 无法识别的消息类型")
+        await update.message.reply_text(
+            "❌ 不支持的消息类型\n\n"
+            "请发送：文本、图片、视频、文档、音频、转发消息等"
+        )
+        return True
     
     count = len(temp_cmd['message_ids'])
     
-    logger.info(f"✅ 用户 {user_id} 已添加 {count} 条内容")
+    logger.info(f"✅ [统计] 已添加 {count} 条，最新类型: {content_type}")
+    logger.info(f"   更新后的临时数据: {temp_cmd}")
+    
+    # 创建带按钮的回复
+    keyboard = [
+        [InlineKeyboardButton("✅ 完成绑定", callback_data="finish_binding")],
+        [InlineKeyboardButton("❌ 取消", callback_data="cancel_binding")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
         f"✅ 已添加第 {count} 条内容\n\n"
+        f"📋 类型：{content_type}\n\n"
         f"继续添加或点击「完成绑定」",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ 完成绑定", callback_data="finish_binding")],
-            [InlineKeyboardButton("❌ 取消", callback_data="cancel_binding")]
-        ])
+        reply_markup=reply_markup
     )
     
+    logger.info(f"✅ [消息发送] 已更新提示消息")
+    
     return True
-
-async def finish_binding(query, context: ContextTypes.DEFAULT_TYPE):
-    """完成绑定 - 核心修复部分"""
-    user_id = query.from_user.id
-    
-    logger.info(f"🔄 用户 {user_id} 点击完成绑定")
-    logger.info(f"📊 当前 temp_commands: {temp_commands}")
-    logger.info(f"📊 用户 {user_id} 的临时数据: {temp_commands.get(user_id)}")
-    
-    # 检查临时数据是否存在 - 关键检查
-    if user_id not in temp_commands:
-        logger.error(f"❌ 用户 {user_id} 不在 temp_commands 中")
-        logger.error(f"当前 temp_commands 的用户: {list(temp_commands.keys())}")
-        await query.answer("❌ 会话已过期，请重新开始", show_alert=True)
-        return
-    
-    temp_cmd = temp_commands[user_id]
-    
-    # 检查是否添加了内容
-    if not temp_cmd.get('message_ids'):
-        logger.warning(f"⚠️ 用户 {user_id} 没有添加任何内容")
-        await query.answer("❌ 请至少添加一条内容", show_alert=True)
-        return
-    
-    command = temp_cmd['command']
-    
-    logger.info(f"💾 开始保存命令:")
-    logger.info(f"   命令名: {command}")
-    logger.info(f"   频道ID: {temp_cmd['chat_id']}")
-    logger.info(f"   消息数: {len(temp_cmd['message_ids'])}")
-    
-    # 保存到转发库 - 关键保存
-    forward_library[command] = {
-        'chat_id': temp_cmd['chat_id'],
-        'message_ids': temp_cmd['message_ids'].copy(),  # 使用副本
-        'created_by': user_id
-    }
-    
-    logger.info(f"✅ 已保存到内存转发库")
-    logger.info(f"📚 当前转发库命令数: {len(forward_library)}")
-    
-    # 保存到数据库
-    save_forward_library_to_db(command, forward_library[command])
-    
-    # 清除临时数据
-    del temp_commands[user_id]
-    context.user_data.clear()
-    
-    logger.info(f"🧹 已清除用户 {user_id} 的临时数据")
-    logger.info(f"✅ 命令 {command} 创建完成！")
-    
-    await query.answer("✅ 绑定成功！", show_alert=True)
-    
-    # 返回转发库列表
-    await show_forward_library(query, context)
 
 async def view_command_detail(query, context: ContextTypes.DEFAULT_TYPE, command_name: str):
     """查看命令详情"""
