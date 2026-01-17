@@ -20,12 +20,12 @@ from telegram.ext import (
 # ==========================================
 # ⚠️ 配置区域 (请填入你的 File ID)
 # ==========================================
-FILE_ID_VIP = None         # VIP特权说明图
-FILE_ID_TUTORIAL = None    # 验证订单教程图
-FILE_ID_WX_QR = None       # 微信收款码
-FILE_ID_WX_HELP = None     # 微信教程
-FILE_ID_ALI_QR = None      # 支付宝收款码
-FILE_ID_ALI_HELP = None    # 支付宝教程
+FILE_ID_VIP = "AgACAgUAAxkBAAIBamlrJM3dh9v-D0JT_Ou6p8RB7MygAAI1DWsbsJNZVzYLFeKKSIIoAQADAgADeAADOAQ"      # VIP特权说明图
+FILE_ID_TUTORIAL = "AgACAgUAAxkBAAIBbmlrJORDj5FFL_6I1DCNChw9j_hXAAJqDWsbtShZV3RK8xCohcbUAQADAgADeQADOAQ"    # 验证订单教程图
+FILE_ID_WX_QR = "AgACAgUAAxkBAAIBdmlrJPwfK_08snHlwtdI-isXhZdJAAIzDWsbsJNZV48inn-X9Td_AQADAgADeAADOAQ"       # 微信收款码
+FILE_ID_WX_HELP = "AgACAgUAAxkBAAIBfmlrJQlRNQgmGXXLwiBlSFj2nNAlAAI3DWsbsJNZV-QR8b3h8hBxAQADAgADeQADOAQ"     # 微信教程
+FILE_ID_ALI_QR = "AgACAgUAAxkBAAIBcmlrJPSCSgGDCWOS9P2eLOQNSggdAAI0DWsbsJNZV7e6iz3VImm2AQADAgADeAADOAQ"      # 支付宝收款码
+FILE_ID_ALI_HELP = "AgACAgUAAxkBAAIBemlrJQTC0w-4MrMrx92OYlDXBu8FAAI2DWsbsJNZV_QG5bUozN_YAQADAgADeQADOAQ"    # 支付宝教程
 
 GROUP_LINK = "https://t.me/joinchat/YOUR_LINK_HERE" # 验证成功后的群链接
 
