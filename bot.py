@@ -37,7 +37,7 @@ ADMIN_WAIT_PHOTO = 1
 # Admin - 转发库
 LIB_INPUT_CMD_NAME = 2
 LIB_UPLOAD_CONTENT = 3
-# Admin - 商品管理 (新)
+# Admin - 商品管理
 PROD_INPUT_NAME = 4
 PROD_INPUT_COST = 5
 PROD_INPUT_CONTENT = 6
@@ -99,19 +99,19 @@ def init_db():
                     ali_cool TIMESTAMP
                 );
             """)
-            # 4. 商品表 (新)
+            # 4. 商品表
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS products (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL,
                     cost INT NOT NULL,
-                    content_type TEXT, -- 'text' or 'media'
-                    content_text TEXT, -- if text
-                    file_id TEXT,      -- if media
+                    content_type TEXT, 
+                    content_text TEXT, 
+                    file_id TEXT,      
                     created_at TIMESTAMP DEFAULT NOW()
                 );
             """)
-            # 5. 兑换记录表 (新)
+            # 5. 兑换记录表
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS redemptions (
                     user_id BIGINT,
@@ -120,7 +120,7 @@ def init_db():
                     PRIMARY KEY (user_id, product_id)
                 );
             """)
-            # 6. 积分流水表 (新)
+            # 6. 积分流水表
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS point_history (
                     id SERIAL PRIMARY KEY,
@@ -140,9 +140,8 @@ def init_db():
             conn.commit()
         conn.close()
 
-# --- 积分与流水相关 ---
+# --- DB Utilities ---
 def db_log_history(user_id, amount, reason):
-    """记录积分流水"""
     conn = get_db_conn()
     if conn:
         with conn.cursor() as cur:
@@ -194,7 +193,6 @@ def db_add_points(user_id, amount, source="充值"):
     db_log_history(user_id, amount, source)
 
 def db_deduct_points(user_id, amount, reason="兑换"):
-    """扣除积分，成功返回True，余额不足返回False"""
     conn = get_db_conn()
     success = False
     if conn:
@@ -202,13 +200,11 @@ def db_deduct_points(user_id, amount, reason="兑换"):
             cur.execute("SELECT points FROM user_points WHERE user_id = %s", (user_id,))
             res = cur.fetchone()
             current = res[0] if res else 0
-            
             if current >= amount:
                 cur.execute("UPDATE user_points SET points = points - %s WHERE user_id = %s", (amount, user_id))
                 conn.commit()
                 success = True
         conn.close()
-    
     if success:
         db_log_history(user_id, -amount, reason)
     return success
@@ -244,7 +240,6 @@ def db_update_recharge_status(user_id, method, is_success, is_fail_increment=Fal
     finally:
         conn.close()
 
-# --- 商品与兑换 DB ---
 def db_add_product(name, cost, c_type, c_text, c_file_id):
     conn = get_db_conn()
     if conn:
@@ -270,7 +265,7 @@ def db_get_product_detail(pid):
     if conn:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM products WHERE id = %s", (pid,))
-            res = cur.fetchone() # id, name, cost, type, text, fileid, time
+            res = cur.fetchone()
         conn.close()
     return res
 
@@ -301,7 +296,6 @@ def db_record_redemption(user_id, pid):
             conn.commit()
         conn.close()
 
-# --- 原有转发库与验证 DB (完整保留) ---
 def check_user_status(user_id):
     conn = get_db_conn()
     if not conn: return (False, 0, 0)
@@ -451,7 +445,6 @@ async def jf_checkin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer(f"✅ 签到成功！获得 {add} 积分。", show_alert=True)
         await jf_menu_handler(update, context)
 
-# --- 余额记录 ---
 async def jf_history_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -472,7 +465,6 @@ async def jf_history_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     keyboard = [[InlineKeyboardButton("🔙 返回积分中心", callback_data="jf_home")]]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
-# --- 充值部分 ---
 async def jf_recharge_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -481,7 +473,6 @@ async def jf_recharge_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = []
     
-    # 微信
     wx_text = "💚 微信充值 (5元)"
     if info['wx_done']:
         keyboard.append([InlineKeyboardButton("💚 微信充值 (已完成)", callback_data="jf_disabled_done")])
@@ -490,7 +481,6 @@ async def jf_recharge_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         keyboard.append([InlineKeyboardButton(wx_text, callback_data="jf_pay_wx")])
         
-    # 支付宝
     ali_text = "💙 支付宝充值 (5元)"
     if info['ali_done']:
         keyboard.append([InlineKeyboardButton("💙 支付宝充值 (已完成)", callback_data="jf_disabled_done")])
@@ -593,18 +583,13 @@ async def jf_ali_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= 业务逻辑：兑换系统 (/dh) =================
 
 async def dh_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """兑换列表页面"""
     query = update.callback_query
     if query: await query.answer()
-    
     user_id = update.effective_user.id
     products = db_get_products()
-    
     text = "🎁 <b>积分兑换商城</b>\n\n点击下方商品进行兑换。"
     keyboard = []
-    
     for pid, name, cost in products:
-        # 检查是否已购买
         if db_is_redeemed(user_id, pid):
             btn_text = f"📦 {name} (已兑换)"
             callback = f"dh_view_{pid}"
@@ -612,27 +597,21 @@ async def dh_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             btn_text = f"🛍️ {name} ({cost} 积分)"
             callback = f"dh_buy_ask_{pid}"
         keyboard.append([InlineKeyboardButton(btn_text, callback_data=callback)])
-        
     keyboard.append([InlineKeyboardButton("🔙 返回积分中心", callback_data="jf_home")])
-    
     if query:
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
     else:
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
 async def dh_confirm_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """询问确认购买"""
     query = update.callback_query
     pid = int(query.data.split('_')[-1])
     await query.answer()
-    
     product = db_get_product_detail(pid)
     if not product:
         await query.answer("❌ 商品不存在", show_alert=True)
         return
-    
     name, cost = product[1], product[2]
-    
     text = f"🛍️ <b>确认兑换？</b>\n\n商品：<b>{name}</b>\n价格：<b>{cost} 积分</b>"
     keyboard = [
         [InlineKeyboardButton("✅ 确认兑换", callback_data=f"dh_do_buy_{pid}")],
@@ -641,33 +620,25 @@ async def dh_confirm_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
 async def dh_execute_buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """执行扣分和发货"""
     query = update.callback_query
     pid = int(query.data.split('_')[-1])
     user_id = query.from_user.id
-    
     product = db_get_product_detail(pid)
     if not product: return
     name, cost = product[1], product[2]
-    
-    # 尝试扣分
     if db_deduct_points(user_id, cost, reason=f"兑换-{name}"):
         db_record_redemption(user_id, pid)
         await query.answer("✅ 兑换成功！", show_alert=True)
-        # 发送商品内容
         await send_product_content(user_id, product, context)
-        # 返回列表
         await dh_menu_handler(update, context)
     else:
         await query.answer("❌ 余额不足，请充值或签到。", show_alert=True)
         await dh_menu_handler(update, context)
 
 async def dh_view_owned(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """查看已拥有的商品"""
     query = update.callback_query
     pid = int(query.data.split('_')[-1])
     await query.answer()
-    
     product = db_get_product_detail(pid)
     if product:
         await send_product_content(query.from_user.id, product, context)
@@ -675,14 +646,10 @@ async def dh_view_owned(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("商品已下架", show_alert=True)
 
 async def send_product_content(user_id, product, context):
-    """发送商品内容逻辑"""
-    # product: (id, name, cost, type, text, fileid, ...)
     p_type = product[3]
     p_text = product[4]
     p_file = product[5]
-    
     caption = f"📦 <b>商品内容：{product[1]}</b>"
-    
     try:
         if p_type == 'text':
             await context.bot.send_message(user_id, f"{caption}\n\n{p_text}", parse_mode='HTML')
@@ -693,7 +660,6 @@ async def send_product_content(user_id, product, context):
         elif p_type == 'document':
             await context.bot.send_document(user_id, p_file, caption=caption, parse_mode='HTML')
         else:
-            # 兼容其他媒体
             await context.bot.send_message(user_id, f"{caption}\n\n[未知格式]", parse_mode='HTML')
     except Exception as e:
         logger.error(f"Send product failed: {e}")
@@ -703,14 +669,12 @@ async def send_product_content(user_id, product, context):
 async def verify_click_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
-    
     is_cd, rem, _ = check_user_status(user_id)
     if is_cd:
         m, s = divmod(rem, 60)
         h, m = divmod(m, 60)
         await query.answer(f"⛔️ 锁定中 {int(h)}h{int(m)}m", show_alert=True)
         return ConversationHandler.END
-
     await query.answer()
     text = (
         "💎 <b>VIP会员特权说明：</b>\n"
@@ -735,7 +699,6 @@ async def ask_order_id_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 async def process_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text.strip()
     user_id = update.effective_user.id
-    
     if user_input.startswith("20260"):
         reset_success(user_id)
         keyboard = [[InlineKeyboardButton("🔗 点击加入 VIP 群", url=GROUP_LINK)]]
@@ -768,7 +731,6 @@ async def check_custom_command(update: Update, context: ContextTypes.DEFAULT_TYP
     if not update.message or not update.message.text: return
     text = update.message.text.strip()
     content_list = db_get_content_by_cmd(text)
-    
     if content_list:
         try: await update.message.delete()
         except: pass
@@ -779,7 +741,6 @@ async def check_custom_command(update: Update, context: ContextTypes.DEFAULT_TYP
                 msg = await context.bot.copy_message(chat_id=user_id, from_chat_id=src_chat, message_id=src_msg)
                 sent_ids.append(msg.message_id)
             except Exception as e: logger.error(f"Copy Failed: {e}")
-        
         info = await context.bot.send_message(chat_id=user_id, text="✅ <b>资源已发送，20分钟后销毁</b>", parse_mode='HTML')
         sent_ids.append(info.message_id)
         context.job_queue.run_once(cleanup_messages, 1200, chat_id=user_id, data={'msg_ids': sent_ids})
@@ -819,17 +780,13 @@ async def admin_get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_panel(update, context)
     return ConversationHandler.END
 
-# --- 商品管理 (新) ---
 async def prod_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     products = db_get_products()
     keyboard = [[InlineKeyboardButton("➕ 上架新商品", callback_data="prod_add_new")]]
-    
     for pid, name, cost in products:
         keyboard.append([InlineKeyboardButton(f"🗑️ 下架: {name}", callback_data=f"prod_del_{pid}")])
-    
     keyboard.append([InlineKeyboardButton("🔙 返回后台", callback_data="back_admin")])
     await query.edit_message_text("🛍️ <b>兑换商品管理</b>\n点击商品进行下架。", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
@@ -858,12 +815,9 @@ async def prod_save_cost(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def prod_save_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = context.user_data['p_name']
     cost = context.user_data['p_cost']
-    
-    # 识别类型
     c_type = "text"
     c_text = None
     c_file = None
-    
     if update.message.text:
         c_type = "text"
         c_text = update.message.text
@@ -876,9 +830,7 @@ async def prod_save_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.message.document:
         c_type = "document"
         c_file = update.message.document.file_id
-    
     db_add_product(name, cost, c_type, c_text, c_file)
-    
     await update.message.reply_text(f"✅ <b>商品已上架</b>\n名称：{name}\n价格：{cost}", parse_mode='HTML')
     await admin_panel(update, context)
     return ConversationHandler.END
@@ -886,14 +838,11 @@ async def prod_save_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def prod_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     pid = int(query.data.split('_')[-1])
-    
-    # 简单处理：点击即确认删除
     db_delete_product(pid)
     await query.answer("✅ 商品已下架", show_alert=True)
     update.callback_query.data = "manage_prod"
     await prod_menu(update, context)
 
-# --- 转发库 (原有) ---
 async def lib_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -961,20 +910,22 @@ if __name__ == '__main__':
     init_db()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Admin Conversations
     admin_id_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_ask_photo, pattern='^get_file_id$')],
         states={ADMIN_WAIT_PHOTO: [MessageHandler(filters.ALL, admin_get_photo)]},
-        fallbacks=[CommandHandler('cancel', admin_cancel)],
+        fallbacks=[CommandHandler('cancel', admin_cancel), CommandHandler('c', admin_cancel)],
     )
     
     admin_lib_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(lib_start_add, pattern='^lib_add_new$')],
         states={
             LIB_INPUT_CMD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, lib_save_name)],
-            LIB_UPLOAD_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND & ~filters.StatusUpdate.ALL, lib_handle_upload), CallbackQueryHandler(lib_finish_upload, pattern='^lib_upload_done$')]
+            LIB_UPLOAD_CONTENT: [
+                CallbackQueryHandler(lib_finish_upload, pattern='^lib_upload_done$'), # Priority 1
+                MessageHandler(filters.ALL & ~filters.COMMAND & ~filters.StatusUpdate.ALL, lib_handle_upload) # Priority 2
+            ]
         },
-        fallbacks=[CommandHandler('cancel', admin_cancel)],
+        fallbacks=[CommandHandler('cancel', admin_cancel), CommandHandler('c', admin_cancel)],
     )
 
     admin_prod_conv = ConversationHandler(
@@ -984,10 +935,9 @@ if __name__ == '__main__':
             PROD_INPUT_COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, prod_save_cost)],
             PROD_INPUT_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND, prod_save_content)]
         },
-        fallbacks=[CommandHandler('cancel', admin_cancel)],
+        fallbacks=[CommandHandler('cancel', admin_cancel), CommandHandler('c', admin_cancel)],
     )
 
-    # User Conversations
     verify_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(ask_order_id_handler, pattern='^i_paid$')],
         states={VERIFY_INPUT_ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_order_input)]},
@@ -1010,15 +960,12 @@ if __name__ == '__main__':
         ]
     )
 
-    # Handlers Registration
     app.add_handler(CommandHandler("admin", admin_start_cmd))
     app.add_handler(CommandHandler("id", admin_ask_photo))
-    
     app.add_handler(admin_id_conv)
     app.add_handler(admin_lib_conv)
     app.add_handler(admin_prod_conv)
 
-    # Admin Callbacks
     app.add_handler(CallbackQueryHandler(lib_menu, pattern='^manage_lib$'))
     app.add_handler(CallbackQueryHandler(lib_view_cmd, pattern='^lib_view_'))
     app.add_handler(CallbackQueryHandler(lib_confirm_delete, pattern='^lib_del_'))
@@ -1026,7 +973,6 @@ if __name__ == '__main__':
     app.add_handler(CallbackQueryHandler(prod_confirm_delete, pattern='^prod_del_'))
     app.add_handler(CallbackQueryHandler(back_to_admin, pattern='^back_admin$'))
 
-    # User Callbacks
     app.add_handler(CommandHandler('jf', jf_menu_handler))
     app.add_handler(CommandHandler('dh', dh_menu_handler))
     app.add_handler(CallbackQueryHandler(verify_click_handler, pattern='^start_verify$'))
@@ -1042,16 +988,14 @@ if __name__ == '__main__':
     app.add_handler(CallbackQueryHandler(jf_ali_start, pattern='^jf_pay_ali$'))
     app.add_handler(jf_conv)
 
-    # Redemption Callbacks
     app.add_handler(CallbackQueryHandler(dh_menu_handler, pattern='^dh_home$'))
     app.add_handler(CallbackQueryHandler(dh_confirm_buy, pattern='^dh_buy_ask_'))
     app.add_handler(CallbackQueryHandler(dh_execute_buy, pattern='^dh_do_buy_'))
     app.add_handler(CallbackQueryHandler(dh_view_owned, pattern='^dh_view_'))
 
-    # Core
     app.add_handler(CommandHandler('start', global_start_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_custom_command))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, global_start_handler))
 
-    print("Bot running with Full Features...")
+    print("Bot running with Full Features (Fixed)...")
     app.run_polling()
