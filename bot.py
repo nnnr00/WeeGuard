@@ -787,7 +787,7 @@ async def check_custom_command(update: Update, context: ContextTypes.DEFAULT_TYP
         # 4. 设置8分钟 (480秒) 后执行删除任务
         context.job_queue.run_once(
             cleanup_messages_task, 
-            10, 
+            480, 
             chat_id=user_id, 
             data={'message_ids': messages_to_delete}
         )
