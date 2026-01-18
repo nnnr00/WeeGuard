@@ -3,6 +3,7 @@ import logging
 import psycopg2
 import datetime
 import random
+import asyncio 
 from datetime import timedelta, date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -21,15 +22,15 @@ ADMIN_ID = os.getenv("ADMIN_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # 【需手动配置区 - 请填入提取的 File ID】
-VIP_IMAGE_ID = "AgACAgUAAxkBAAID3WlsltvBnPwpzW4Qt6FxXEkuw_n2AALIDWsbzfBpV305e1Fm22L6AQADAgADeAADOAQ"    
-TUTORIAL_IMAGE_ID = "AgACAgUAAxkBAAID5WlslwnPgOmfv3L-HZIMGF8Fs9fTAALJDWsbzfBpV3remRMQVdzKAQADAgADeQADOAQ." 
+VIP_IMAGE_ID = "AgACAgEAAykBA..."    
+TUTORIAL_IMAGE_ID = "AgACAgEAAykBA..." 
 GROUP_LINK = "https://t.me/your_group_link"
 
 # 积分充值用图
-WECHAT_QR_ID = "AgACAgUAAxkBAAID7Glslx7PuOQtGe2kbg6uHEL4CbJ5AALKDWsbzfBpV8hnQh0U2KZHAQADAgADeAADOAQ"        
-WECHAT_TUTORIAL_ID = "AgACAgUAAxkBAAID8GlslyfCFITmmyQp7uMyIx3C66z1AALLDWsbzfBpV9zq9-uTMaXvAQADAgADeQADOAQ"  
-ALIPAY_QR_ID = "AgACAgUAAxkBAAID9GlslyyspAupzaQweyQhD095BUHZAALMDWsbzfBpVw3F_ppvFfnkAQADAgADeAADOAQ"       
-ALIPAY_TUTORIAL_ID = "AgACAgUAAxkBAAID-GlslzBs98jWRvZ1rhKQb_lLiHgPAALNDWsbzfBpV9LYHLLkzfjJAQADAgADeQADOAQ" 
+WECHAT_QR_ID = "AgACAgEAAykBA..."        
+WECHAT_TUTORIAL_ID = "AgACAgEAAykBA..."  
+ALIPAY_QR_ID = "AgACAgEAAykBA..."       
+ALIPAY_TUTORIAL_ID = "AgACAgEAAykBA..." 
 
 # ================= 状态机定义 (完整命名) =================
 # 管理员 - 提取ID
@@ -223,9 +224,6 @@ def database_get_history(user_id, limit=10):
     return data
 
 def database_update_recharge_status(user_id, method, is_success, is_failure_increment=False, lock_hours=0):
-    """
-    method: 'wechat' or 'alipay'
-    """
     connection = get_database_connection()
     if not connection: return
     try:
@@ -721,16 +719,18 @@ async def process_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("⚠️ <b>未查询到订单，请重试。</b>", parse_mode='HTML')
             return VERIFY_INPUT_ORDER_NUMBER
 
-# ================= 业务逻辑：自定义命令转发与自动删除 (核心修改) =================
+# ================= 业务逻辑：自定义命令转发与自动删除 (核心修改：分批发送+8分钟删除) =================
 
 async def cleanup_messages_task(context: ContextTypes.DEFAULT_TYPE):
     """
-    定时任务：删除消息，并提示跳转
+    定时任务：删除消息，并提示跳转 (带日志调试版)
     """
     job = context.job
     data = job.data # 包含 'message_ids' 列表
     chat_id = job.chat_id
     
+    logger.info(f"开始执行销毁任务，目标 Chat ID: {chat_id}, 待删除消息数: {len(data.get('message_ids', []))}")
+
     # 尝试删除所有记录的消息ID
     for message_id in data.get('message_ids', []):
         try:
@@ -753,8 +753,8 @@ async def cleanup_messages_task(context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard), 
             parse_mode='HTML'
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"发送销毁提示失败: {e}")
 
 async def check_custom_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
@@ -765,17 +765,28 @@ async def check_custom_command(update: Update, context: ContextTypes.DEFAULT_TYP
         messages_to_delete = []
         user_id = update.effective_chat.id
         
-        # 1. 记录用户发送的命令消息ID
-        messages_to_delete.append(update.message.message_id)
+        # 1. 尝试立即删除用户发送的触发命令 (在群组有效，私聊无效但必须尝试)
+        try:
+            await update.message.delete()
+        except Exception:
+            pass 
 
-        # 2. 发送内容
-        for source_chat, source_message in content_list:
-            try:
-                message = await context.bot.copy_message(chat_id=user_id, from_chat_id=source_chat, message_id=source_message)
-                messages_to_delete.append(message.message_id)
-            except Exception as e:
-                logger.error(f"Copy Message Failed: {e}")
-        
+        # 2. 分批发送资源内容 (10条一批)
+        batch_size = 10
+        for i in range(0, len(content_list), batch_size):
+            batch = content_list[i : i + batch_size]
+            
+            for source_chat, source_message in batch:
+                try:
+                    message = await context.bot.copy_message(chat_id=user_id, from_chat_id=source_chat, message_id=source_message)
+                    messages_to_delete.append(message.message_id)
+                except Exception as e:
+                    logger.error(f"Copy Message Failed: {e}")
+            
+            # 如果还有下一批，暂停1秒，防止触发刷屏限制
+            if i + batch_size < len(content_list):
+                await asyncio.sleep(1)
+
         # 3. 发送倒计时提示 (8分钟)
         info_message = await context.bot.send_message(
             chat_id=user_id, 
@@ -968,6 +979,7 @@ if __name__ == '__main__':
         states={
             LIBRARY_INPUT_COMMAND_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, library_save_name)],
             LIBRARY_UPLOAD_CONTENT: [
+                # 修复核心：优先监听按钮回调，防止被 MessageHandler 拦截
                 CallbackQueryHandler(library_finish_upload, pattern='^library_upload_done$'), 
                 MessageHandler(filters.ALL & ~filters.COMMAND & ~filters.StatusUpdate.ALL, library_handle_upload)
             ]
@@ -1052,5 +1064,5 @@ if __name__ == '__main__':
     # 兜底
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, global_start_handler))
 
-    print("Bot is running with full names, 8 min timer, and fixes...")
+    print("Bot is running with batch sending & 8min delete...")
     app.run_polling()
