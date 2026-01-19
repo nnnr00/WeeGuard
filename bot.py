@@ -64,7 +64,7 @@ def get_database_connection():
         return None
 
 def init_database():
-    """初始化数据库表结构 (新增用户信息字段)"""
+    """初始化数据库表结构"""
     connection = get_database_connection()
     if connection:
         with connection.cursor() as cursor:
@@ -87,7 +87,7 @@ def init_database():
                     created_at TIMESTAMP DEFAULT NOW()
                 );
             """)
-            # 3. 积分系统表 (新增 username 和 first_name)
+            # 3. 积分系统表
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_points (
                     user_id BIGINT PRIMARY KEY,
@@ -152,7 +152,6 @@ def database_update_user_profile(user_id, username, first_name):
     connection = get_database_connection()
     if connection:
         with connection.cursor() as cursor:
-            # 如果存在则更新名字，不存在则插入
             cursor.execute("""
                 INSERT INTO user_points (user_id, username, first_name) 
                 VALUES (%s, %s, %s)
@@ -178,13 +177,10 @@ def database_get_points_info(user_id):
             cursor.execute("SELECT * FROM user_points WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
             if not result:
-                # 如果没有记录，先创建一个空的
                 cursor.execute("INSERT INTO user_points (user_id) VALUES (%s) RETURNING *", (user_id,))
                 connection.commit()
                 result = cursor.fetchone()
             
-            # 字段索引映射需根据 CREATE TABLE 顺序
-            # 0:user_id, 1:username, 2:first_name, 3:points, 4:last_checkin, ...
             return {
                 'points': result[3],
                 'last_checkin_date': result[4],
@@ -406,9 +402,7 @@ def database_delete_command(command):
             connection.commit()
         connection.close()
 
-# --- 新增：用户管理与记录查询 DB 函数 ---
 def database_get_all_users(limit=20):
-    """获取最近的用户列表"""
     connection = get_database_connection()
     users = []
     if connection:
@@ -419,7 +413,6 @@ def database_get_all_users(limit=20):
     return users
 
 def database_get_user_redemption_history(user_id):
-    """获取指定用户的兑换记录"""
     connection = get_database_connection()
     history = []
     if connection:
@@ -437,7 +430,6 @@ def database_get_user_redemption_history(user_id):
 
 # ================= 业务逻辑：首页 =================
 async def send_home_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 更新用户信息
     user = update.effective_user
     if user:
         database_update_user_profile(user.id, user.username, user.first_name)
@@ -473,7 +465,6 @@ async def global_start_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def points_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    # 只要进入积分中心也更新一下信息
     if user:
         database_update_user_profile(user.id, user.username, user.first_name)
         
@@ -783,7 +774,7 @@ async def process_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def cleanup_messages_task(context: ContextTypes.DEFAULT_TYPE):
     """
-    定时任务：删除消息，并提示跳转 (带日志调试版)
+    定时任务：删除消息，并提示跳转
     """
     job = context.job
     data = job.data # 包含 'message_ids' 列表
@@ -903,7 +894,7 @@ async def admin_get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_panel(update, context)
     return ConversationHandler.END
 
-# --- 用户管理相关 (新增) ---
+# --- 用户管理相关 ---
 async def manage_users_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -930,9 +921,7 @@ async def view_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_user_id = int(query.data.split('_')[-1])
     await query.answer()
     
-    # 获取用户基础信息
     user_info = database_get_points_info(target_user_id)
-    # 获取兑换历史
     history = database_get_user_redemption_history(target_user_id)
     
     text = f"👤 <b>用户详情</b>\n\nID: <code>{target_user_id}</code>\n"
@@ -949,16 +938,50 @@ async def view_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("🔙 返回用户列表", callback_data="manage_users")]]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
-# --- 商品管理 ---
+# --- 商品管理 (修改：添加确认下架) ---
 async def products_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     products = database_get_products()
     keyboard = [[InlineKeyboardButton("➕ 上架新商品", callback_data="product_add_new")]]
+    
+    # 按钮回调改为 product_ask_delete_
     for pid, name, cost in products:
-        keyboard.append([InlineKeyboardButton(f"🗑️ 下架: {name}", callback_data=f"product_delete_{pid}")])
+        keyboard.append([InlineKeyboardButton(f"🗑️ 下架: {name}", callback_data=f"product_ask_delete_{pid}")])
+        
     keyboard.append([InlineKeyboardButton("🔙 返回后台", callback_data="back_to_admin")])
     await query.edit_message_text("🛍️ <b>兑换商品管理</b>\n点击商品进行下架。", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
+async def product_ask_delete_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """商品下架询问确认"""
+    query = update.callback_query
+    product_id = int(query.data.split('_')[-1])
+    await query.answer()
+    
+    product = database_get_product_detail(product_id)
+    if not product:
+        await query.answer("商品已不存在", show_alert=True)
+        await products_menu(update, context)
+        return
+
+    name = product[1]
+    
+    text = f"⚠️ <b>确认下架商品？</b>\n\n名称：{name}\n此操作不可撤销。"
+    keyboard = [
+        [InlineKeyboardButton("✅ 确认下架", callback_data=f"product_execute_delete_{product_id}")],
+        [InlineKeyboardButton("❌ 取消", callback_data="manage_products")]
+    ]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
+async def product_execute_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """执行商品删除"""
+    query = update.callback_query
+    product_id = int(query.data.split('_')[-1])
+    database_delete_product(product_id)
+    await query.answer("✅ 商品已下架", show_alert=True)
+    # 返回商品列表
+    update.callback_query.data = "manage_products"
+    await products_menu(update, context)
 
 async def product_start_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1005,15 +1028,7 @@ async def product_save_content(update: Update, context: ContextTypes.DEFAULT_TYP
     await admin_panel(update, context)
     return ConversationHandler.END
 
-async def product_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    product_id = int(query.data.split('_')[-1])
-    database_delete_product(product_id)
-    await query.answer("✅ 商品已下架", show_alert=True)
-    update.callback_query.data = "manage_products"
-    await products_menu(update, context)
-
-# --- 转发库管理 ---
+# --- 转发库管理 (修改：添加确认删除) ---
 async def library_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1056,13 +1071,33 @@ async def library_view_command(update: Update, context: ContextTypes.DEFAULT_TYP
     command = query.data.replace("library_view_", "")
     await query.answer()
     content = database_get_content_by_command(command)
-    keyboard = [[InlineKeyboardButton("🗑️ 删除", callback_data=f"library_delete_{command}")], [InlineKeyboardButton("🔙 返回", callback_data="manage_library")]]
-    await query.edit_message_text(f"📂 <b>{command}</b>: {len(content)} 条", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+    
+    # 按钮改为 library_ask_delete_
+    keyboard = [
+        [InlineKeyboardButton("🗑️ 删除此命令", callback_data=f"library_ask_delete_{command}")],
+        [InlineKeyboardButton("🔙 返回列表", callback_data="manage_library")]
+    ]
+    await query.edit_message_text(f"📂 <b>{command}</b>\n包含内容：{len(content)} 条", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
-async def library_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def library_ask_delete_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """转发库删除询问确认"""
     query = update.callback_query
-    command = query.data.replace("library_delete_", "")
+    command = query.data.replace("library_ask_delete_", "")
+    await query.answer()
+    
+    text = f"⚠️ <b>确认删除命令？</b>\n\n命令名：{command}\n所有关联内容将被移除。"
+    keyboard = [
+        [InlineKeyboardButton("✅ 确认删除", callback_data=f"library_execute_delete_{command}")],
+        [InlineKeyboardButton("❌ 取消", callback_data=f"library_view_{command}")]
+    ]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
+async def library_execute_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """执行转发库命令删除"""
+    query = update.callback_query
+    command = query.data.replace("library_execute_delete_", "")
     database_delete_command(command)
+    await query.answer(f"已删除 {command}", show_alert=True)
     update.callback_query.data = "manage_library"
     await library_menu(update, context)
 
@@ -1092,7 +1127,6 @@ if __name__ == '__main__':
         states={
             LIBRARY_INPUT_COMMAND_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, library_save_name)],
             LIBRARY_UPLOAD_CONTENT: [
-                # 修复核心：优先监听按钮回调，防止被 MessageHandler 拦截
                 CallbackQueryHandler(library_finish_upload, pattern='^library_upload_done$'), 
                 MessageHandler(filters.ALL & ~filters.COMMAND & ~filters.StatusUpdate.ALL, library_handle_upload)
             ]
@@ -1142,9 +1176,15 @@ if __name__ == '__main__':
     # 管理员按钮回调
     app.add_handler(CallbackQueryHandler(library_menu, pattern='^manage_library$'))
     app.add_handler(CallbackQueryHandler(library_view_command, pattern='^library_view_'))
-    app.add_handler(CallbackQueryHandler(library_confirm_delete, pattern='^library_delete_'))
+    # 转发库删除流程
+    app.add_handler(CallbackQueryHandler(library_ask_delete_confirmation, pattern='^library_ask_delete_'))
+    app.add_handler(CallbackQueryHandler(library_execute_delete, pattern='^library_execute_delete_'))
+    
     app.add_handler(CallbackQueryHandler(products_menu, pattern='^manage_products$'))
-    app.add_handler(CallbackQueryHandler(product_confirm_delete, pattern='^product_delete_'))
+    # 商品删除流程
+    app.add_handler(CallbackQueryHandler(product_ask_delete_confirmation, pattern='^product_ask_delete_'))
+    app.add_handler(CallbackQueryHandler(product_execute_delete, pattern='^product_execute_delete_'))
+    
     # 新增用户管理回调
     app.add_handler(CallbackQueryHandler(manage_users_menu, pattern='^manage_users$'))
     app.add_handler(CallbackQueryHandler(view_user_details, pattern='^view_user_'))
@@ -1181,5 +1221,5 @@ if __name__ == '__main__':
     # 兜底
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, global_start_handler))
 
-    print("Bot is running with User Management & Redemption Logs...")
+    print("Bot is running with delete confirmation...")
     app.run_polling()
