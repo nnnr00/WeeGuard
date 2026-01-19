@@ -22,15 +22,15 @@ ADMIN_ID = os.getenv("ADMIN_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # 【需手动配置区 - 请填入提取的 File ID】
-VIP_IMAGE_ID = "AgACAgUAAxkBAAID3WlsltvBnPwpzW4Qt6FxXEkuw_n2AALIDWsbzfBpV305e1Fm22L6AQADAgADeAADOAQ"    
-TUTORIAL_IMAGE_ID = "AgACAgUAAxkBAAID5WlslwnPgOmfv3L-HZIMGF8Fs9fTAALJDWsbzfBpV3remRMQVdzKAQADAgADeQADOAQ." 
+VIP_IMAGE_ID = "AgACAgEAAykBA..."    
+TUTORIAL_IMAGE_ID = "AgACAgEAAykBA..." 
 GROUP_LINK = "https://t.me/your_group_link"
 
 # 积分充值用图
-WECHAT_QR_ID = "AgACAgUAAxkBAAID7Glslx7PuOQtGe2kbg6uHEL4CbJ5AALKDWsbzfBpV8hnQh0U2KZHAQADAgADeAADOAQ"        
-WECHAT_TUTORIAL_ID = "AgACAgUAAxkBAAID8GlslyfCFITmmyQp7uMyIx3C66z1AALLDWsbzfBpV9zq9-uTMaXvAQADAgADeQADOAQ"  
-ALIPAY_QR_ID = "AgACAgUAAxkBAAID9GlslyyspAupzaQweyQhD095BUHZAALMDWsbzfBpVw3F_ppvFfnkAQADAgADeAADOAQ"       
-ALIPAY_TUTORIAL_ID = "AgACAgUAAxkBAAID-GlslzBs98jWRvZ1rhKQb_lLiHgPAALNDWsbzfBpV9LYHLLkzfjJAQADAgADeQADOAQ" 
+WECHAT_QR_ID = "AgACAgEAAykBA..."        
+WECHAT_TUTORIAL_ID = "AgACAgEAAykBA..."  
+ALIPAY_QR_ID = "AgACAgEAAykBA..."       
+ALIPAY_TUTORIAL_ID = "AgACAgEAAykBA..." 
 
 # ================= 状态机定义 (完整命名) =================
 # 管理员 - 提取ID
@@ -64,7 +64,7 @@ def get_database_connection():
         return None
 
 def init_database():
-    """初始化数据库表结构"""
+    """初始化数据库表结构 (新增用户信息字段)"""
     connection = get_database_connection()
     if connection:
         with connection.cursor() as cursor:
@@ -87,10 +87,12 @@ def init_database():
                     created_at TIMESTAMP DEFAULT NOW()
                 );
             """)
-            # 3. 积分系统表
+            # 3. 积分系统表 (新增 username 和 first_name)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_points (
                     user_id BIGINT PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
                     points INT DEFAULT 0,
                     last_checkin_date DATE,
                     wechat_done BOOLEAN DEFAULT FALSE,
@@ -98,7 +100,8 @@ def init_database():
                     wechat_failure_count INT DEFAULT 0,
                     alipay_failure_count INT DEFAULT 0,
                     wechat_cooldown TIMESTAMP,
-                    alipay_cooldown TIMESTAMP
+                    alipay_cooldown TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT NOW()
                 );
             """)
             # 4. 商品表
@@ -144,6 +147,21 @@ def init_database():
 
 # --- 数据库工具函数 ---
 
+def database_update_user_profile(user_id, username, first_name):
+    """更新用户信息"""
+    connection = get_database_connection()
+    if connection:
+        with connection.cursor() as cursor:
+            # 如果存在则更新名字，不存在则插入
+            cursor.execute("""
+                INSERT INTO user_points (user_id, username, first_name) 
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id) 
+                DO UPDATE SET username = EXCLUDED.username, first_name = EXCLUDED.first_name
+            """, (user_id, username, first_name))
+            connection.commit()
+        connection.close()
+
 def database_log_history(user_id, amount, reason):
     connection = get_database_connection()
     if connection:
@@ -160,19 +178,22 @@ def database_get_points_info(user_id):
             cursor.execute("SELECT * FROM user_points WHERE user_id = %s", (user_id,))
             result = cursor.fetchone()
             if not result:
+                # 如果没有记录，先创建一个空的
                 cursor.execute("INSERT INTO user_points (user_id) VALUES (%s) RETURNING *", (user_id,))
                 connection.commit()
                 result = cursor.fetchone()
             
+            # 字段索引映射需根据 CREATE TABLE 顺序
+            # 0:user_id, 1:username, 2:first_name, 3:points, 4:last_checkin, ...
             return {
-                'points': result[1],
-                'last_checkin_date': result[2],
-                'wechat_done': result[3],
-                'alipay_done': result[4],
-                'wechat_failure_count': result[5],
-                'alipay_failure_count': result[6],
-                'wechat_cooldown': result[7],
-                'alipay_cooldown': result[8]
+                'points': result[3],
+                'last_checkin_date': result[4],
+                'wechat_done': result[5],
+                'alipay_done': result[6],
+                'wechat_failure_count': result[7],
+                'alipay_failure_count': result[8],
+                'wechat_cooldown': result[9],
+                'alipay_cooldown': result[10]
             }
     finally:
         connection.close()
@@ -385,8 +406,42 @@ def database_delete_command(command):
             connection.commit()
         connection.close()
 
+# --- 新增：用户管理与记录查询 DB 函数 ---
+def database_get_all_users(limit=20):
+    """获取最近的用户列表"""
+    connection = get_database_connection()
+    users = []
+    if connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT user_id, first_name, username, points FROM user_points ORDER BY created_at DESC LIMIT %s", (limit,))
+            users = cursor.fetchall()
+        connection.close()
+    return users
+
+def database_get_user_redemption_history(user_id):
+    """获取指定用户的兑换记录"""
+    connection = get_database_connection()
+    history = []
+    if connection:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT p.name, r.redeemed_at 
+                FROM redemptions r
+                JOIN products p ON r.product_id = p.id
+                WHERE r.user_id = %s
+                ORDER BY r.redeemed_at DESC
+            """, (user_id,))
+            history = cursor.fetchall()
+        connection.close()
+    return history
+
 # ================= 业务逻辑：首页 =================
 async def send_home_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 更新用户信息
+    user = update.effective_user
+    if user:
+        database_update_user_profile(user.id, user.username, user.first_name)
+
     text = (
         "👋 <b>欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~</b>\n\n"
         "📢 小卫小卫，守门员小卫！\n"
@@ -417,7 +472,12 @@ async def global_start_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 # ================= 业务逻辑：积分系统 =================
 
 async def points_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    # 只要进入积分中心也更新一下信息
+    if user:
+        database_update_user_profile(user.id, user.username, user.first_name)
+        
+    user_id = user.id
     info = database_get_points_info(user_id)
     query = update.callback_query
     if query: await query.answer()
@@ -719,7 +779,7 @@ async def process_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("⚠️ <b>未查询到订单，请重试。</b>", parse_mode='HTML')
             return VERIFY_INPUT_ORDER_NUMBER
 
-# ================= 业务逻辑：自定义命令转发与自动删除 (核心修改：分批发送+8分钟删除) =================
+# ================= 业务逻辑：自定义命令转发与自动删除 =================
 
 async def cleanup_messages_task(context: ContextTypes.DEFAULT_TYPE):
     """
@@ -804,6 +864,10 @@ async def check_custom_command(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
     else:
+        # 这里顺便更新一下用户信息，因为用户发消息了
+        user = update.effective_user
+        if user:
+            database_update_user_profile(user.id, user.username, user.first_name)
         await global_start_handler(update, context)
 
 # ================= 管理员后台 =================
@@ -815,6 +879,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE, is_edi
         [InlineKeyboardButton("🖼️ 提取图片 File ID", callback_data='get_file_id')],
         [InlineKeyboardButton("📚 频道转发库", callback_data='manage_library')],
         [InlineKeyboardButton("🛍️ 兑换商品管理", callback_data='manage_products')],
+        [InlineKeyboardButton("👥 用户管理 & 记录", callback_data='manage_users')],
     ]
     text = "👑 <b>管理员后台</b>\n输入 /c 可取消当前操作。"
     if is_edit and update.callback_query:
@@ -838,6 +903,53 @@ async def admin_get_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_panel(update, context)
     return ConversationHandler.END
 
+# --- 用户管理相关 (新增) ---
+async def manage_users_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    users = database_get_all_users(limit=20)
+    
+    text = "👥 <b>用户管理 (最近20位)</b>\n点击查看兑换记录。"
+    keyboard = []
+    
+    if not users:
+        text += "\n\n暂无用户数据。"
+    else:
+        for u_id, u_first, u_user, u_points in users:
+            display_name = u_first if u_first else "用户"
+            if u_user: display_name += f" (@{u_user})"
+            # 按钮文本: [ID] 名字
+            btn_text = f"[{u_id}] {display_name}"
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"view_user_{u_id}")])
+            
+    keyboard.append([InlineKeyboardButton("🔙 返回后台", callback_data="back_to_admin")])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
+async def view_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    target_user_id = int(query.data.split('_')[-1])
+    await query.answer()
+    
+    # 获取用户基础信息
+    user_info = database_get_points_info(target_user_id)
+    # 获取兑换历史
+    history = database_get_user_redemption_history(target_user_id)
+    
+    text = f"👤 <b>用户详情</b>\n\nID: <code>{target_user_id}</code>\n"
+    text += f"当前积分: <b>{user_info['points']}</b>\n"
+    
+    text += "\n🎁 <b>兑换记录:</b>\n"
+    if not history:
+        text += "暂无兑换记录。"
+    else:
+        for product_name, time in history:
+            time_str = time.strftime("%Y-%m-%d %H:%M")
+            text += f"• {time_str} - {product_name}\n"
+            
+    keyboard = [[InlineKeyboardButton("🔙 返回用户列表", callback_data="manage_users")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
+# --- 商品管理 ---
 async def products_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -901,6 +1013,7 @@ async def product_confirm_delete(update: Update, context: ContextTypes.DEFAULT_T
     update.callback_query.data = "manage_products"
     await products_menu(update, context)
 
+# --- 转发库管理 ---
 async def library_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1032,6 +1145,10 @@ if __name__ == '__main__':
     app.add_handler(CallbackQueryHandler(library_confirm_delete, pattern='^library_delete_'))
     app.add_handler(CallbackQueryHandler(products_menu, pattern='^manage_products$'))
     app.add_handler(CallbackQueryHandler(product_confirm_delete, pattern='^product_delete_'))
+    # 新增用户管理回调
+    app.add_handler(CallbackQueryHandler(manage_users_menu, pattern='^manage_users$'))
+    app.add_handler(CallbackQueryHandler(view_user_details, pattern='^view_user_'))
+    
     app.add_handler(CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$'))
 
     # 用户命令处理器
@@ -1064,5 +1181,5 @@ if __name__ == '__main__':
     # 兜底
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, global_start_handler))
 
-    print("Bot is running with batch sending & 8min delete...")
+    print("Bot is running with User Management & Redemption Logs...")
     app.run_polling()
