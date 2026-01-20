@@ -34,6 +34,7 @@ STATE_JF_MENU = 'S_JF_MENU'
 STATE_ADMIN_AWAITING_FILE = 'A_AWAITING_FILE' 
 STATE_ADMIN_VIEW_FILES = 'A_VIEW_FILES' 
 STATE_ADMIN_DELETE_FILE_CONFIRM = 'A_DEL_CONFIRM' 
+STATE_WAITING_VIDEO_CONFIRM = 'STATE_WAITING_VIDEO_CONFIRM' # 新增：等待用户确认观看完成
 # --- 重点配置区结束 ---
 
 
@@ -55,10 +56,7 @@ except ValueError:
     logger.error("ADMIN_IDS 格式错误。")
     ADMIN_IDS = []
 
-# 状态管理字典：Key: user_id, Value: (current_state, data_dict)
 user_data_store = {} 
-
-# 数据库连接对象 (Service B 不直接操作 DB)
 DB_CONNECTION = None 
 
 # --- 积分系统辅助函数 (与Service A协作所需) ---
@@ -334,7 +332,7 @@ async def handle_video_watch_init(query: Update, context: ContextTypes.DEFAULT_T
     data['video_token'] = video_token
     data['video_points_pending'] = points
     data['video_watch_num'] = watch_num
-    set_user_state(user_id, 'STATE_WAITING_VIDEO_CONFIRM', data)
+    set_user_state(user_id, STATE_WAITING_VIDEO_CONFIRM, data)
     
     AD_PAGE_URL = f"{API_SERVICE_A_URL}/start_video?token={video_token}" 
 
@@ -578,7 +576,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
     # --- 积分系统按钮 ---
     if data == "jf_menu":
-        # 修正：调用 jf_menu_command 时，传入 Message 对象
         await jf_menu_command(query.message, context) 
         return
     
@@ -625,7 +622,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text("您没有权限访问此菜单。")
             return
 
-        # ... (Admin Callbacks) ...
         if data == "admin_view_saved_files": await admin_view_files(query, context)
         
         if data.startswith("admin_view_file_"):
