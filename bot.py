@@ -79,7 +79,8 @@ Base = declarative_base()
 
 class User(Base):
     __tablename__ = 'users'
-    id = Column(Base.metadata.tables.primary_key[0].type, primary_key=True) 
+    # ‼️ 修复此处：直接使用 Column(Integer, primary_key=True) 来定义自增主键
+    id = Column(Integer, primary_key=True) 
     telegram_id = Column(Integer, unique=True)
     username = Column(String)
     is_admin = Column(Boolean, default=False)
