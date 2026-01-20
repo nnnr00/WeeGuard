@@ -56,7 +56,10 @@ except ValueError:
     logger.error("ADMIN_IDS 格式错误。")
     ADMIN_IDS = []
 
+# 状态管理字典：Key: user_id, Value: (current_state, data_dict)
 user_data_store = {} 
+
+# 数据库连接对象 (Service B 不直接操作 DB)
 DB_CONNECTION = None 
 
 # --- 积分系统辅助函数 (与Service A协作所需) ---
@@ -219,7 +222,7 @@ async def admin_cancel_verification(update: Update, context: ContextTypes.DEFAUL
 
 # --- 积分系统命令 ---
 async def jf_menu_command(message: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """积分菜单 (接收 Message 对象)"""
+    """积分菜单 (接收 Message 对象，修复了回调调用时的错误)"""
     user_id = message.from_user.id
     current_points = get_user_points(user_id)
     
@@ -537,7 +540,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     current_state, current_data = get_user_state(user_id)
 
-    # --- 锁定/菜单/返回 按钮处理 ---
     if data == "locked":
         await query.answer("请等待身份验证系统冷却时间结束。")
         await start_command(update, context)
@@ -560,7 +562,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await hd_command(query.message, context)
         return
         
-    # --- 活动中心内部按钮 (Moontag) ---
     if data == "moontag_rewarded_ad":
         if not API_SERVICE_A_URL or API_SERVICE_A_URL == "http://service-a-your-app-name.railway.app":
             await query.edit_message_text("❌ 配置错误：请设置 API_SERVICE_A_URL。")
