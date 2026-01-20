@@ -4,7 +4,7 @@ import time
 import random
 import json
 import uuid 
-import requests # 用于调用 Service A API
+import requests 
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants, Message
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
@@ -331,13 +331,11 @@ async def handle_video_watch_init(query: Update, context: ContextTypes.DEFAULT_T
         
     video_token = str(uuid.uuid4()) 
     
-    # 设置临时状态：等待服务器触发
     data['video_token'] = video_token
     data['video_points_pending'] = points
     data['video_watch_num'] = watch_num
     set_user_state(user_id, 'STATE_WAITING_VIDEO_CONFIRM', data)
     
-    # 构建链接，指向 Service A (/start_video)
     AD_PAGE_URL = f"{API_SERVICE_A_URL}/start_video?token={video_token}" 
 
     keyboard = [
@@ -353,7 +351,6 @@ async def handle_video_watch_init(query: Update, context: ContextTypes.DEFAULT_T
     )
 
 async def confirm_video_reward(query: Update, context: ContextTypes.DEFAULT_TYPE, watch_num: int, points_claimed: int) -> None:
-    """用户返回后，Bot 调用 Service A 验证 Token 是否被触发 (已播放)"""
     user_id = query.from_user.id
     _, data = get_user_state(user_id)
     
@@ -364,18 +361,15 @@ async def confirm_video_reward(query: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     try:
-        # 1. 调用 Service A 验证 Token 是否已被触发 (TRIGGERED)
         validation_url = f"{API_SERVICE_A_URL}/validate_token?token={video_token}"
         validation_response = requests.get(validation_url, timeout=5)
         validation_response.raise_for_status()
         validation_data = validation_response.json()
         
         if validation_data.get('status') == 'TRIGGERED':
-            # 2. 验证成功：标记为已领取 (Claim)
             claim_url = f"{API_SERVICE_A_URL}/claim_token?token={video_token}"
             requests.post(claim_url, timeout=5)
             
-            # 3. Bot 端发放积分并更新计数器
             update_user_points(user_id, points_claimed)
             
             current_time = time.time()
@@ -404,7 +398,7 @@ async def confirm_video_reward(query: Update, context: ContextTypes.DEFAULT_TYPE
         await video_reward_menu(query.message, context)
 
 
-# --- 验证流程函数 ---
+# --- 验证流程函数 (与上一版本一致) ---
 
 def get_order_input_keyboard(user_id: int) -> InlineKeyboardMarkup:
     _, data = get_user_state(user_id)
@@ -534,7 +528,7 @@ async def handle_verification_input(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("请使用界面上的按钮进行操作。", reply_markup=get_payment_confirm_keyboard(user_id, current_state == STATE_AWAITING_PAYMENT_CONFIRM)[0])
 
 
-# --- 回调查询处理函数 (核心修复点) ---
+# --- 回调查询处理函数 (已修复调用逻辑) ---
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -545,6 +539,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     current_state, current_data = get_user_state(user_id)
 
+    # --- 锁定/菜单/返回 按钮处理 ---
     if data == "locked":
         await query.answer("请等待身份验证系统冷却时间结束。")
         await start_command(update, context)
@@ -556,17 +551,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await start_command(update, context)
             return
         set_user_state(user_id, STATE_AWAITING_PAYMENT_CONFIRM, {'failed_attempts': 0}) 
-        await send_payment_confirmation_page(query.message, context, is_success=False) # 传递 Message
+        await send_payment_confirmation_page(query.message, context, is_success=False) 
         return
         
     if data == "back_to_start_main":
-        await start_command(update, context) # 传递 Update
+        await start_command(update, context)
         return
 
     if data == "activity_center":
-        await hd_command(query.message, context) # 传递 Message
+        await hd_command(query.message, context)
         return
         
+    # --- 活动中心内部按钮 (Moontag) ---
     if data == "moontag_rewarded_ad":
         if not API_SERVICE_A_URL or API_SERVICE_A_URL == "http://service-a-your-app-name.railway.app":
             await query.edit_message_text("❌ 配置错误：请设置 API_SERVICE_A_URL。")
@@ -582,11 +578,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
     # --- 积分系统按钮 ---
     if data == "jf_menu":
-        await jf_menu_command(query.message, context) # 调用修正后的函数，接收 Message
+        # 修正：调用 jf_menu_command 时，传入 Message 对象
+        await jf_menu_command(query.message, context) 
         return
     
     if data == "jf_checkin":
-        await handle_checkin(query, context) # 传递 Query (Update)
+        await handle_checkin(query, context)
         return
         
     if data.startswith("video_watch_"):
@@ -628,16 +625,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text("您没有权限访问此菜单。")
             return
 
-        # ... (File ID 管理逻辑占位，与上一版本一致)
+        # ... (Admin Callbacks) ...
         if data == "admin_view_saved_files": await admin_view_files(query, context)
+        
         if data.startswith("admin_view_file_"):
             file_key = data.split('_')[2]
             await admin_view_file_details(query, context, file_key)
             return
+            
         if data.startswith("admin_confirm_delete_"):
             file_key = data.split('_')[2]
             await admin_delete_file_confirm(query, context, file_key)
             return
+            
         if data.startswith("admin_confirm_delete_"):
             file_key = data.split('_')[2]
             await admin_delete_file(query, context, file_key)
@@ -681,7 +681,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await start_command(update, context)
 
 
-# --- Admin File ID 消息处理器 (Bot 端占位) ---
+# --- Admin File ID 消息处理器 (占位未修改) ---
 async def handle_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     current_state, _ = get_user_state(user_id)
@@ -697,8 +697,6 @@ async def handle_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if file_id:
             new_key = str(int(time.time() * 1000)) 
             description = f"Admin uploaded {time.strftime('%Y%m%d_%H%M')}"
-            
-            # ⚠️ 此处应调用 Service A 的 API 来保存 File ID 到数据库
             
             keyboard = [
                 [InlineKeyboardButton("🔗 继续获取下一个 File ID", callback_data="get_file_id_menu")],
