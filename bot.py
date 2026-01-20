@@ -34,7 +34,7 @@ STATE_JF_MENU = 'S_JF_MENU'
 STATE_ADMIN_AWAITING_FILE = 'A_AWAITING_FILE' 
 STATE_ADMIN_VIEW_FILES = 'A_VIEW_FILES' 
 STATE_ADMIN_DELETE_FILE_CONFIRM = 'A_DEL_CONFIRM' 
-STATE_WAITING_VIDEO_CONFIRM = 'STATE_WAITING_VIDEO_CONFIRM'
+STATE_WAITING_VIDEO_CONFIRM = 'STATE_WAITING_VIDEO_CONFIRM' # 新增：等待用户确认观看完成
 # --- 重点配置区结束 ---
 
 
@@ -56,9 +56,7 @@ except ValueError:
     logger.error("ADMIN_IDS 格式错误。")
     ADMIN_IDS = []
 
-# 状态管理字典：Key: user_id, Value: (current_state, data_dict)
 user_data_store = {} 
-
 DB_CONNECTION = None 
 
 # --- 积分系统辅助函数 (与Service A协作所需) ---
@@ -161,7 +159,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # 修复了：增加对 update.message 是否存在的检查
+    # 修复：增加对 update.message 存在的检查
     if update.message:
         await update.message.reply_text(
             welcome_text,
@@ -400,7 +398,7 @@ async def confirm_video_reward(query: Update, context: ContextTypes.DEFAULT_TYPE
         await video_reward_menu(query.message, context)
 
 
-# --- 验证流程函数 (与上一版本一致) ---
+# --- 验证流程函数 ---
 
 def get_order_input_keyboard(user_id: int) -> InlineKeyboardMarkup:
     _, data = get_user_state(user_id)
@@ -530,7 +528,7 @@ async def handle_verification_input(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("请使用界面上的按钮进行操作。", reply_markup=get_payment_confirm_keyboard(user_id, current_state == STATE_AWAITING_PAYMENT_CONFIRM)[0])
 
 
-# --- 回调查询处理函数 (已修复上下文调用问题) ---
+# --- 回调查询处理函数 (修复上下文调用) ---
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -553,15 +551,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await start_command(update, context)
             return
         set_user_state(user_id, STATE_AWAITING_PAYMENT_CONFIRM, {'failed_attempts': 0}) 
-        await send_payment_confirmation_page(query.message, context, is_success=False) # 传递 Message
+        await send_payment_confirmation_page(query.message, context, is_success=False) 
         return
         
     if data == "back_to_start_main":
-        await start_command(update, context) # 传递 Update
+        await start_command(update, context)
         return
 
     if data == "activity_center":
-        await hd_command(query.message, context) # 传递 Message
+        await hd_command(query.message, context)
         return
         
     # --- 活动中心内部按钮 (Moontag) ---
@@ -580,11 +578,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
     # --- 积分系统按钮 ---
     if data == "jf_menu":
-        await jf_menu_command(query.message, context) # 调用修正后的函数，接收 Message
+        await jf_menu_command(query.message, context) 
         return
     
     if data == "jf_checkin":
-        await handle_checkin(query, context) # 传递 Query (Update)
+        await handle_checkin(query, context)
         return
         
     if data.startswith("video_watch_"):
