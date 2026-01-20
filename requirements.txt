@@ -1,4 +1,2 @@
-python-telegram-bot
-python-dotenv
-psycopg2-binary  # 确保您在bot.py中使用了DB操作，虽然现在主要用于占位
-requests         # <-- 必须添加这一行！
+python-telegram-bot==20.7
+psycopg2-binary==2.9.9
