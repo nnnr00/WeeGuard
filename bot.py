@@ -1273,7 +1273,7 @@ async def admin_add_content(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def admin_item_save_final(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
 async def admin_delete_item_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
 async def admin_execute_delete_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-    async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     
