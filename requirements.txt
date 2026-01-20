@@ -1,3 +1,5 @@
-python-telegram-bot==20.8
+python-telegram-bot
+sqlalchemy
 psycopg2-binary
-APScheduler==3.10.4
+Flask
+APScheduler # ‼️ 新增：用于持久化定时任务
