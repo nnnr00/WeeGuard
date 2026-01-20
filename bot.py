@@ -23,7 +23,6 @@ ADMIN_ID = os.getenv("ADMIN_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # 【需手动配置区 - 请填入提取的 File ID】
-# 务必保留双引号 " "
 VIP_IMAGE_ID = "AgACAgUAAxkBAAINsGltoFDLSwsFoxwDjK87XeUnYnheAAKDDWsbN5VwVw5kkUZhiPuDAQADAgADeAADOAQ"    
 TUTORIAL_IMAGE_ID = "AgACAgUAAxkBAAINtGltoFYYChKhRJ0y9Z9Xsdm4AAEQMAAChA1rGzeVcFe2E6cy3GuYEQEAAwIAA3kAAzgE" 
 GROUP_LINK = "https://t.me/your_group_link"
@@ -33,6 +32,9 @@ WECHAT_QR_ID = "AgACAgUAAxkBAAINuGltoFywiA1YtB93MbsERixqyrFeAAKFDWsbN5VwV7kPFBfA
 WECHAT_TUTORIAL_ID = "AgACAgUAAxkBAAINvGltoGENtv8tIknh7vaiSqcwXbe1AAKGDWsbN5VwV-FFYMfdc4tWAQADAgADeQADOAQ"  
 ALIPAY_QR_ID = "AgACAgUAAxkBAAINwGltoGgv-nUkcdk_oc1rSFqOLW7wAAKHDWsbN5VwV-dGPGDzcOfRAQADAgADeAADOAQ"       
 ALIPAY_TUTORIAL_ID = "AgACAgUAAxkBAAINxGltoG2-T8YQ2atksj-rriCvVt8zAAKIDWsbN5VwV1DGzVzCXMIsAQADAgADeQADOAQ" 
+
+# 活动中心用图 (新)
+ACTIVITY_IMAGE_ID = "AgACAgEAAykBA..." 
 
 # ================= 状态机定义 (完整命名) =================
 # 管理员 - 提取ID
@@ -430,16 +432,9 @@ def database_get_user_redemption_history(user_id):
 
 # ================= 辅助函数：分页生成器 =================
 def create_paginated_keyboard(items, page_number, prefix, items_per_page=10, back_callback="back_to_admin"):
-    """
-    通用分页键盘生成器
-    items: 数据列表
-    page_number: 当前页码 (从1开始)
-    prefix: 回调数据前缀 (例如 'library_view_')
-    """
     total_items = len(items)
     total_pages = math.ceil(total_items / items_per_page)
     
-    # 确保页码有效
     if page_number < 1: page_number = 1
     if page_number > total_pages and total_pages > 0: page_number = total_pages
     
@@ -449,13 +444,11 @@ def create_paginated_keyboard(items, page_number, prefix, items_per_page=10, bac
     
     keyboard = []
     
-    # 构建数据按钮 (1列10行)
     for item in current_items:
-        # 兼容不同数据格式
-        if isinstance(item, str): # 转发库命令是字符串列表
+        if isinstance(item, str): 
             text = f"📂 {item}"
             data = f"{prefix}{item}"
-        elif isinstance(item, tuple): # 商品是元组 (id, name, cost)
+        elif isinstance(item, tuple): 
             item_id, item_name, item_cost = item
             text = f"🛍️ {item_name} ({item_cost})"
             data = f"{prefix}{item_id}"
@@ -463,23 +456,19 @@ def create_paginated_keyboard(items, page_number, prefix, items_per_page=10, bac
             continue
         keyboard.append([InlineKeyboardButton(text, callback_data=data)])
         
-    # 构建翻页按钮
     if total_pages > 1:
         navigation_row = []
         if page_number > 1:
             navigation_row.append(InlineKeyboardButton("⬅️ 上一页", callback_data=f"{prefix}page_{page_number - 1}"))
-        
         navigation_row.append(InlineKeyboardButton(f"{page_number}/{total_pages}", callback_data="noop"))
-        
         if page_number < total_pages:
             navigation_row.append(InlineKeyboardButton("➡️ 下一页", callback_data=f"{prefix}page_{page_number + 1}"))
         keyboard.append(navigation_row)
         
-    # 构建底部按钮
     bottom_row = []
     if "library" in prefix:
         bottom_row.append(InlineKeyboardButton("➕ 添加", callback_data="library_add_new"))
-    elif "product" in prefix and "delete" in prefix: # admin product delete list
+    elif "product" in prefix and "delete" in prefix: 
         bottom_row.append(InlineKeyboardButton("➕ 上架", callback_data="product_add_new"))
     
     bottom_row.append(InlineKeyboardButton("🔙 返回", callback_data=back_callback))
@@ -499,9 +488,10 @@ async def send_home_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "一键入群，小卫帮你搞定！\n"
         "新人来报到，小卫查身份！"
     )
+    # 修改：增加“开业活动”按钮
     keyboard = [
         [InlineKeyboardButton("🚀 开始验证", callback_data="start_verify")],
-        [InlineKeyboardButton("💰 我的积分", callback_data="points_home")]
+        [InlineKeyboardButton("💰 我的积分", callback_data="points_home"), InlineKeyboardButton("🎉 开业活动", callback_data="activity_home")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -519,6 +509,69 @@ async def send_home_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def global_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_home_screen(update, context)
+
+# ================= 业务逻辑：开业活动 (广告奖励) =================
+
+async def activity_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """活动中心 /hd"""
+    query = update.callback_query
+    if query: await query.answer()
+    
+    text = (
+        "🎉 <b>活动中心</b>\n\n"
+        "📺 <b>活动一：看广告得奖励</b>\n"
+        "观看简短广告，即可免费获得 <b>8 积分</b>！\n\n"
+        "<i>SDK: Monetag Show_10489957 (pop)</i>"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("📺 活动一 (看广告)", callback_data="activity_watch_ad")],
+        [InlineKeyboardButton("🔙 返回首页", callback_data="back_home")]
+    ]
+    
+    if query:
+        # 尝试发送图片
+        try:
+            await query.message.reply_photo(
+                photo=ACTIVITY_IMAGE_ID,
+                caption=text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML'
+            )
+        except:
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+    else:
+        # 命令触发
+        try:
+            await update.message.reply_photo(
+                photo=ACTIVITY_IMAGE_ID,
+                caption=text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML'
+            )
+        except:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+
+async def activity_watch_ad_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    模拟广告观看完成逻辑。
+    注意：在纯 Python Bot 环境中无法运行 JS SDK。
+    此按钮模拟用户看完了广告的回调。
+    """
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    # 模拟观看延迟（可选）
+    # await asyncio.sleep(2) 
+    
+    # 发放奖励
+    database_add_points(user_id, 8, "看广告奖励")
+    
+    # 提示
+    await query.answer("✅ 观看完成！已获得 8 积分。", show_alert=True)
+    
+    # 刷新页面显示最新积分（如果需要，或者直接跳转回活动页）
+    await activity_menu_handler(update, context)
 
 # ================= 业务逻辑：积分系统 =================
 
@@ -543,7 +596,10 @@ async def points_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
     
     if query:
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        try:
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        except:
+            await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
     else:
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
@@ -711,15 +767,13 @@ async def exchange_menu_handler(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     products = database_get_products()
     
-    # 重构产品列表，区分已兑换状态
     display_items = []
     for pid, name, cost in products:
         if database_is_redeemed(user_id, pid):
-            display_items.append([pid, name + " (已兑换)", cost, True]) # is_owned=True
+            display_items.append([pid, name + " (已兑换)", cost, True]) 
         else:
-            display_items.append([pid, name, cost, False]) # is_owned=False
+            display_items.append([pid, name, cost, False]) 
             
-    # 自定义分页逻辑 (因按钮行为不同，不能直接用 create_paginated_keyboard)
     items_per_page = 10
     total_pages = math.ceil(len(display_items) / items_per_page)
     if page < 1: page = 1
@@ -738,7 +792,6 @@ async def exchange_menu_handler(update: Update, context: ContextTypes.DEFAULT_TY
             callback = f"exchange_buy_ask_{pid}"
         keyboard.append([InlineKeyboardButton(btn_text, callback_data=callback)])
         
-    # 分页栏
     if total_pages > 1:
         nav_row = []
         if page > 1: nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"exchange_home_page_{page-1}"))
@@ -782,12 +835,10 @@ async def exchange_execute_buy(update: Update, context: ContextTypes.DEFAULT_TYP
         database_record_redemption(user_id, product_id)
         await query.answer("✅ 兑换成功！", show_alert=True)
         await send_product_content(user_id, product, context)
-        # 刷新列表到第一页
         query.data = "exchange_home_page_1"
         await exchange_menu_handler(update, context)
     else:
         await query.answer("❌ 余额不足，请充值或签到。", show_alert=True)
-        # 刷新列表
         query.data = "exchange_home_page_1"
         await exchange_menu_handler(update, context)
 
@@ -881,7 +932,7 @@ async def cleanup_messages_task(context: ContextTypes.DEFAULT_TYPE):
     data = job.data # 包含 'message_ids' 列表
     chat_id = job.chat_id
     
-    logger.info(f"执行销毁任务，目标: {chat_id}, 删除数: {len(data.get('message_ids', []))}")
+    logger.info(f"开始执行销毁任务，目标 Chat ID: {chat_id}, 待删除消息数: {len(data.get('message_ids', []))}")
 
     # 尝试删除所有记录的消息ID
     for message_id in data.get('message_ids', []):
@@ -935,7 +986,7 @@ async def check_custom_command(update: Update, context: ContextTypes.DEFAULT_TYP
                 except Exception as e:
                     logger.error(f"Copy Message Failed: {e}")
             
-            # 如果还有下一批，暂停，但不要暂停太久，0.5秒足够
+            # 如果还有下一批，暂停0.5秒
             if i + batch_size < len(content_list):
                 await asyncio.sleep(0.5)
 
@@ -956,7 +1007,7 @@ async def check_custom_command(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
     else:
-        # 这里顺便更新一下用户信息，因为用户发消息了
+        # 顺便更新用户信息
         user = update.effective_user
         if user:
             database_update_user_profile(user.id, user.username, user.first_name)
@@ -1085,7 +1136,6 @@ async def product_execute_delete(update: Update, context: ContextTypes.DEFAULT_T
     product_id = int(query.data.split('_')[-1])
     database_delete_product(product_id)
     await query.answer("✅ 商品已下架", show_alert=True)
-    # 核心修改：跳转回 admin 主页
     await admin_panel(update, context, is_edit=True)
 
 async def product_start_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1209,7 +1259,6 @@ async def library_execute_delete(update: Update, context: ContextTypes.DEFAULT_T
     command = query.data.replace("library_execute_delete_", "")
     database_delete_command(command)
     await query.answer(f"已删除 {command}", show_alert=True)
-    # 核心修改：跳转回 admin 主页
     await admin_panel(update, context, is_edit=True)
 
 async def admin_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1277,14 +1326,12 @@ if __name__ == '__main__':
         ]
     )
 
-    # 注册命令处理器
     app.add_handler(CommandHandler("admin", admin_start_command))
     app.add_handler(CommandHandler("id", admin_ask_photo))
     app.add_handler(admin_id_conversation)
     app.add_handler(admin_library_conversation)
     app.add_handler(admin_product_conversation)
 
-    # 管理员按钮回调
     app.add_handler(CallbackQueryHandler(library_menu, pattern='^manage_library_page_'))
     app.add_handler(CallbackQueryHandler(library_view_command, pattern='^library_view_'))
     app.add_handler(CallbackQueryHandler(library_ask_delete_confirmation, pattern='^library_ask_delete_'))
@@ -1299,33 +1346,34 @@ if __name__ == '__main__':
     
     app.add_handler(CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$'))
 
-    # 用户命令处理器
     app.add_handler(CommandHandler('jf', points_menu_handler))
     app.add_handler(CommandHandler('dh', exchange_menu_handler))
+    app.add_handler(CommandHandler('hd', activity_menu_handler)) # 活动中心命令
     app.add_handler(CallbackQueryHandler(verify_click_handler, pattern='^start_verify$'))
     app.add_handler(verify_conversation)
     
-    # 用户积分系统回调
     app.add_handler(CallbackQueryHandler(points_menu_handler, pattern='^(points_home|back_jf)$'))
-    app.add_handler(CallbackQueryHandler(global_start_handler, pattern='^back_home$'))
+    app.add_handler(CallbackQueryHandler(activity_menu_handler, pattern='^(activity_home|back_home)$')) # 活动中心回调
+    app.add_handler(CallbackQueryHandler(activity_watch_ad_handler, pattern='^activity_watch_ad$')) # 看广告回调
+    
+    app.add_handler(CallbackQueryHandler(global_start_handler, pattern='^back_home_real$')) # 真正回首页
     app.add_handler(CallbackQueryHandler(points_checkin_handler, pattern='^points_checkin$'))
     app.add_handler(CallbackQueryHandler(points_history_handler, pattern='^points_history$'))
     app.add_handler(CallbackQueryHandler(points_recharge_menu, pattern='^points_recharge$'))
     app.add_handler(CallbackQueryHandler(points_disabled_handler, pattern='^points_disabled_'))
+    app.add_handler(CallbackQueryHandler(points_wechat_start, pattern='^points_wechat_paid$')) # 注意：这里修正了 start 的 pattern
     app.add_handler(CallbackQueryHandler(points_wechat_start, pattern='^points_pay_wechat$'))
     app.add_handler(CallbackQueryHandler(points_alipay_start, pattern='^points_pay_alipay$'))
     app.add_handler(points_conversation)
 
-    # 用户兑换系统回调
     app.add_handler(CallbackQueryHandler(exchange_menu_handler, pattern='^exchange_home_page_'))
     app.add_handler(CallbackQueryHandler(exchange_confirm_buy, pattern='^exchange_buy_ask_'))
     app.add_handler(CallbackQueryHandler(exchange_execute_buy, pattern='^exchange_do_buy_'))
     app.add_handler(CallbackQueryHandler(exchange_view_owned, pattern='^exchange_view_'))
 
-    # 核心消息监听
     app.add_handler(CommandHandler('start', global_start_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_custom_command))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, global_start_handler))
 
-    print("Bot is running with full features...")
+    print("Bot is running with Activity Center & Full Features...")
     app.run_polling()
