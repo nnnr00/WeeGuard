@@ -1286,21 +1286,27 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text("❌ 权限不足。"); return ConversationHandler.END
     
     # --- 2. 管理后台导航 ---
-    if data == 'admin_panel_main' or data == 'exit_admin':
-        if data == 'exit_admin':
-            await query.edit_message_text("👋 已退出管理面板。"); return ConversationHandler.END
-            
-        keyboard = [
-            [InlineKeyboardButton("🖼️ 获取图片 File ID", callback_data='get_file_id')],
-            [InlineKeyboardButton("🔑 查看待处理奖励", callback_data='view_vouchers')],
-            [InlineKeyboardButton("🗄️ 频道转发库", callback_data='admin_channel_list_1')], 
-            [InlineKeyboardButton("📦 积分商品管理", callback_data='admin_item_page_1')], 
-            [InlineKeyboardButton("👤 查看用户记录", callback_data='admin_user_page_1')],
-            [InlineKeyboardButton("🚪 退出管理", callback_data='exit_admin')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(f"<b>🔑 管理员面板 (ID: {ADMIN_ID})</b>\n\n请选择一个操作：", reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-        return ConversationHandler.END 
+@admin_only
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """处理 /admin 命令，显示主要管理面板"""
+    if ADMIN_ID is None or update.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+
+    keyboard = [
+        [InlineKeyboardButton("🖼️ 获取图片 File ID", callback_data='get_file_id')],
+        [InlineKeyboardButton("🔑 查看待处理奖励", callback_data='view_vouchers')],
+        [InlineKeyboardButton("🗄️ 频道转发库", callback_data='admin_channel_list_1')],
+        [InlineKeyboardButton("📦 积分商品管理", callback_data='admin_item_page_1')],
+        [InlineKeyboardButton("👤 查看用户记录", callback_data='admin_user_page_1')],
+        [InlineKeyboardButton("🚪 退出管理", callback_data='exit_admin')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    response = f"<b>🔑 管理员面板 (ID: {ADMIN_ID})</b>\n\n请选择一个操作："
+    
+    await update.message.reply_html(response, reply_markup=reply_markup)
+    
+    return ConversationHandler.END  
 
     # --- 3. 导航分发 ---
     elif data == 'view_vouchers': return await view_vouchers_command(query.message, context)
