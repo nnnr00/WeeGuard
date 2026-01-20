@@ -3,10 +3,10 @@ import os
 import time
 import random
 import json
-import uuid # 用于生成视频 Token
-import requests # 用于调用 Service A API
+import uuid 
+import requests 
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants, Message
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 
 # --- 重点配置区 (请根据需要修改) ---
@@ -49,7 +49,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "") 
 NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL", "placeholder_for_neon_db") 
 
-# 将管理员 ID 转换为列表
 try:
     ADMIN_IDS = [int(uid.strip()) for uid in ADMIN_IDS_STR.split(',') if uid.strip()]
 except ValueError:
@@ -59,10 +58,11 @@ except ValueError:
 # 状态管理字典：Key: user_id, Value: (current_state, data_dict)
 user_data_store = {} 
 
-# --- 积分系统辅助函数 (与Service A协作所需) ---
-# ⚠️ 必须替换为 Service A (API 中间件) 的公开 URL
-API_SERVICE_A_URL = os.getenv("API_SERVICE_A_URL", "http://service-a-your-app-name.railway.app") 
+# 数据库连接对象 (此处仅为占位，Service B 不直接操作 DB)
+DB_CONNECTION = None 
 
+# --- 积分系统辅助函数 (Service A URL 必须在此设置) ---
+API_SERVICE_A_URL = os.getenv("API_SERVICE_A_URL", "http://service-a-your-app-name.railway.app") 
 
 # --- 辅助函数 ---
 
@@ -70,7 +70,6 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 def get_user_state(user_id: int) -> tuple:
-    """获取用户的当前状态和数据，如果不存在则返回默认值 (初始化积分结构)"""
     if user_id not in user_data_store:
         user_data_store[user_id] = (STATE_START, {'total_points': 0, 'last_checkin_time': 0, 'failed_attempts': 0, 'lock_until': 0, 'last_video_watch_time': 0, 'daily_video_count': 0})
     return user_data_store[user_id]
@@ -123,7 +122,6 @@ def get_video_reward_data(user_id: int) -> dict:
 
 def update_video_watch_data(user_id: int, count: int, points: int):
     _, data = get_user_state(user_id)
-    # 检查是否跨天，如果时间差超过 24h，则重置计数器
     if time.time() > data.get('last_video_watch_time', 0) + VIDEO_COOLDOWN:
         data['daily_video_count'] = 1
         data['last_video_watch_time'] = time.time()
@@ -172,7 +170,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def hd_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """活动中心/开业活动"""
     keyboard = [
-        [InlineKeyboardButton("📺 观看视频领积分 (每日3次)", callback_data="video_reward_menu")], # 视频奖励入口
+        [InlineKeyboardButton("📺 观看视频领积分 (每日3次)", callback_data="video_reward_menu")], 
         [InlineKeyboardButton("🔗 观看奖励广告 (Moontag)", callback_data="moontag_rewarded_ad")],
         [InlineKeyboardButton("⬅️ 返回首页", callback_data="back_to_start_main")]
     ]
@@ -222,19 +220,19 @@ async def admin_cancel_verification(update: Update, context: ContextTypes.DEFAUL
     await admin_command(update, context) 
 
 # --- 积分系统命令 ---
-async def jf_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """积分菜单"""
-    user_id = update.effective_user.id
+async def jf_menu_command(message: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """积分菜单 (修正：接收 Message 对象，因为由回调直接调用)"""
+    user_id = message.from_user.id
     current_points = get_user_points(user_id)
     
     keyboard = [
         [InlineKeyboardButton("✅ 每日签到领积分 (固定/随机)", callback_data="jf_checkin")],
-        [InlineKeyboardButton("📺 观看视频领积分 (每日3次)", callback_data="video_reward_menu")], 
+        [InlineKeyboardButton("📺 观看视频领积分 (每日3次)", callback_data="video_reward_menu")],
         [InlineKeyboardButton("⬅️ 返回首页", callback_data="back_to_start_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
+    await message.reply_text(
         f"🌟 **积分中心**\n\n您当前的累计积分为：**{current_points}** 积分。",
         reply_markup=reply_markup,
         parse_mode='Markdown'
@@ -257,7 +255,6 @@ async def handle_checkin(query: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
 
-    # 签到逻辑：首次 10 分，之后 3-8 分
     points_earned = 10 if last_checkin == 0 else random.randint(3, 8)
     
     update_user_points(user_id, points_earned)
@@ -277,15 +274,7 @@ async def handle_checkin(query: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 # --- 视频观看奖励逻辑 (新增) ---
-def get_video_reward_data(user_id: int) -> dict:
-    _, data = get_user_state(user_id)
-    return {
-        'count': data.get('daily_video_count', 0),
-        'last_time': data.get('last_video_watch_time', 0)
-    }
-
 async def video_reward_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """视频奖励菜单"""
     user_id = update.effective_user.id
     video_data = get_video_reward_data(user_id)
     
@@ -332,7 +321,7 @@ async def video_reward_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def handle_video_watch_init(query: Update, context: ContextTypes.DEFAULT_TYPE, watch_num: int) -> None:
-    """引导用户观看视频，并生成 Token (Service A 协作的起点)"""
+    """引导用户观看视频，并生成 Token"""
     user_id = query.from_user.id
     _, data = get_user_state(user_id)
     
@@ -343,18 +332,16 @@ async def handle_video_watch_init(query: Update, context: ContextTypes.DEFAULT_T
         
     video_token = str(uuid.uuid4()) 
     
-    # 设置临时状态：等待服务器触发
     data['video_token'] = video_token
     data['video_points_pending'] = points
     data['video_watch_num'] = watch_num
     set_user_state(user_id, 'STATE_WAITING_VIDEO_CONFIRM', data)
     
-    # 构建链接，指向 Service A 的 /start_video 端点
     AD_PAGE_URL = f"{API_SERVICE_A_URL}/start_video?token={video_token}" 
 
     keyboard = [
-        [InlineKeyboardButton("▶️ 点击此处观看视频", url=AD_PAGE_URL)], # 用户点击进入外部网站
-        [InlineKeyboardButton("✅ 我已看完，点击确认领奖", callback_data=f"video_confirm_{watch_num}_{points}")] # 用户回来后点击此按钮
+        [InlineKeyboardButton("▶️ 点击此处观看视频", url=AD_PAGE_URL)], 
+        [InlineKeyboardButton("✅ 我已看完，点击确认领奖", callback_data=f"video_confirm_{watch_num}_{points}")] 
     ]
 
     await query.edit_message_text(
@@ -376,7 +363,6 @@ async def confirm_video_reward(query: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     try:
-        # 1. 调用 Service A 验证 Token 是否已被触发 (TRIGGERED)
         validation_url = f"{API_SERVICE_A_URL}/validate_token?token={video_token}"
         validation_response = requests.get(validation_url, timeout=5)
         validation_response.raise_for_status()
@@ -393,10 +379,6 @@ async def confirm_video_reward(query: Update, context: ContextTypes.DEFAULT_TYPE
             current_time = time.time()
             new_count = data.get('daily_video_count', 0) + 1
             
-            # 每日重置逻辑（仅用于更新时间戳，因为次数检查在 menu 中已经做过）
-            if current_time > data.get('last_video_watch_time', 0) + VIDEO_COOLDOWN:
-                 new_count = 1 # 理论上这里应该为 1，但为保险，我们只依赖 service A 的触发次数
-            
             data['daily_video_count'] = new_count
             data['last_video_watch_time'] = current_time
             data.pop('video_token', None) 
@@ -411,7 +393,6 @@ async def confirm_video_reward(query: Update, context: ContextTypes.DEFAULT_TYPE
             )
             
         else:
-            # Token 未触发或已使用
             await query.answer(f"Token 状态不正确: {validation_data.get('status')}")
             await video_reward_menu(query.message, context)
 
@@ -551,7 +532,7 @@ async def handle_verification_input(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("请使用界面上的按钮进行操作。", reply_markup=get_payment_confirm_keyboard(user_id, current_state == STATE_AWAITING_PAYMENT_CONFIRM)[0])
 
 
-# --- 回调查询处理函数 ---
+# --- 回调查询处理函数 (修复了调用子函数时传递的对象类型) ---
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -559,8 +540,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     user_id = query.from_user.id
     data = query.data
+    
     current_state, current_data = get_user_state(user_id)
 
+    # --- 锁定/菜单/返回 按钮处理 ---
     if data == "locked":
         await query.answer("请等待身份验证系统冷却时间结束。")
         await start_command(update, context)
@@ -572,17 +555,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await start_command(update, context)
             return
         set_user_state(user_id, STATE_AWAITING_PAYMENT_CONFIRM, {'failed_attempts': 0}) 
-        await send_payment_confirmation_page(update, context, is_success=False) 
+        await send_payment_confirmation_page(query.message, context, is_success=False) # 传递 Message
         return
         
     if data == "back_to_start_main":
-        await start_command(update, context)
+        await start_command(update, context) # 传递 Update
         return
 
     if data == "activity_center":
-        await hd_command(query.message, context)
+        await hd_command(query.message, context) # 传递 Message
         return
         
+    # --- 活动中心内部按钮 ---
     if data == "moontag_rewarded_ad":
         if not API_SERVICE_A_URL or API_SERVICE_A_URL == "http://service-a-your-app-name.railway.app":
             await query.edit_message_text("❌ 配置错误：请设置 API_SERVICE_A_URL。")
@@ -592,21 +576,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         reply_markup = InlineKeyboardMarkup(keyboard)
         response_text = ("🌟 **奖励广告**\n\n"
                          "请**点击下方链接**，在浏览器中观看广告。\n"
-                         f"🔗 **[点击此处进入广告页面]({API_SERVICE_A_URL}/start_video?token=YOUR_DUMMY_TOKEN_HERE)**") # 实际Token在verify_start时生成，这里仅为跳转示例
+                         f"🔗 **[点击此处进入广告页面]({API_SERVICE_A_URL}/start_video?token=DUMMY_TOKEN_HERE)")
         await query.edit_message_text(response_text, reply_markup=reply_markup, parse_mode='Markdown')
         return
         
     # --- 积分系统按钮 ---
     if data == "jf_menu":
-        await jf_menu_command(query.message, context)
+        # 修正：调用 jf_menu_command 时，传入 query.message (Message 对象)
+        await jf_menu_command(query.message, context) 
         return
     
     if data == "jf_checkin":
-        await handle_checkin(query, context)
-        return
-        
-    if data == "video_reward_menu":
-        await video_reward_menu(query.message, context)
+        await handle_checkin(query, context) # 传递 Query (Update)
         return
         
     if data.startswith("video_watch_"):
@@ -684,7 +665,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text("🎛️ **管理员后台**\n\n请选择您要执行的操作：", reply_markup=reply_markup, parse_mode='Markdown')
         
         elif data == "admin_cancel_user_verification":
-            await admin_cancel_verification(query.message, context)
+            await admin_cancel_verification(query.message, context) # 传递 Message
             return
 
 
@@ -720,15 +701,9 @@ async def handle_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             file_id = update.message.document.file_id
         
         if file_id:
+            # ⚠️ 警告: 数据库保存逻辑需要适配 Service A (API)，此处仅为占位
             new_key = str(int(time.time() * 1000)) 
             description = f"Admin uploaded {time.strftime('%Y%m%d_%H%M')}"
-            
-            # ⚠️ 假设数据库操作成功
-            # 在实际环境中，Service B (Bot) 不直接操作 DB，而是调用 Service A (API) 来保存 File ID。
-            # 为保持 Bot 独立性，我们在这里暂时使用模拟/占位操作，但实际应用中应调用 Service A 的保存接口。
-            # 为了代码完整性，我们暂时保留本地模拟的保存逻辑，但请注意这是 Service A 的职责。
-            
-            # ⚠️ 警告: File ID 保存逻辑未更新为调用 Service A API，此处为临时模拟，请后续修改！
             
             keyboard = [
                 [InlineKeyboardButton("🔗 继续获取下一个 File ID", callback_data="get_file_id_menu")],
@@ -736,7 +711,6 @@ async def handle_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 [InlineKeyboardButton("⬅️ 返回管理后台", callback_data="back_to_admin")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-
             response_text = f"✅ **File ID 已获取 (Key: {new_key})**\n\n请复制以下ID：\n\n<code>{file_id}</code>\n\n<i>(注意：File ID 保存逻辑需适配 Service A)</i>"
             
             await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode='HTML')
@@ -749,35 +723,28 @@ async def handle_file_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 ])
             )
 
-# --- Admin File ID 查看与删除逻辑 (Bot 端 - 仅读取/删除 Key) ---
-
+# --- Admin File ID 查看与删除逻辑 (Bot 端占位) ---
 def get_file_list_markup(user_id: int) -> InlineKeyboardMarkup:
     keyboard = []
-    # ⚠️ 实际应用中，Bot 应该调用 Service A 的 /api/list_files 来获取数据
-    # 这里使用占位符，因为 Service A 的 LIST 接口尚未实现
-    
     keyboard.append([InlineKeyboardButton("⚠️ 仅用于占位，请使用 Service A API", callback_data="admin_view_saved_files")])
-
     keyboard.append([InlineKeyboardButton("⬅️ 返回管理后台", callback_data="back_to_admin")])
     return InlineKeyboardMarkup(keyboard)
 
 async def admin_view_files(query: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = query.from_user.id
     if not is_admin(user_id): return
-    
     set_user_state(user_id, STATE_ADMIN_VIEW_FILES)
     markup = get_file_list_markup(user_id)
     await query.edit_message_text("🗄️ **已保存的 File ID 记录** (功能待完善，请使用 `/admin` 查看)", reply_markup=markup, parse_mode='Markdown')
 
 async def admin_delete_file_confirm(query: Update, context: ContextTypes.DEFAULT_TYPE, file_key: str) -> None:
-    # 占位函数，实际应调用 Service A API 进行删除确认
     await query.answer("删除确认功能应通过 Service A 接口实现。")
     await admin_view_files(query, context)
 
 async def admin_delete_file(query: Update, context: ContextTypes.DEFAULT_TYPE, file_key: str) -> None:
-    # 占位函数，实际应调用 Service A API 进行删除
     await query.answer("删除功能应通过 Service A 接口实现。")
     await admin_view_files(query, context)
+
 
 # --- 主程序 ---
 
