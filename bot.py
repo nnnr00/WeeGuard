@@ -34,7 +34,7 @@ STATE_JF_MENU = 'S_JF_MENU'
 STATE_ADMIN_AWAITING_FILE = 'A_AWAITING_FILE' 
 STATE_ADMIN_VIEW_FILES = 'A_VIEW_FILES' 
 STATE_ADMIN_DELETE_FILE_CONFIRM = 'A_DEL_CONFIRM' 
-STATE_WAITING_VIDEO_CONFIRM = 'STATE_WAITING_VIDEO_CONFIRM' # 新增：等待用户确认观看完成
+STATE_WAITING_VIDEO_CONFIRM = 'STATE_WAITING_VIDEO_CONFIRM'
 # --- 重点配置区结束 ---
 
 
@@ -159,7 +159,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # 修复：增加对 update.message 存在的检查
     if update.message:
         await update.message.reply_text(
             welcome_text,
@@ -488,6 +487,7 @@ async def send_payment_confirmation_page(update: Update, context: ContextTypes.D
     if is_success:
         await start_command(update, context)
 
+
 async def handle_verification_input(update: Update, context: ContextTypes.DEFAULT_TYPE, next_step: str = None) -> None:
     user_id = update.effective_user.id
     current_state, data = get_user_state(user_id)
@@ -528,7 +528,7 @@ async def handle_verification_input(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("请使用界面上的按钮进行操作。", reply_markup=get_payment_confirm_keyboard(user_id, current_state == STATE_AWAITING_PAYMENT_CONFIRM)[0])
 
 
-# --- 回调查询处理函数 (修复上下文调用) ---
+# --- 回调查询处理函数 (修复了所有上下文调用) ---
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
