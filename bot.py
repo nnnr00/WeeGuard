@@ -34,7 +34,7 @@ STATE_JF_MENU = 'S_JF_MENU'
 STATE_ADMIN_AWAITING_FILE = 'A_AWAITING_FILE' 
 STATE_ADMIN_VIEW_FILES = 'A_VIEW_FILES' 
 STATE_ADMIN_DELETE_FILE_CONFIRM = 'A_DEL_CONFIRM' 
-STATE_WAITING_VIDEO_CONFIRM = 'STATE_WAITING_VIDEO_CONFIRM' # 新增：等待用户确认观看完成
+STATE_WAITING_VIDEO_CONFIRM = 'STATE_WAITING_VIDEO_CONFIRM'
 # --- 重点配置区结束 ---
 
 
@@ -59,7 +59,6 @@ except ValueError:
 # 状态管理字典：Key: user_id, Value: (current_state, data_dict)
 user_data_store = {} 
 
-# 数据库连接对象 (Service B 不直接操作 DB)
 DB_CONNECTION = None 
 
 # --- 积分系统辅助函数 (与Service A协作所需) ---
@@ -162,11 +161,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text(
-        welcome_text,
-        reply_markup=reply_markup,
-        parse_mode=constants.ParseMode.MARKDOWN
-    )
+    # 修复了：增加对 update.message 是否存在的检查
+    if update.message:
+        await update.message.reply_text(
+            welcome_text,
+            reply_markup=reply_markup,
+            parse_mode=constants.ParseMode.MARKDOWN
+        )
 
 async def hd_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """活动中心/开业活动"""
@@ -222,7 +223,7 @@ async def admin_cancel_verification(update: Update, context: ContextTypes.DEFAUL
 
 # --- 积分系统命令 ---
 async def jf_menu_command(message: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """积分菜单 (接收 Message 对象，修复了回调调用时的错误)"""
+    """积分菜单 (接收 Message 对象)"""
     user_id = message.from_user.id
     current_points = get_user_points(user_id)
     
@@ -529,7 +530,7 @@ async def handle_verification_input(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("请使用界面上的按钮进行操作。", reply_markup=get_payment_confirm_keyboard(user_id, current_state == STATE_AWAITING_PAYMENT_CONFIRM)[0])
 
 
-# --- 回调查询处理函数 (已修复调用逻辑) ---
+# --- 回调查询处理函数 (已修复上下文调用问题) ---
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -540,6 +541,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     current_state, current_data = get_user_state(user_id)
 
+    # --- 锁定/菜单/返回 按钮处理 ---
     if data == "locked":
         await query.answer("请等待身份验证系统冷却时间结束。")
         await start_command(update, context)
@@ -551,17 +553,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await start_command(update, context)
             return
         set_user_state(user_id, STATE_AWAITING_PAYMENT_CONFIRM, {'failed_attempts': 0}) 
-        await send_payment_confirmation_page(query.message, context, is_success=False) 
+        await send_payment_confirmation_page(query.message, context, is_success=False) # 传递 Message
         return
         
     if data == "back_to_start_main":
-        await start_command(update, context)
+        await start_command(update, context) # 传递 Update
         return
 
     if data == "activity_center":
-        await hd_command(query.message, context)
+        await hd_command(query.message, context) # 传递 Message
         return
         
+    # --- 活动中心内部按钮 (Moontag) ---
     if data == "moontag_rewarded_ad":
         if not API_SERVICE_A_URL or API_SERVICE_A_URL == "http://service-a-your-app-name.railway.app":
             await query.edit_message_text("❌ 配置错误：请设置 API_SERVICE_A_URL。")
@@ -577,11 +580,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
     # --- 积分系统按钮 ---
     if data == "jf_menu":
-        await jf_menu_command(query.message, context) 
+        await jf_menu_command(query.message, context) # 调用修正后的函数，接收 Message
         return
     
     if data == "jf_checkin":
-        await handle_checkin(query, context)
+        await handle_checkin(query, context) # 传递 Query (Update)
         return
         
     if data.startswith("video_watch_"):
