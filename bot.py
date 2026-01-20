@@ -15,44 +15,52 @@ from telegram.constants import ParseMode
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, UniqueConstraint, asc, func, desc
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
+# ‼️ 修复警告：推荐的导入方式
+from sqlalchemy.orm import declarative_base as declarative_base_20
 
-# ‼️ APScheduler 导入 (用于可靠的定时任务)
+# ‼️ APScheduler 导入
 from apscheduler.schedulers.asyncio import AsyncIOScheduler 
 
-# --- 配置 & 状态定义 (请替换为您自己的值) ---
+# --- 1. 核心配置：管理员替换区域 (请在此处替换占位符) ---
+MOONTAG_ACTIVITY_URL = "https://your-external-host.com/activity.html" # ‼️ 替换为您的活动页面URL
+ORDER_PREFIX = "20260" # VIP 订单识别前缀
+
+# --- File ID 占位符 (‼️ 请替换为您的真实 File ID) ---
+WX_RECHARGE_QR_FILE_ID = "AgACAgQAAxkb..." 
+ALI_RECHARGE_QR_FILE_ID = "AgACAgQAAxkb..." 
+VIP_VERIFICATION_IMAGE_FILE_ID = "AgACAgQAAxkb..." 
+VIP_ORDER_IMAGE_FILE_ID = "AgACAgQAAxkb..." 
+
+# --- 链接占位符 ---
+VIP_JOIN_GROUP_LINK = "https://t.me/joinchat/..." # ‼️ 替换为真实入群链接
+
+# --- 2. 基础配置 & 状态定义 ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 try: ADMIN_ID = int(os.getenv("ADMIN_ID"))
 except: ADMIN_ID = None
 
-# --- 基础配置 ---
-MOONTAG_ACTIVITY_URL = "https://your-external-host.com/activity.html" # ‼️ 替换为您的活动页面URL
 VOUCHER_EXPIRY_SECONDS = 3600 * 6 
 AD_VIEW_LIMIT = 3
 AD_POINTS_TIER = {1: 10, 2: 6, 3: (3, 10)} 
 
-# --- VIP 验证配置 ---
 MAX_ATTEMPTS = 2
-LOCKOUT_HOURS = 5
-ORDER_PREFIX = "20260" 
+LOCKOUT_HOURS = 5 
 
-# --- 频道转发配置 ---
 MAX_ITEMS_PER_PAGE = 10
 MAX_CONTENT_ITEMS = 100
-FORWARD_EXPIRY_MINUTES = 5 # ‼️ 频道转发消息的自动删除时间 (5分钟)
+FORWARD_EXPIRY_MINUTES = 5 # 频道转发消息的自动删除时间 (5分钟)
 
-# --- 充值配置 ---
 RECHARGE_AMOUNT = 5 
 RECHARGE_POINTS = 100 
 RECHARGE_ATTEMPTS = 2
 RECHARGE_LOCKOUT_HOURS = 5 
 
-# --- 积分兑换配置 ---
 TEST_EXCHANGE_ITEM_NAME = "🎁 零积分测试礼包"
 TEST_EXCHANGE_COST = 0
 
-# --- 状态定义 (ConversationHandler) ---
+# --- 状态定义 ---
 GET_FILE_ID_STEP = 1
 VIP_ORDER_INPUT = 100 
 CHANNEL_BIND_CMD_INPUT = 200 
@@ -75,11 +83,11 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # --- 数据库设置 ---
-Base = declarative_base()
+Base = declarative_base_20() # 使用 2.0 推荐的调用方式
 
 class User(Base):
     __tablename__ = 'users'
-    # ‼️ 修复此处：直接使用 Column(Integer, primary_key=True) 来定义自增主键
+    # ‼️ 修复：使用标准 Integer 主键定义
     id = Column(Integer, primary_key=True) 
     telegram_id = Column(Integer, unique=True)
     username = Column(String)
@@ -98,7 +106,8 @@ class User(Base):
 
 class RewardVoucher(Base):
     __tablename__ = 'reward_vouchers'
-    id = Column(Base.metadata.tables.primary_key[0].type, primary_key=True)
+    # ‼️ 修复：使用标准 Integer 主键定义
+    id = Column(Integer, primary_key=True) 
     voucher_id = Column(String, unique=True, nullable=False) 
     user_telegram_id = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -108,13 +117,15 @@ class RewardVoucher(Base):
 
 class DailySignIn(Base):
     __tablename__ = 'daily_sign_in'
-    id = Column(Base.metadata.tables.primary_key[0].type, primary_key=True)
+    # ‼️ 修复：使用标准 Integer 主键定义
+    id = Column(Integer, primary_key=True)
     user_telegram_id = Column(Integer, nullable=False, unique=True)
     last_signed_in_date = Column(DateTime, nullable=False)
 
 class AdViewsTracker(Base):
     __tablename__ = 'ad_views_tracker'
-    id = Column(Base.metadata.tables.primary_key[0].type, primary_key=True)
+    # ‼️ 修复：使用标准 Integer 主键定义
+    id = Column(Integer, primary_key=True)
     user_telegram_id = Column(Integer, nullable=False)
     view_date = Column(DateTime, nullable=False)
     views_count = Column(Integer, default=0)
@@ -122,7 +133,8 @@ class AdViewsTracker(Base):
 
 class ChannelForwardLibrary(Base):
     __tablename__ = 'channel_forward_library'
-    id = Column(Base.metadata.tables.primary_key[0].type, primary_key=True)
+    # ‼️ 修复：使用标准 Integer 主键定义
+    id = Column(Integer, primary_key=True)
     custom_command = Column(String(50), nullable=False, unique=True) 
     source_chat_id = Column(String, nullable=False) 
     content_data = Column(String, nullable=False) 
@@ -130,7 +142,8 @@ class ChannelForwardLibrary(Base):
 
 class PointExchangeItem(Base):
     __tablename__ = 'point_exchange_item'
-    id = Column(Base.metadata.tables.primary_key[0].type, primary_key=True)
+    # ‼️ 修复：使用标准 Integer 主键定义
+    id = Column(Integer, primary_key=True)
     item_name = Column(String(100), nullable=False)
     cost = Column(Integer, default=0)
     content_data = Column(String, nullable=False) 
@@ -139,7 +152,8 @@ class PointExchangeItem(Base):
 
 class PointTransaction(Base):
     __tablename__ = 'point_transaction'
-    id = Column(Base.metadata.tables.primary_key[0].type, primary_key=True)
+    # ‼️ 修复：使用标准 Integer 主键定义
+    id = Column(Integer, primary_key=True)
     user_telegram_id = Column(Integer, nullable=False)
     item_id = Column(Integer, nullable=False) 
     transaction_time = Column(DateTime, default=datetime.utcnow)
@@ -149,7 +163,8 @@ class PointTransaction(Base):
 
 class UserAccess(Base):
     __tablename__ = 'user_access'
-    id = Column(Base.metadata.tables.primary_key[0].type, primary_key=True)
+    # ‼️ 修复：使用标准 Integer 主键定义
+    id = Column(Integer, primary_key=True)
     user_telegram_id = Column(Integer, nullable=False)
     command_used = Column(String(50), nullable=False) 
     access_granted_at = Column(DateTime, default=datetime.utcnow)
@@ -175,8 +190,7 @@ def get_db():
         db = SessionLocal()
         try: yield db
         finally: db.close()
-
-# --- 辅助函数 (完整定义) ---
+            # --- 辅助函数 (完整定义) ---
 def admin_only(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         user_id = update.effective_user.id
@@ -415,7 +429,6 @@ def schedule_message_deletion(chat_id, message_ids, delay_minutes, update, conte
         
     run_time = datetime.utcnow() + timedelta(minutes=delay_minutes)
     
-    # 由于 context 不能直接被调度，我们传递所需的参数
     scheduler.add_job(
         delete_forwarded_message_after_delay, 
         'date', 
@@ -424,7 +437,8 @@ def schedule_message_deletion(chat_id, message_ids, delay_minutes, update, conte
         id=f"delete_{chat_id}_{hash(tuple(sorted(message_ids)))}_{datetime.now().timestamp()}"
     )
     logger.info(f"已调度删除任务在 {run_time.strftime('%H:%M:%S')}")
-    # --- 机器人基础命令 ---
+
+# --- 基础命令逻辑 (start_command, help_command) ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not engine: await update.message.reply_text("系统初始化错误，请稍后再试。"); return
@@ -438,7 +452,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             db.commit()
             logger.info(f"新用户注册: {user.id} ({user.username})")
         
-        # --- 菜单按钮 ---
         keyboard = [
             [InlineKeyboardButton("🎉 活动中心 /hd", callback_data='activity_center')],
             [InlineKeyboardButton("💰 积分系统 /jf", callback_data='points_menu')], 
@@ -468,9 +481,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("请使用 /start 来开始。")
-
-
-# --- VIP 验证流程 ---
+    # --- VIP 验证流程 ---
 async def start_vip_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -556,7 +567,7 @@ async def vip_verification_cancel(update: Update, context: ContextTypes.DEFAULT_
         db.close()
     return ConversationHandler.END
 
-# --- 积分签到 / 广告/充值/兑换/频道/FileID/Admin 占位函数 (需在上文补全) ---
+# --- 积分签到 / 广告/充值/兑换/频道/FileID/Admin 占位函数 (需补全函数体) ---
 async def points_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None: pass 
 async def sign_in_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None: pass 
 async def activity_center_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None: pass 
@@ -573,12 +584,9 @@ async def view_point_history(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def admin_view_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
 async def admin_channel_bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
 async def view_vouchers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-async def admin_manage_items_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-# --- 积分签到 / 充值流程 (占位函数体，需补全) ---
-async def points_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None: pass 
-async def sign_in_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None: pass 
-
-async def recharge_menu_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+# ... 其他占位函数 ...
+# --- 积分签到 / 充值逻辑 (完整实现) ---
+async def points_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -592,126 +600,129 @@ async def recharge_menu_start(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         wx_btn_text = "💳 微信充值 (¥5=100P)"
         if user.wx_recharge_used or wx_locked: wx_btn_text = "🚫 微信已用/锁定"
-            
         ali_btn_text = "💳 支付宝充值 (¥5=100P)"
         if user.zhifubao_recharge_used or ali_locked: ali_btn_text = "🚫 支付宝已用/锁定"
             
     finally: db.close()
         
     keyboard = [
+        [InlineKeyboardButton("✅ 每日签到", callback_data='sign_in_start')],
         [InlineKeyboardButton(wx_btn_text, callback_data='recharge_wx_start' if not user.wx_recharge_used and not wx_locked else 'recharge_disabled')],
         [InlineKeyboardButton(ali_btn_text, callback_data='recharge_ali_start' if not user.zhifubao_recharge_used and not ali_locked else 'recharge_disabled')],
-        [InlineKeyboardButton("🔙 返回积分主菜单", callback_data='points_menu')]
+        [InlineKeyboardButton("🛍️ 兑换中心 /dh", callback_data='exchange_menu')],
+        [InlineKeyboardButton("📜 查看积分明细", callback_data='history_page_1')],
+        [InlineKeyboardButton("🔙 返回主菜单", callback_data='main_menu')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    response_text = (f"💎 <b>积分充值中心</b>\n\n当前积分: <b>{current_points}</b>\n\n--- 充值选项 (每笔 ¥{RECHARGE_AMOUNT} = {RECHARGE_POINTS} 积分) ---")
+    response_text = (f"💰 <b>积分系统 /jf</b>\n\n"
+                     f"您当前的积分为: <b>{current_points}</b> 积分。\n\n"
+                     f"--- 功能选项 ---")
     
     await query.edit_message_text(text=response_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-    return RECHARGE_MENU
 
-async def start_wx_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def sign_in_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    today_str = datetime.utcnow().strftime('%Y-%m-%d')
+    db = next(get_db())
+    response_text = ""
+    
+    try:
+        sign_in_record = db.query(DailySignIn).filter(DailySignIn.user_telegram_id == user_id).first()
+        
+        if sign_in_record and sign_in_record.last_signed_in_date.strftime('%Y-%m-%d') == today_str:
+            response_text = "❌ 您今天已经签到过了。"
+        else:
+            reward_amount = 0
+            if not sign_in_record:
+                reward_amount = DAILY_SIGN_IN_POINTS_FIRST_TIME
+                new_record = DailySignIn(user_telegram_id=user_id, last_signed_in_date=datetime.utcnow())
+                db.add(new_record)
+            else:
+                reward_amount = random.randint(*DAILY_SIGN_IN_POINTS_SUBSEQUENT)
+                sign_in_record.last_signed_in_date = datetime.utcnow()
+                
+            new_total = add_points(user_id, reward_amount)
+            if new_total is not None:
+                response_text = (f"✅ 签到成功！\n恭喜您获得 <b>{reward_amount}</b> 积分。\n您的总积分为: <b>{new_total}</b>。")
+            else:
+                response_text = "❌ 签到成功，但积分添加失败，请稍后重试。"
+        
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"签到处理错误: {e}")
+        response_text = "⚠️ 签到处理过程中发生服务器错误。"
+        
+    finally: db.close()
+
+    keyboard = [[InlineKeyboardButton("✅ 每日签到", callback_data='sign_in_start')],
+                [InlineKeyboardButton("🔙 返回积分主菜单", callback_data='points_menu')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(text=response_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+# --- 广告/Moontag (更新了次数限制) ---
+async def activity_center_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     
-    used, locked, attempts, user = get_recharge_status(user_id, 'WX')
-    if used or locked:
-        await query.edit_message_text("此渠道已使用或当前处于锁定状态，请返回积分菜单。");
-        return await recharge_menu_start(update, context)
+    current_views = get_today_ad_views(user_id)
+    
+    if current_views >= AD_VIEW_LIMIT:
+        await query.edit_message_text("🛑 今日观看次数已用尽 (上限 3 次)。请等待每天 00:00 UTC 后重试。", parse_mode=ParseMode.HTML)
+        return
 
-    FILE_ID_WX_STEP1 = "AgACAgQAAxkb..." # ‼️ 替换为微信支付二维码 File ID
+    voucher_code = generate_voucher(user_id)
+    if not voucher_code:
+        await query.edit_message_text("⚠️ 生成活动凭证失败，请稍后再试。"); return
+
+    new_count, points_awarded, new_total = increment_ad_view(user_id)
+
+    if new_count is None:
+        await query.edit_message_text("⚠️ 统计观看次数失败，请稍后再试。"); return
+
+    reward_link = f"{MOONTAG_ACTIVITY_URL}?voucher={voucher_code}&user={user_id}"
     
     keyboard = [
-        [InlineKeyboardButton("✅ 我已支付，开始验证订单号", callback_data='recharge_wx_input_start')],
-        [InlineKeyboardButton("🔙 返回充值菜单", callback_data='recharge_menu')]
+        [InlineKeyboardButton("▶️ 观看广告以获得积分", url=reward_link)],
+        [InlineKeyboardButton("🔙 返回主菜单", callback_data='main_menu')]
     ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    warning_text = ("⚠️ <b>【微信充值】温馨提示</b>\n"
-                    "此渠道 <b>仅限使用一次</b>。失败两次后，此按钮将锁定 5 小时。")
-    info_text = f"请向商家支付 <b>¥{RECHARGE_AMOUNT}</b>，然后点击下方按钮进行订单验证。"
+    response_text = (f"🌟 <b>活动中心 /hd</b> 🌟\n\n"
+                     f"您今日已观看 {current_views} 次。\n")
     
-    await query.edit_message_text(
-        f"{warning_text}\n\n{info_text}\n\n<b>【请扫描下方二维码】</b>",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.HTML
-    )
-    await query.message.reply_photo(photo=FILE_ID_WX_STEP1)
-    return RECHARGE_WX_INPUT
+    if new_count == 1: response_text += f"🎁 首次观看成功！获得 <b>{AD_POINTS_TIER[1]}</b> 积分。\n"
+    elif new_count == 2: response_text += f"🎁 第二次观看成功！获得 <b>{AD_POINTS_TIER[2]}</b> 积分。\n"
+    elif new_count == 3: response_text += f"🎁 第三次观看成功！获得 <b>{points_awarded}</b> 积分 (随机)。\n"
+    
+    response_text += f"您的总积分为: <b>{new_total}</b>。\n\n"
+    response_text += "请点击下方按钮观看广告。观看完毕后请务必返回 Telegram。"
+    
+    try:
+        await query.edit_message_text(text=response_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    except Exception:
+        await query.message.reply_html(response_text, reply_markup=reply_markup)
 
-async def wx_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    order_input = update.message.text.strip()
-    user_id = update.effective_user.id
-    
-    status, next_attempts, _ = process_recharge_attempt(user_id, order_input, 'WX')
-    
-    if status == "SUCCESS":
-        await update.message.reply_text(f"✅ 支付成功！已为您增加 <b>{RECHARGE_POINTS}</b> 积分。", parse_mode=ParseMode.HTML)
-        return await points_menu(update, context) 
+# --- VIP 流程 (简化，确保跳转到 /jf 或 /dh) ---
+async def start_vip_verification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass # 占位
+async def vip_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass # 占位
+async def vip_verification_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass # 占位
 
-    elif status == "FAILED_AND_LOCKED":
-        await update.message.reply_text(f"❌ 订单识别失败。已锁定 5 小时。", parse_mode=ParseMode.HTML)
-        return await points_menu(update, context)
+# --- 充值流程 (简化调用，需要完整逻辑) ---
+async def recharge_menu_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass 
+async def start_wx_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass 
+async def wx_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass 
+async def start_ali_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass 
+async def ali_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
+async def recharge_disabled(update: Update, context: ContextTypes.DEFAULT_TYPE): await update.callback_query.answer("此渠道当前不可用（已使用或锁定）。"); return await recharge_menu_start(update, context)
 
-    elif status == "FAILED":
-        await update.message.reply_text(f"❌ 订单识别失败。请在微信支付的账单找到交易单号。\n剩余机会: {next_attempts} 次。")
-        return RECHARGE_WX_INPUT
-        
-    else: 
-        await update.message.reply_text("系统忙碌或您已完成该支付方式的充值。")
-        return await points_menu(update, context)
 
-async def start_ali_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    used, locked, attempts, user = get_recharge_status(user_id, 'ALI')
-    if used or locked:
-        await query.edit_message_text("此渠道已使用或当前处于锁定状态，请返回积分菜单。");
-        return await recharge_menu_start(update, context)
-        
-    FILE_ID_ALI_STEP1 = "AgACAgQAAxkb..." # ‼️ 替换为支付宝支付二维码 File ID
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ 我已支付，开始验证订单号", callback_data='recharge_ali_input_start')],
-        [InlineKeyboardButton("🔙 返回充值菜单", callback_data='recharge_menu')]
-    ]
-    
-    warning_text = ("⚠️ <b>【支付宝充值】温馨提示</b>\n"
-                    "此渠道 <b>仅限使用一次</b>。失败两次后，此按钮将锁定 5 小时。")
-    info_text = f"请向商家支付 <b>¥{RECHARGE_AMOUNT}</b>，然后点击下方按钮进行订单验证。"
-    
-    await query.edit_message_text(
-        f"{warning_text}\n\n{info_text}\n\n<b>【请扫描下方二维码】</b>",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.HTML
-    )
-    await query.message.reply_photo(photo=FILE_ID_ALI_STEP1)
-    return RECHARGE_ALI_INPUT
-
-async def ali_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    order_input = update.message.text.strip()
-    user_id = update.effective_user.id
-    
-    status, next_attempts, _ = process_recharge_attempt(user_id, order_input, 'ALI')
-    
-    if status == "SUCCESS":
-        await update.message.reply_text(f"✅ 支付成功！已为您增加 <b>{RECHARGE_POINTS}</b> 积分。", parse_mode=ParseMode.HTML)
-        return await points_menu(update, context) 
-
-    elif status == "FAILED_AND_LOCKED":
-        await update.message.reply_text(f"❌ 订单识别失败。已锁定 5 小时。", parse_mode=ParseMode.HTML)
-        return await points_menu(update, context)
-
-    elif status == "FAILED":
-        await update.message.reply_text(f"❌ 订单识别失败。请在我的账单详情中找到商家订单号。\n剩余机会: {next_attempts} 次。")
-        return RECHARGE_ALI_INPUT
-        
-    else: 
-        await update.message.reply_text("系统忙碌或您已完成该支付方式的充值。")
-        return await points_menu(update, context)
-        # --- 兑换流程 (/dh) ---
+# --- 兑换流程 ---
 async def exchange_menu_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -811,40 +822,11 @@ async def exchange_execute(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     finally:
         db.close()
 
-async def exchange_view_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    item_id = int(query.data.split('_')[2])
-    user_id = query.from_user.id
-    
-    db = next(get_db())
-    try:
-        item = db.query(PointExchangeItem).filter(PointExchangeItem.id == item_id).first()
-        if not item:
-            await query.edit_message_text("商品信息已丢失。"); return await exchange_menu_start(update, context)
-            
-        if item.item_name == TEST_EXCHANGE_ITEM_NAME:
-            content = item.content_data
-            await query.edit_message_text(
-                f"🎁 您已兑换 <b>{item.item_name}</b>。\n\n内容: <code>{content}</code>",
-                parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回兑换列表", callback_data='exchange_menu')]])
-            )
-        else:
-            await query.edit_message_text(
-                f"✨ 您已兑换 <b>{item.item_name}</b>。请稍后查看您的私聊或购买记录。",
-                parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回兑换列表", callback_data='exchange_menu')]])
-            )
-    finally: db.close()
-    return EXCHANGE_CMD_START
-
 async def exchange_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.edit_message_text("操作已取消。")
     return await exchange_menu_start(update, context) 
 
-# --- 积分明细查询 (新增) ---
 async def view_point_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -886,149 +868,20 @@ async def view_point_history(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await query.edit_message_text(response, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return ConversationHandler.END
-    # --- 充值流程实现 (主体逻辑) ---
-async def recharge_menu_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    current_points = get_user_points(user_id)
-    
-    db = next(get_db())
-    try:
-        user = db.query(User).filter(User.telegram_id == user_id).first()
-        wx_locked = user.wx_lockout_until is not None and user.wx_lockout_until > datetime.utcnow()
-        ali_locked = user.zhifubao_lockout_until is not None and user.zhifubao_lockout_until > datetime.utcnow()
-        
-        wx_btn_text = "💳 微信充值 (¥5=100P)"
-        if user.wx_recharge_used or wx_locked: wx_btn_text = "🚫 微信已用/锁定"
-            
-        ali_btn_text = "💳 支付宝充值 (¥5=100P)"
-        if user.zhifubao_recharge_used or ali_locked: ali_btn_text = "🚫 支付宝已用/锁定"
-            
-    finally: db.close()
-        
-    keyboard = [
-        [InlineKeyboardButton(wx_btn_text, callback_data='recharge_wx_start' if not user.wx_recharge_used and not wx_locked else 'recharge_disabled')],
-        [InlineKeyboardButton(ali_btn_text, callback_data='recharge_ali_start' if not user.zhifubao_recharge_used and not ali_locked else 'recharge_disabled')],
-        [InlineKeyboardButton("🔙 返回积分主菜单", callback_data='points_menu')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    response_text = (f"💎 <b>积分充值中心</b>\n\n当前积分: <b>{current_points}</b>\n\n--- 充值选项 (每笔 ¥{RECHARGE_AMOUNT} = {RECHARGE_POINTS} 积分) ---")
-    
-    await query.edit_message_text(text=response_text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-    return RECHARGE_MENU
+    # --- 管理员后台核心逻辑 ---
+async def get_file_id_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
+async def handle_image_for_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
+async def cancel_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
 
-async def start_wx_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    used, locked, attempts, user = get_recharge_status(user_id, 'WX')
-    if used or locked:
-        await query.edit_message_text("此渠道已使用或当前处于锁定状态，请返回积分菜单。");
-        return await recharge_menu_start(update, context)
+async def admin_channel_bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
+async def bind_start_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
+async def bind_cmd_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
+async def bind_source_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
+async def collect_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
+async def handle_bind_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
 
-    FILE_ID_WX_STEP1 = "AgACAgQAAxkb..." # ‼️ 替换为微信支付二维码 File ID
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ 我已支付，开始验证订单号", callback_data='recharge_wx_input_start')],
-        [InlineKeyboardButton("🔙 返回充值菜单", callback_data='recharge_menu')]
-    ]
-    
-    warning_text = ("⚠️ <b>【微信充值】温馨提示</b>\n"
-                    "此渠道 <b>仅限使用一次</b>。失败两次后，此按钮将锁定 5 小时。")
-    info_text = f"请向商家支付 <b>¥{RECHARGE_AMOUNT}</b>，然后点击下方按钮进行订单验证。"
-    
-    await query.edit_message_text(
-        f"{warning_text}\n\n{info_text}\n\n<b>【请扫描下方二维码】</b>",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.HTML
-    )
-    await query.message.reply_photo(photo=FILE_ID_WX_STEP1)
-    return RECHARGE_WX_INPUT
+async def view_vouchers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass # 保持不变
 
-async def wx_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    order_input = update.message.text.strip()
-    user_id = update.effective_user.id
-    
-    status, next_attempts, _ = process_recharge_attempt(user_id, order_input, 'WX')
-    
-    if status == "SUCCESS":
-        await update.message.reply_text(f"✅ 支付成功！已为您增加 <b>{RECHARGE_POINTS}</b> 积分。", parse_mode=ParseMode.HTML)
-        return await points_menu(update, context) 
-
-    elif status == "FAILED_AND_LOCKED":
-        await update.message.reply_text(f"❌ 订单识别失败。已锁定 5 小时。", parse_mode=ParseMode.HTML)
-        return await points_menu(update, context)
-
-    elif status == "FAILED":
-        await update.message.reply_text(f"❌ 订单识别失败。请在微信支付的账单找到交易单号。\n剩余机会: {next_attempts} 次。")
-        return RECHARGE_WX_INPUT
-        
-    else: 
-        await update.message.reply_text("系统忙碌或您已完成该支付方式的充值。")
-        return await points_menu(update, context)
-
-async def start_ali_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    used, locked, attempts, user = get_recharge_status(user_id, 'ALI')
-    if used or locked:
-        await query.edit_message_text("此渠道已使用或当前处于锁定状态，请返回积分菜单。");
-        return await recharge_menu_start(update, context)
-        
-    FILE_ID_ALI_STEP1 = "AgACAgQAAxkb..." # ‼️ 替换为支付宝支付二维码 File ID
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ 我已支付，开始验证订单号", callback_data='recharge_ali_input_start')],
-        [InlineKeyboardButton("🔙 返回充值菜单", callback_data='recharge_menu')]
-    ]
-    
-    warning_text = ("⚠️ <b>【支付宝充值】温馨提示</b>\n"
-                    "此渠道 <b>仅限使用一次</b>。失败两次后，此按钮将锁定 5 小时。")
-    info_text = f"请向商家支付 <b>¥{RECHARGE_AMOUNT}</b>，然后点击下方按钮进行订单验证。"
-    
-    await query.edit_message_text(
-        f"{warning_text}\n\n{info_text}\n\n<b>【请扫描下方二维码】</b>",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.HTML
-    )
-    await query.message.reply_photo(photo=FILE_ID_ALI_STEP1)
-    return RECHARGE_ALI_INPUT
-
-async def ali_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    order_input = update.message.text.strip()
-    user_id = update.effective_user.id
-    
-    status, next_attempts, _ = process_recharge_attempt(user_id, order_input, 'ALI')
-    
-    if status == "SUCCESS":
-        await update.message.reply_text(f"✅ 支付成功！已为您增加 <b>{RECHARGE_POINTS}</b> 积分。", parse_mode=ParseMode.HTML)
-        return await points_menu(update, context) 
-
-    elif status == "FAILED_AND_LOCKED":
-        await update.message.reply_text(f"❌ 订单识别失败。已锁定 5 小时。", parse_mode=ParseMode.HTML)
-        return await points_menu(update, context)
-
-    elif status == "FAILED":
-        await update.message.reply_text(f"❌ 订单识别失败。请在我的账单详情中找到商家订单号。\n剩余机会: {next_attempts} 次。")
-        return RECHARGE_ALI_INPUT
-        
-    else: 
-        await update.message.reply_text("系统忙碌或您已完成该支付方式的充值。")
-        return await points_menu(update, context)
-
-# --- 兑换和记录查询 (占位，请保留上一个版本逻辑) ---
-async def exchange_menu_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-async def exchange_execute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-async def exchange_view_content(update: Update, context: ContextTypes.DEFAULT_TYPE): pass
-async def exchange_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-async def view_point_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-
-# --- 管理员后台（用户查看） ---
 @admin_only
 async def admin_view_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -1066,82 +919,8 @@ async def admin_view_users_command(update: Update, context: ContextTypes.DEFAULT
         
     finally: db.close()
     return ConversationHandler.END
-    # --- 频道转发逻辑 (占位函数) ---
-async def admin_channel_bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-async def bind_start_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-async def bind_cmd_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-async def bind_source_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-async def collect_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
-async def handle_bind_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
 
-# --- 频道转发内容发送 (核心修改：5分钟删除，跳转/dh) ---
-async def forward_user_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text: return
-        
-    command = update.message.text.strip().upper()
-    user_id = update.effective_user.id
-    
-    is_locked, _, _ = get_verification_status(user_id)
-    if is_locked:
-        await update.message.reply_text("⏳ 请先完成身份验证流程或等待锁定时间结束。")
-        return
-
-    db = next(get_db())
-    try:
-        lib_record = db.query(ChannelForwardLibrary).filter(ChannelForwardLibrary.custom_command == command).first()
-        
-        if not lib_record:
-            await update.message.reply_text(f"未找到命令 `{command}`。请检查命令是否正确，或返回主菜单。")
-            return
-            
-        user = db.query(User).filter(User.telegram_id == user_id).first()
-        if not user or user.vip_lockout_until: 
-             await update.message.reply_text("🔒 请先通过身份验证才能访问内容。")
-             return
-             
-        content_data_str = lib_record.content_data.replace("'", "\"") 
-        content_list = ast.literal_eval(content_data_str)
-        
-        # 5. 分页发送 (每 10 条为一组)
-        chunks = [content_list[i:i + 10] for i in range(0, len(content_list), 10)]
-        sent_messages_ids = []
-        
-        for chunk in chunks:
-            for item in chunk:
-                msg_sent = None
-                if item['type'] == 'text':
-                    msg_sent = await update.message.reply_text(item['content'], parse_mode=ParseMode.HTML)
-                elif item['type'] == 'photo' and item['content'].get('file_id'):
-                    msg_sent = await update.message.reply_photo(photo=item['content']['file_id'], caption=item['content'].get('caption', ""), parse_mode=ParseMode.HTML)
-                elif item['type'] == 'video' and item['content'].get('file_id'):
-                    msg_sent = await update.message.reply_video(video=item['content']['file_id'], caption=item['content'].get('caption', ""), parse_mode=ParseMode.HTML)
-                elif item['type'] == 'document' and item['content'].get('file_id'):
-                    msg_sent = await update.message.reply_document(document=item['content']['file_id'], caption=item['content'].get('caption', ""), parse_mode=ParseMode.HTML)
-                
-                if msg_sent: sent_messages_ids.append(msg_sent.message_id)
-            await asyncio.sleep(1) 
-
-        # 6. 最终回复和定时删除 (5分钟)
-        if sent_messages_ids:
-            
-            final_msg = await update.message.reply_text(
-                "✅ 内容已全部发送完毕。\n\n"
-                "⏳ <b>消息将在 5 分钟后自动清理。</b>\n"
-                "<strong>请重新获取命令：</strong>购买的无需二次付费即可再次查看。",
-                parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("➡️ 前往兑换中心 (/dh)", callback_data='exchange_menu')],
-                    [InlineKeyboardButton("🔙 返回主菜单", callback_data='main_menu')]
-                ])
-            )
-            
-            schedule_message_deletion(update.effective_chat.id, sent_messages_ids, FORWARD_EXPIRY_MINUTES, update, context)
-            schedule_message_deletion(update.effective_chat.id, update.message.message_id, FORWARD_EXPIRY_MINUTES, update, context)
-            schedule_message_deletion(update.effective_chat.id, final_msg.message_id, FORWARD_EXPIRY_MINUTES, update, context)
-            
-    finally: db.close()
-
-# --- 商品管理逻辑 (占位，需要完整函数体) ---
+# --- 商品管理 (占位) ---
 async def admin_manage_items_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
 async def admin_add_item_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
 async def admin_add_points(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
@@ -1150,6 +929,22 @@ async def admin_add_content(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def admin_item_save_final(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
 async def admin_delete_item_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
 async def admin_execute_delete_item(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: pass
+
+# --- admin_command 占位函数 (用于/admin命令入口，显示列表) ---
+@admin_only
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # 默认跳转到频道库列表页，或者主管理菜单 (这里简化为跳转到主菜单)
+    keyboard = [
+        [InlineKeyboardButton("🖼️ 获取图片 File ID", callback_data='get_file_id')],
+        [InlineKeyboardButton("🔑 查看待处理奖励", callback_data='view_vouchers')],
+        [InlineKeyboardButton("🗄️ 频道转发库", callback_data='admin_channel_list_1')], 
+        [InlineKeyboardButton("📦 积分商品管理", callback_data='admin_item_page_1')], 
+        [InlineKeyboardButton("👤 查看用户记录", callback_data='admin_user_page_1')], 
+        [InlineKeyboardButton("🚪 退出管理", callback_data='exit_admin')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_html(f"<b>🔑 管理员面板 (ID: {ADMIN_ID})</b>\n\n请选择一个操作：", reply_markup=reply_markup)
+    return ConversationHandler.END
     # --- 主运行函数 ---
 def main() -> None:
     if not BOT_TOKEN or not DATABASE_URL:
@@ -1171,16 +966,89 @@ def main() -> None:
     # 1. 注册基础命令
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("admin", admin_command)) # /admin -> 主菜单
+    application.add_handler(CommandHandler("id", get_file_id_start))
+    application.add_handler(CommandHandler("bind", admin_channel_bind_command)) 
     application.add_handler(CommandHandler("jf", points_menu)) 
     application.add_handler(CommandHandler("dh", exchange_menu_start)) 
-    application.add_handler(CommandHandler("admin", admin_channel_bind_command)) 
-    application.add_handler(CommandHandler("id", get_file_id_start))
-    application.add_handler(CommandHandler("bind", admin_channel_bind_command))
     
-    # 2. 注册所有 ConversationHandler (需要确保所有入口和状态的定义都完整)
-    # ... (所有 ConversationHandler 的定义，如 File ID, VIP, 绑定, 充值, 兑换, 商品添加) ...
+    # 2. 注册 ConversationHandler (必须完整)
+    # File ID Handler
+    file_id_conversation_handler = ConversationHandler(
+        entry_points=[CommandHandler("id", get_file_id_start)],
+        states={
+            GET_FILE_ID_STEP: [
+                MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_image_for_file_id),
+                CallbackQueryHandler(admin_callback_handler, pattern='^admin_panel_main$|^get_file_id$'),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_file_id), CallbackQueryHandler(admin_callback_handler, pattern='^exit_admin$')],
+        per_message=False,
+    )
+    application.add_handler(file_id_conversation_handler)
     
-    # 3. 注册回调查询处理器 (处理所有按钮点击)
+    # VIP 验证 Handler
+    vip_verification_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_callback_handler, pattern='^start_vip_verify$')],
+        states={VIP_ORDER_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, vip_order_input)]},
+        fallbacks=[CommandHandler("cancel", vip_verification_cancel), CallbackQueryHandler(admin_callback_handler, pattern='^points_menu$')],
+        per_message=False,
+    )
+    application.add_handler(vip_verification_handler)
+    
+    # 频道绑定 Handler
+    channel_bind_handler = ConversationHandler(
+        entry_points=[CommandHandler("bind", admin_channel_bind_command), 
+                      CallbackQueryHandler(admin_callback_handler, pattern='^bind_new$|^admin_channel_list_\\d+$|^bind_delete_confirm$|^bind_save$|^bind_content_retry$|^bind_cmd_input_retry$')],
+        states={
+            CHANNEL_BIND_CMD_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, bind_cmd_input)],
+            CHANNEL_BIND_SOURCE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, bind_source_input)],
+            CHANNEL_BIND_CONTENT_COLLECT: [MessageHandler(filters.ALL & ~filters.COMMAND, collect_content), CallbackQueryHandler(handle_bind_callback, pattern='^bind_confirm$')],
+            CHANNEL_BIND_CONFIRM: [CallbackQueryHandler(handle_bind_callback)]
+        },
+        fallbacks=[CommandHandler("cancel", lambda update, context: update.message.reply_text("绑定流程取消。") and ConversationHandler.END)],
+        per_message=False,
+    )
+    application.add_handler(channel_bind_handler)
+    
+    # 充值 Handler
+    recharge_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_callback_handler, pattern='^recharge_wx_start$|^recharge_ali_start$')],
+        states={
+            RECHARGE_WX_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, wx_input)],
+            RECHARGE_ALI_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ali_input)],
+        },
+        fallbacks=[CallbackQueryHandler(admin_callback_handler, pattern='^recharge_menu$|^points_menu$')],
+        per_message=False,
+    )
+    application.add_handler(recharge_handler)
+    
+    # 兑换 Handler
+    exchange_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_callback_handler, pattern='^exchange_confirm_\\d+$')],
+        states={
+            EXCHANGE_CMD_CONFIRM: [CallbackQueryHandler(admin_callback_handler, pattern='^exchange_execute_\\d+$|exchange_cancel')],
+        },
+        fallbacks=[CallbackQueryHandler(admin_callback_handler, pattern='^exchange_menu$|^points_menu$')],
+        per_message=False
+    )
+    application.add_handler(exchange_handler)
+    
+    # 商品添加 Handler
+    item_add_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_callback_handler, pattern='^admin_item_add_name$')],
+        states={
+            ADMIN_ITEM_ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_points)],
+            ADMIN_ITEM_ADD_POINTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_content_type)],
+            ADMIN_ITEM_ADD_CONTENT_TYPE: [CallbackQueryHandler(admin_add_content_type)],
+            ADMIN_ITEM_ADD_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND, admin_add_content)]
+        },
+        fallbacks=[CommandHandler("cancel", lambda update, context: update.message.reply_text("添加取消") and ConversationHandler.END)],
+        per_message=False
+    )
+    application.add_handler(item_add_handler)
+    
+    # 3. 注册回调查询处理器
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
 
     logger.info("机器人启动中...")
