@@ -1,5 +1,4 @@
 python-telegram-bot
-sqlalchemy
-psycopg2-binary
-Flask
-APScheduler # ‼️ 新增：用于持久化定时任务
+python-dotenv
+psycopg2-binary  # 确保您在bot.py中使用了DB操作，虽然现在主要用于占位
+requests         # <-- 必须添加这一行！
