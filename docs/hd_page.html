@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>开业活动 - 观看视频得积分</title>
+    <!-- 引入官方 SDK -->
+    <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
+    <style>
+        body{font-family:Arial,sans-serif;text-align:center;margin-top:40px;}
+        button{font-size:18px;padding:10px 20px;margin-top:15px;background:#4CAF50;color:#fff;border:none;border-radius:4px;cursor:pointer;}
+        .counter{margin-top:10px;font-weight:bold;}
+        .note{margin-top:15px;color:#555;}
+    </style>
+</head>
+<body>
+    <h2>🎉 开业特惠·观看视频得积分</h2>
+    <p>点击下方按钮观看 rewarded 广告，观看至结束后即可获得积分奖励。</p>
+    <button id="watchBtn">开始观看</button>
+    <div class="counter" id="counter">观看次数：0/3</div>
+    <p><a href="/mid?target=1" style="display:inline-block;margin-top:10px;">获取密钥</a></p>
+    <div class="note">
+        每天可通过夸克网盘获取密钥。页面会 3 秒后自动跳转至对应的密钥链接，请耐心等待。
+    </div>
+
+    <script>
+        const counterEl=document.getElementById('counter');
+        const btn=document.getElementById('watchBtn');
+        let completed=0;
+        function updateCounter(){counterEl.textContent='观看次数：'+completed+'/3';}
+        updateCounter();
+
+        btn.onclick=()=>{ 
+            if(completed>=3){
+                alert('每天最多可观看 3 次，已达上限！');
+                return;
+            }
+            show_10489957('pop').then(()=>{ 
+                fetch(`/reward?user_id=${window.Telegram?.WebApp?.initDataUnsafe?.user?.id}`)
+                    .then(r=>r.json())
+                    .then(d=>{
+                        if(d.success){
+                            completed++;
+                            updateCounter();
+                            alert('✅ 观看完成，已获得积分！');
+                        }else{
+                            alert('❌ 观看过程中出现错误，请重新尝试。');
+                        }
+                    })
+                    .catch(()=>{alert('❌ 请求出错，请稍后重试。');});
+            }).catch(()=>{alert('广告加载失败，请检查网络或稍后重试。');});
+        };
+    </script>
+</body>
+</html>
