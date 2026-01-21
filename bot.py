@@ -311,11 +311,12 @@ async def serve_hd_page(request: Request) -> str:
       1️⃣ 观看视频获取积分（计数 0/3，每天 0:00 重置）
       2️⃣ 查看说明（计数 0/2，每天 10:00 重置）
     """
-    # 读取当前计数并返回给前端（后面会用到）
+    # ---------- 读取当前计数，供前端展示 ----------
     async def _fetch_counters():
         uid = request.headers.get("X-Telegram-User-Id")
         uid = int(uid) if uid else 0
         async with AsyncSessionLocal() as session:
+            # 视频观看记录
             video_row = await session.execute(
                 """
                 SELECT COUNT(*) FROM video_view_usage
@@ -325,6 +326,7 @@ async def serve_hd_page(request: Request) -> str:
             )
             video_used = video_row.scalar() or 0
 
+            # 说明页面点击记录
             explain_row = await session.execute(
                 """
                 SELECT COUNT(*) FROM explanation_view_usage
@@ -335,71 +337,87 @@ async def serve_hd_page(request: Request) -> str:
             explain_used = explain_row.scalar() or 0
         return {"video_used": video_used, "explain_used": explain_used}
 
-    # 前端会轮询 /current_counters 获取最新计数
-    # 下面的 HTML 里只需要把变量插入到字符串里，使用普通字符串即可
-    html = f'''
-    <!DOCTYPE html>
-    <html lang="zh-CN">
-    <head>
-      <meta charset="UTF-8"><title>活动中心 – 开业庆典</title>
-      <style>
-        body{{font-family:Arial,sans-serif;text-align:center;margin-top:30px;}}
-        .box{{display:inline-block;padding:12px 20px;margin:10px;border:1px solid #888;
-               border-radius:6px;background:#f9f9f9;}}
-        .counter{{font-weight:bold;color:#d00;}}
-        button{{padding:10px 18px;margin:5px;cursor:pointer;}}
-      </style>
-    </head>
-    <body>
-      <div class="box">
-        观看视频可获得积分，每日最多 3 次，已观看 <span id="videoCounter"
-        class="counter">(0/3)</span> 次。&#13;
-        说明页面每日可点击 2 次，已点击 <span id="explainCounter"
-        class="counter">(0/2)</span> 次。
-      </div>
+    # ---------- 取出管理员绑定的链接（用于按钮二） ----------
+    async def _fetch_links():
+        async with AsyncSessionLocal() as session:
+            rows = await session.execute(
+                "SELECT link_type, url FROM admin_links WHERE is_active = TRUE"
+            )
+            return {row[0]: row[1] for row in rows}
 
-      <div class="box"><button id="btn_video">按钮一：观看视频获取积分</button></div>
-      <div class="box"><button id="btn_explain">按钮二：查看说明</button></div>
+    # ---------- 先把后端返回的 JSON 交给前端 ----------
+    # 这里不再使用 f‑string 包裹 JavaScript，直接写完整的 HTML/JS
+    html = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><title>活动中心 – 开业庆典</title>
+  <style>
+    body{{font-family:Arial,sans-serif;text-align:center;margin-top:30px;}}
+    .box{{display:inline-block;padding:12px 20px;margin:10px;border:1px solid #888;
+           border-radius:6px;background:#f9f9f9;}}
+    .counter{{font-weight:bold;color:#d00;}}
+    button{{padding:10px 18px;margin:5px;cursor:pointer;}}
+  </style>
+</head>
+<body>
+  <div class="box">
+    观看视频可获得积分，每日最多 3 次，已观看 <span id="videoCounter"
+    class="counter">(0/3)</span> 次。&#13;
+    说明页面每日可点击 2 次，已点击 <span id="explainCounter"
+    class="counter">(0/2)</span> 次。
+  </div>
 
-      <script>
-        // 读取计数
-        async function loadCounters(){
-          const r = await fetch('/current_counters');
-          const d = await r.json();
-          document.getElementById('videoCounter').innerText = `$(d.video_used)/(3)`;
-          document.getElementById('explainCounter').innerText = `$(d.explain_used)/(2)`;
-        }
-        loadCounters();
+  <div class="box"><button id="btn_video">按钮一：观看视频获取积分</button></div>
+  <div class="box"><button id="btn_explain">按钮二：查看说明</button></div>
 
-        // 读取管理员绑定的链接（用于按钮二）
-        async function fetchLinks(){
-          const r = await fetch('/active_admin_links');
-          const d = await r.json();
-          return d;
-        }
+  <script>
+    // 读取计数
+    async function loadCounters(){
+      const r = await fetch('/current_counters');
+      const d = await r.json();
+      document.getElementById('videoCounter').innerText = `$(d.video_used)/(3)`;
+      document.getElementById('explainCounter').innerText = `$(d.explain_used)/(2)`;
+    }
+    loadCounters();
 
-        // 按钮一 – 观看视频（3 秒后打开奖励视频）
-        document.getElementById('btn_video').onclick = async () => {{
-          const used = await fetch('/current_counters').then(r=>r.json()).then(d=>d.video_used);
-          if (used >= 3){
-            alert('已达今日观看上限，请明天再来');
-            return;
-          }
-          setTimeout(()=>{{window.location.href = '{AD_AD_URL}';}}, 3000);
-        }};
+    // 读取管理员绑定的链接（用于按钮二）
+    async function fetchLinks(){
+      const r = await fetch('/active_admin_links');
+      const d = await r.json();
+      return d;
+    }
 
-        // 按钮二 – 查看说明（3 秒后打开说明页）
-        document.getElementById('btn_explain').onclick = async () => {{
-          const links = await fetchLinks();
-          if (!links.key1 || !links.key2){
-            alert('请等待管理员更换新密钥链接');
-            return;
-          }
-          setTimeout(()=>{{window.location.href = '/explanation_page.html';}}, 3000);
-        }};
-      </script>
-    </body></html>
-    '''
+    // 按钮一 – 观看视频（3 秒后打开奖励视频）
+    document.getElementById('btn_video').onclick = async () => {{
+      const used = await fetch('/current_counters').then(r=>r.json()).then(d=>d.video_used);
+      if (used >= 3){
+        alert('已达今日观看上限，请明天再来');
+        return;
+      }
+      // 把后端的奖励视频链接插入进来
+      setTimeout(()=>{{window.location.href = '{AD_AD_URL}';}}, 3000);
+    }};
+
+    // 按钮二 – 查看说明（3 秒后打开说明页）
+    document.getElementById('btn_explain').onclick = async () => {{
+      const links = await fetchLinks();
+      if (!links.key1 || !links.key2){
+        alert('请等待管理员更换新密钥链接');
+        return;
+      }
+      // 3 秒后打开说明页面
+      setTimeout(()=>{{window.location.href = '/explanation_page.html';}}, 3000);
+    }};
+  </script>
+</body>
+</html>""".format(
+        AD_AD_URL=AD_AD_URL   # 这里只有一次替换，且不会产生嵌套的 f‑string
+    )
+
+    # ---------- 把后端的实时计数注入页面 ----------
+    # 为了让前端能够实时获取updated计数，我们再把返回的 JSON 接口暴露出去，
+    # 前端会自行请求 /current_counters。这里不需要在 HTML 里再写 Python 变量。
+    # 只要上面的占位符 `'{AD_AD_URL}'` 已被安全替换，返回即可。
     return html
 
 
