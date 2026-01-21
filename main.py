@@ -1,7 +1,7 @@
 # ------------------------------------------------------------
 # main.py
 # ------------------------------------------------------------
-# 该文件实现：
+# 功能：
 #   1️⃣ Telegram Bot（/start、/admin、File‑ID、积分、moontag 等）
 #   2️⃣ FastAPI 服务器（提供 HTML、广告回调、密钥验证等）
 #   3️⃣ 每日自动生成两个 10 位随机密钥、使用计数与重置
@@ -38,8 +38,8 @@ from telegram.ext import (
 )
 
 # ------------------- 常量 -------------------
-# 必须在平台环境变量中提供以下两个
-TELEGRAM_BOT_TOKEN: str = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")   # ← 替换为真实的 Bot Token
+# 必须在平台环境变量中提供这些
+TELEGRAM_BOT_TOKEN: str = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")   # ← 替换为实际 Bot Token
 BEAJING_TIMEZONE = pytz.timezone("Asia/Shanghai")
 DB_FILE = "data.sqlite"
 
@@ -79,7 +79,7 @@ async def ensure_schema() -> None:
     """
     如果表不存在则创建全部表。整个函数只会在程序启动时执行一次。
     """
-    async with await get_db_connection() as conn:          # 只需一次 await
+    async with await get_db_connection() as conn:          # 只需要一次 await
         # points 表（存储积分余额）
         await conn.execute(
             f"""
@@ -243,7 +243,7 @@ async def reset_daily_key_records() -> None:
             """,
             (key1, key2, now_str),
         )
-        # 把 key_usage 表中的两条记录的 `used` 设为 0（未使用）
+        # 把 key_usage 表中的两条记录的 `used` 标记为 0（未使用）
         await conn.execute(f"INSERT OR REPLACE INTO {TABLE_KEY_USAGE} (key_id, used) VALUES (1, 0);")
         await conn.execute(f"INSERT OR REPLACE INTO {TABLE_KEY_USAGE} (key_id, used) VALUES (2, 0);")
         await conn.commit()
@@ -593,7 +593,7 @@ async def build_telegram_application() -> Application:
         await update.message.reply_text(
             "密钥一绑定完成，请继续提供 **密钥二** 的链接："
         )
-        # 实际项目里可以继续等待第二个链接的消息，这里只作示例。
+        # 实际项目里可以继续等待第二个链接的消息，这里仅作示例。
 
     app_tg.add_handler(CommandHandler("my", cmd_my))
     app_tg.add_handler(CommandHandler("my无限次", cmd_set_new_keys))
