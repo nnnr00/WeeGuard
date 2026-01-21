@@ -114,12 +114,11 @@ admin_usage = Table(
 # ------------------- 引擎 -------------------
 # ⚠️ 必须使用 “+asyncpg” 的 URL，否则会报 “psycopg2 is not async”
 engine = create_async_engine(
-    DATABASE_URL,
+    DATABASE_URL,          # ← 这里必须是 `postgresql+asyncpg://…` 形式且 **不要带查询参数**
     echo=False,
     future=True,
     echo_pool=False,
 )
-
 # --------------------------------------------------------------
 # 3️⃣ 数据库初始化（首次启动时创建表，之后永不删除）
 # --------------------------------------------------------------
