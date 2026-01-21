@@ -5,16 +5,10 @@
   <title>密钥获取说明</title>
   <style>
     body{font-family:Arial,sans-serif;text-align:center;margin-top:30px;}
-    .box{
-      display:inline-block;
-      padding:12px 20px;
-      margin:10px;
-      border:1px solid #888;
-      border-radius:6px;
-      background:#f9f9f9;
-    }
+    .box{display:inline-block;padding:12px 20px;margin:10px;
+         border:1px solid #888;border-radius:6px;background:#f9f9f9;}
     .counter{font-weight:bold;color:#d00;}
-  </style>
+</style>
 </head>
 <body>
   <div class="box">
@@ -23,22 +17,20 @@
     2️⃣ 将文件下载后保存到夸克网盘。<br>
     3️⃣ 为文件重新命名（建议使用英文或数字），<br>
        然后复制 **新文件名** 并在此页面粘贴发送给机器人。<br>
-    4️⃣ 机器人会返回积分（首次 8，第二次 6），并在成功后给出提示。
-  </div>
+    4️⃣ 机器人会返回积分（第一次 8 积分，第二次 6 积分），并给出提示。
+</div>
 
-  <div class="counter">（已使用 0/2 次今日）</div>
+<div class="counter">（已使用 0/2 次今日）</div>
 
-  <script>
-    // 更新计数
-    async function refreshCounter(){
-      const r = await fetch('/explanation_counter');
-      const d = await r.json();
-      document.querySelector('.counter').innerText = `已使用 ${d.used}/2 次今日`;
-    }
-    refreshCounter();
+<script>
+  async function refreshCounter(){
+    const response = await fetch('/explanation_counter');
+    const data = await response.json();
+    document.querySelector('.counter').innerText = `已使用 ${data.used}/2 次今日`;
+  }
+  refreshCounter();
 
-    // 5 秒后自动返回活动中心
-    setTimeout(()=>{window.location.href = '/activity_center.html';}, 5000);
-  </script>
-</body>
-</html>
+  // 5 秒后自動返回活動中心
+  setTimeout(()=>{window.location.href = '/activity_center.html';}, 5000);
+</script>
+</body></html>
