@@ -137,15 +137,14 @@ async def get_user_balance(user_id: int) -> int:
 
 async def add_points(user_id: int, points: int) -> None:
     """向用户积分表中加入 points 分。"""
-    async with await get_db_connection() as conn:
-        async with conn.execute(
-            f"""
-            INSERT OR REPLACE INTO {TABLE_POINTS} (user_id, balance)
-            VALUES (?, ?)
-            """,
-            (user_id, get_user_balance(user_id) + points),
-        )
-        await conn.commit()
+await conn.execute(
+    f"""
+    INSERT OR REPLACE INTO {TABLE_POINTS} (user_id, balance)
+    VALUES (?, ?);
+    """,
+    (user_id, get_user_balance(user_id) + points),
+)
+await conn.commit()
 
 
 async def increment_daily_ad_count(user_id: int) -> bool:
