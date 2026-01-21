@@ -1,624 +1,645 @@
+"""
+================= 配置区（请替换以下内容） =================
+
+1. 环境变量（Railway上设置）：
+   - BOT_TOKEN：你的Telegram机器人Token
+   - ADMIN_ID：管理员Telegram用户ID（数字）
+   - DATABASE_URL：Neon PostgreSQL数据库连接字符串
+
+2. 需要替换的内容：
+
+   - VIP群邀请链接（加群按钮链接）：
+     VIP_GROUP_LINK = "https://t.me/your_vip_group_link"
+
+   - 首页“开始验证”显示的两张File ID图片File ID（字符串列表）：
+     START_VERIFY_FILE_IDS = [
+         "file_id_1_for_homepage",  # 第一张图片File ID
+         "file_id_2_for_homepage"   # 第二张图片File ID
+     ]
+
+   - VIP说明页显示的File ID图片File ID（字符串）：
+     VIP_EXPLAIN_FILE_ID = "file_id_for_vip_explain"
+
+   - 订单号输入页显示的File ID图片File ID（字符串）：
+     ORDER_INPUT_FILE_ID = "file_id_for_order_input"
+
+   - moontag广告观看网页地址（GitHub Pages或你部署的网页地址）：
+     MOONTAG_AD_URL_BASE = "https://你的github用户名.github.io/你的仓库名/moontag.html"
+
+   - moontag按钮一直链：
+     MOONTAG_LINK_1 = "https://otieu.com/4/10489994"
+
+   - moontag按钮二直链（中转站）：
+     MOONTAG_LINK_2 = "https://otieu.com/4/10489998"
+
+   - 中转站密钥链接（用户打开获取密钥）：
+     SECRET_LINK_1 = "https://pan.quark.cn/s/c0cac0ff25a5"
+     SECRET_LINK_2 = "https://pan.quark.cn/s/b1dd3806ff65"
+
+   - 中转站按钮名称：
+     BUTTON_TWO_NAME = "🔑 密钥领取"
+
+   - 中转站每天最多领取次数：
+     MAX_SECRET_REDEEM = 2
+
+============================================================
+"""
+
+VIP_GROUP_LINK = "https://t.me/your_vip_group_link"
+
+START_VERIFY_FILE_IDS = [
+    "file_id_1_for_homepage",
+    "file_id_2_for_homepage"
+]
+
+VIP_EXPLAIN_FILE_ID = "file_id_for_vip_explain"
+
+ORDER_INPUT_FILE_ID = "file_id_for_order_input"
+
+MOONTAG_AD_URL_BASE = "https://你的github用户名.github.io/你的仓库名/moontag.html"
+
+MOONTAG_LINK_1 = "https://otieu.com/4/10489994"
+MOONTAG_LINK_2 = "https://otieu.com/4/10489998"
+
+SECRET_LINK_1 = "https://pan.quark.cn/s/c0cac0ff25a5"
+SECRET_LINK_2 = "https://pan.quark.cn/s/b1dd3806ff65"
+
+BUTTON_TWO_NAME = "🔑 密钥领取"
+
+MAX_SECRET_REDEEM = 2
+
 import os
 import logging
-from datetime import datetime, timedelta
 import random
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-)
+import re
+import string
+from datetime import datetime, date, timedelta, timezone
 
-# 配置日志
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMedia
 )
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler,
+    MessageHandler, filters, ConversationHandler
+)
+import asyncpg
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 环境变量
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-DATABASE_URL = os.getenv('DATABASE_URL')
-AD_PAGE_URL = os.getenv('AD_PAGE_URL', 'https://your-github-pages.github.io/ad-page.html')
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-# 数据库连接
-def get_db_connection():
-    """获取数据库连接"""
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+WAITING_IMAGE = 1
+CONFIRM_DELETE = 2
 
-def table_exists(cur, table_name):
-    """检查表是否存在"""
-    cur.execute("""
-        SELECT EXISTS (
-            SELECT FROM information_schema.tables 
-            WHERE table_schema = 'public' 
-            AND table_name = %s
-        );
-    """, (table_name,))
-    return cur.fetchone()['exists']
+VERIFY_START, VERIFY_WAIT_ORDER = range(2)
 
-def column_exists(cur, table_name, column_name):
-    """检查列是否存在"""
-    cur.execute("""
-        SELECT EXISTS (
-            SELECT FROM information_schema.columns 
-            WHERE table_schema = 'public' 
-            AND table_name = %s 
-            AND column_name = %s
-        );
-    """, (table_name, column_name))
-    return cur.fetchone()['exists']
+BJ_TZ = timezone(timedelta(hours=8))
 
-def init_database():
-    """智能初始化数据库（完全保护现有数据）"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        logger.info("🔍 开始检查数据库结构...")
-        
-        # ==================== USERS 表 ====================
-        if not table_exists(cur, 'users'):
-            logger.info("📝 创建 users 表...")
-            cur.execute('''
-                CREATE TABLE users (
-                    user_id BIGINT PRIMARY KEY,
-                    username VARCHAR(255),
-                    first_name VARCHAR(255),
-                    points INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            conn.commit()
-            logger.info("✅ users 表创建成功")
-        else:
-            logger.info("✅ users 表已存在，保持原有数据")
-            
-            # 检查并添加缺失的列（不影响现有数据）
-            if not column_exists(cur, 'users', 'username'):
-                cur.execute('ALTER TABLE users ADD COLUMN username VARCHAR(255)')
-                conn.commit()
-                logger.info("➕ 添加 username 列")
-            
-            if not column_exists(cur, 'users', 'first_name'):
-                cur.execute('ALTER TABLE users ADD COLUMN first_name VARCHAR(255)')
-                conn.commit()
-                logger.info("➕ 添加 first_name 列")
-            
-            if not column_exists(cur, 'users', 'points'):
-                cur.execute('ALTER TABLE users ADD COLUMN points INTEGER DEFAULT 0')
-                conn.commit()
-                logger.info("➕ 添加 points 列")
-            
-            if not column_exists(cur, 'users', 'created_at'):
-                cur.execute('ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
-                conn.commit()
-                logger.info("➕ 添加 created_at 列")
-            
-            if not column_exists(cur, 'users', 'updated_at'):
-                cur.execute('ALTER TABLE users ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
-                conn.commit()
-                logger.info("➕ 添加 updated_at 列")
-        
-        # ==================== AD_VIEWS 表 ====================
-        if not table_exists(cur, 'ad_views'):
-            logger.info("📝 创建 ad_views 表...")
-            cur.execute('''
-                CREATE TABLE ad_views (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    view_date DATE NOT NULL,
-                    view_count INTEGER DEFAULT 0,
-                    points_earned INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(user_id, view_date)
-                )
-            ''')
-            conn.commit()
-            logger.info("✅ ad_views 表创建成功")
-        else:
-            logger.info("✅ ad_views 表已存在，保持原有数据")
-            
-            # 检查并添加缺失的列
-            if not column_exists(cur, 'ad_views', 'view_count'):
-                cur.execute('ALTER TABLE ad_views ADD COLUMN view_count INTEGER DEFAULT 0')
-                conn.commit()
-                logger.info("➕ 添加 view_count 列")
-            
-            if not column_exists(cur, 'ad_views', 'points_earned'):
-                cur.execute('ALTER TABLE ad_views ADD COLUMN points_earned INTEGER DEFAULT 0')
-                conn.commit()
-                logger.info("➕ 添加 points_earned 列")
-            
-            if not column_exists(cur, 'ad_views', 'created_at'):
-                cur.execute('ALTER TABLE ad_views ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
-                conn.commit()
-                logger.info("➕ 添加 created_at 列")
-        
-        # ==================== VERIFICATIONS 表 ====================
-        if not table_exists(cur, 'verifications'):
-            logger.info("📝 创建 verifications 表...")
-            cur.execute('''
-                CREATE TABLE verifications (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    verification_code VARCHAR(100) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    is_used BOOLEAN DEFAULT FALSE
-                )
-            ''')
-            conn.commit()
-            logger.info("✅ verifications 表创建成功")
-        else:
-            logger.info("✅ verifications 表已存在，保持原有数据")
-            
-            # 检查并添加缺失的列
-            if not column_exists(cur, 'verifications', 'is_used'):
-                cur.execute('ALTER TABLE verifications ADD COLUMN is_used BOOLEAN DEFAULT FALSE')
-                conn.commit()
-                logger.info("➕ 添加 is_used 列")
-        
-        # ==================== 创建索引（不影响数据）====================
-        logger.info("🔧 优化索引...")
-        
-        indexes = [
-            ('idx_ad_views_user_date', 'ad_views', '(user_id, view_date)'),
-            ('idx_verifications_user', 'verifications', '(user_id)'),
-            ('idx_verifications_code', 'verifications', '(verification_code)'),
-        ]
-        
-        for idx_name, table_name, columns in indexes:
-            try:
-                cur.execute(f'CREATE INDEX IF NOT EXISTS {idx_name} ON {table_name} {columns}')
-                conn.commit()
-            except Exception as e:
-                logger.warning(f"索引 {idx_name} 跳过: {e}")
-                conn.rollback()
-        
-        # ==================== 统计现有数据 ====================
-        cur.execute('SELECT COUNT(*) as count FROM users')
-        user_count = cur.fetchone()['count']
-        
-        cur.execute('SELECT COUNT(*) as count FROM ad_views')
-        ad_count = cur.fetchone()['count']
-        
-        logger.info(f"""
-╔══════════════════════════════════════╗
-║   🎉 数据库初始化完成                ║
-╠══════════════════════════════════════╣
-║   📊 现有用户数: {user_count:<20} ║
-║   📺 广告观看记录: {ad_count:<18} ║
-║   ✅ 所有数据完整保留                ║
-╚══════════════════════════════════════╝
+db_pool = None
+
+async def init_db_pool():
+    global db_pool
+    db_pool = await asyncpg.create_pool(dsn=DATABASE_URL)
+    async with db_pool.acquire() as conn:
+        # 保留原有file_ids表
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS file_ids (
+            id SERIAL PRIMARY KEY,
+            file_id TEXT NOT NULL,
+            added_by BIGINT NOT NULL,
+            added_at TIMESTAMP DEFAULT NOW()
+        )
         """)
-        
-    except Exception as e:
-        logger.error(f"❌ 数据库初始化错误: {e}")
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        conn.close()
-
-# ==================== 数据库操作函数 ====================
-
-def get_or_create_user(user_id: int, username: str = None, first_name: str = None):
-    """获取或创建用户"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        cur.execute('SELECT * FROM users WHERE user_id = %s', (user_id,))
-        user = cur.fetchone()
-        
-        if not user:
-            cur.execute(
-                'INSERT INTO users (user_id, username, first_name, points) VALUES (%s, %s, %s, 0) RETURNING *',
-                (user_id, username, first_name)
-            )
-            user = cur.fetchone()
-            conn.commit()
-            logger.info(f"新用户注册: {user_id} ({first_name})")
-        
-        return user
-    except Exception as e:
-        logger.error(f"获取用户失败: {e}")
-        conn.rollback()
-        return None
-    finally:
-        cur.close()
-        conn.close()
-
-def get_user_points(user_id: int) -> int:
-    """获取用户积分"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        cur.execute('SELECT points FROM users WHERE user_id = %s', (user_id,))
-        result = cur.fetchone()
-        return result['points'] if result else 0
-    except Exception as e:
-        logger.error(f"获取积分失败: {e}")
-        return 0
-    finally:
-        cur.close()
-        conn.close()
-
-def add_points(user_id: int, points: int):
-    """添加积分"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        cur.execute(
-            'UPDATE users SET points = points + %s, updated_at = CURRENT_TIMESTAMP WHERE user_id = %s',
-            (points, user_id)
+        # 积分表
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_points (
+            user_id BIGINT PRIMARY KEY,
+            points INTEGER NOT NULL DEFAULT 0,
+            last_sign_date DATE
         )
-        conn.commit()
-        logger.info(f"用户 {user_id} 获得 {points} 积分")
-    except Exception as e:
-        logger.error(f"添加积分失败: {e}")
-        conn.rollback()
-    finally:
-        cur.close()
-        conn.close()
-
-def get_today_ad_views(user_id: int) -> int:
-    """获取今日观看次数"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        today = datetime.now().date()
-        cur.execute(
-            'SELECT view_count FROM ad_views WHERE user_id = %s AND view_date = %s',
-            (user_id, today)
+        """)
+        # moontag广告观看次数表
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS moontag_ad (
+            user_id BIGINT PRIMARY KEY,
+            ad_date DATE,
+            watch_count INTEGER NOT NULL DEFAULT 0
         )
-        result = cur.fetchone()
-        return result['view_count'] if result else 0
-    except Exception as e:
-        logger.error(f"获取观看次数失败: {e}")
-        return 0
-    finally:
-        cur.close()
-        conn.close()
-
-def record_ad_view(user_id: int) -> dict:
-    """记录广告观看"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        today = datetime.now().date()
-        view_count = get_today_ad_views(user_id)
-        
-        if view_count >= 3:
-            return {'success': False, 'message': '今日观看次数已达上限'}
-        
-        # 计算积分
-        if view_count == 0:
-            points_earned = 10
-        elif view_count == 1:
-            points_earned = 6
-        else:
-            points_earned = random.randint(3, 10)
-        
-        # 使用 PostgreSQL 的 UPSERT
-        cur.execute('''
-            INSERT INTO ad_views (user_id, view_date, view_count, points_earned)
-            VALUES (%s, %s, 1, %s)
-            ON CONFLICT (user_id, view_date)
-            DO UPDATE SET 
-                view_count = ad_views.view_count + 1,
-                points_earned = ad_views.points_earned + %s
-        ''', (user_id, today, points_earned, points_earned))
-        
-        conn.commit()
-        
-        # 添加积分到用户账户
-        add_points(user_id, points_earned)
-        
-        logger.info(f"✅ 用户 {user_id} 第 {view_count + 1} 次观看，获得 {points_earned} 积分")
-        
-        return {
-            'success': True,
-            'points_earned': points_earned,
-            'view_count': view_count + 1,
-            'remaining_views': 2 - view_count
-        }
-    except Exception as e:
-        logger.error(f"记录观看失败: {e}")
-        conn.rollback()
-        return {'success': False, 'message': '系统错误，请稍后重试'}
-    finally:
-        cur.close()
-        conn.close()
-
-def create_verification_code(user_id: int) -> str:
-    """创建验证码"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        code = f"{user_id}_{random.randint(100000, 999999)}_{int(datetime.now().timestamp())}"
-        
-        cur.execute(
-            'INSERT INTO verifications (user_id, verification_code, is_used) VALUES (%s, %s, FALSE)',
-            (user_id, code)
+        """)
+        # 验证失败次数和禁用时间表
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS verification_status (
+            user_id BIGINT PRIMARY KEY,
+            fail_count INTEGER NOT NULL DEFAULT 0,
+            disabled_until TIMESTAMP
         )
-        conn.commit()
-        
-        logger.info(f"为用户 {user_id} 创建验证码")
-        return code
-    except Exception as e:
-        logger.error(f"创建验证码失败: {e}")
-        conn.rollback()
-        return None
-    finally:
-        cur.close()
-        conn.close()
+        """)
+        # 中转站密钥表
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS daily_secrets (
+            id SERIAL PRIMARY KEY,
+            secret1 TEXT,
+            secret2 TEXT,
+            secret1_link TEXT,
+            secret2_link TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+        """)
+        # 用户密钥领取记录表
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_secret_redeem (
+            user_id BIGINT PRIMARY KEY,
+            redeem1 BOOLEAN DEFAULT FALSE,
+            redeem2 BOOLEAN DEFAULT FALSE,
+            last_redeem_date DATE
+        )
+        """)
 
-def verify_code(user_id: int, code: str) -> bool:
-    """验证码验证"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    try:
-        # 查找有效的验证码
-        cur.execute('''
-            SELECT * FROM verifications 
-            WHERE user_id = %s 
-            AND verification_code = %s 
-            AND is_used = FALSE 
-            AND created_at > NOW() - INTERVAL '5 minutes'
-            ORDER BY created_at DESC
-            LIMIT 1
-        ''', (user_id, code))
-        
-        result = cur.fetchone()
-        
-        if result:
-            # 标记为已使用
-            cur.execute(
-                'UPDATE verifications SET is_used = TRUE WHERE id = %s',
-                (result['id'],)
-            )
-            conn.commit()
-            logger.info(f"✅ 用户 {user_id} 验证成功")
-            return True
-        
-        logger.warning(f"❌ 用户 {user_id} 验证失败（无效或过期）")
-        return False
-    except Exception as e:
-        logger.error(f"验证码验证失败: {e}")
-        conn.rollback()
-        return False
-    finally:
-        cur.close()
-        conn.close()
+def is_admin(user_id):
+    return user_id == ADMIN_ID
 
-# ==================== Telegram 机器人逻辑 ====================
-
-def get_main_keyboard():
-    keyboard = [
-        [InlineKeyboardButton("🎉 开业活动", callback_data='activity_center')],
-        [InlineKeyboardButton("💰 我的积分", callback_data='my_points')]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-def get_activity_keyboard():
-    keyboard = [
-        [InlineKeyboardButton("📺 观看广告获得积分", callback_data='watch_ad')],
-        [InlineKeyboardButton("📊 今日观看记录", callback_data='today_stats')],
-        [InlineKeyboardButton("🔙 返回首页", callback_data='back_home')]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-def get_ad_keyboard(user_id: int, code: str):
-    ad_url = f"{AD_PAGE_URL}?user={user_id}&code={code}"
-    keyboard = [
-        [InlineKeyboardButton("🎬 点击观看广告", url=ad_url)],
-        [InlineKeyboardButton("✅ 我已观看完广告", callback_data=f'verify_ad:{code}')],
-        [InlineKeyboardButton("🔙 返回活动中心", callback_data='activity_center')]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-def get_welcome_message(name: str) -> str:
-    return f"""👋 欢迎回来，{name}！
-
-🎁 这是一个积分奖励机器人
-💡 通过观看广告即可获得积分
-
-📌 每日可观看3次广告：
-   • 第1次：10积分
-   • 第2次：6积分
-   • 第3次：3-10积分（随机）
-
-请选择下方功能："""
-
-def get_activity_message() -> str:
-    return """🎉 活动中心
-
-欢迎参加我们的开业活动！
-观看广告即可轻松赚取积分！
-
-请选择您要进行的操作："""
-
+# 首页 /start 命令
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    get_or_create_user(user.id, user.username, user.first_name)
-    
-    name = user.first_name or user.username or "用户"
-    await update.message.reply_text(
-        get_welcome_message(name),
-        reply_markup=get_main_keyboard()
+    user_id = update.effective_user.id
+    disabled, disabled_until = await is_verification_disabled(user_id)
+    if disabled:
+        unlock_time = disabled_until.strftime("%Y-%m-%d %H:%M UTC")
+        verify_btn = InlineKeyboardButton(f"🚫 验证锁定中，解锁时间：{unlock_time}", callback_data="disabled_verify")
+    else:
+        verify_btn = InlineKeyboardButton("🚀 开始验证", callback_data="start_verification")
+
+    keyboard = [
+        [verify_btn],
+        [InlineKeyboardButton("💎 积分", callback_data="show_points")],
+        [InlineKeyboardButton("🎉 开业活动", callback_data="moontag_hd")]
+    ]
+
+    welcome_text = (
+        "👋 欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~\n\n"
+        "📢 小卫小卫，守门员小卫！\n"
+        "一键入群，小卫帮你搞定！\n"
+        "新人来报到，小卫查身份！"
     )
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(welcome_text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    media_group = [
+        InputMediaPhoto(media=START_VERIFY_FILE_IDS[0]),
+        InputMediaPhoto(media=START_VERIFY_FILE_IDS[1])
+    ]
+    await update.message.reply_media_group(media_group)
+
+# 拦截所有消息，非验证流程时显示首页
+async def echo_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    state = context.user_data.get("verify_state")
+    if state in [VERIFY_START, VERIFY_WAIT_ORDER]:
+        return
+    await start(update, context)
+
+# 判断验证是否禁用
+async def is_verification_disabled(user_id):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT fail_count, disabled_until FROM verification_status WHERE user_id=$1", user_id)
+        if not row:
+            return False, None
+        disabled_until = row['disabled_until']
+        if disabled_until and disabled_until > datetime.utcnow():
+            return True, disabled_until
+        return False, None
+
+# 重置验证状态
+async def reset_verification_status(user_id):
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM verification_status WHERE user_id=$1", user_id)
+
+# 增加失败次数，禁用5小时
+async def add_verification_fail(user_id):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT fail_count FROM verification_status WHERE user_id=$1", user_id)
+        if not row:
+            fail_count = 1
+            disabled_until = None
+            await conn.execute("INSERT INTO verification_status (user_id, fail_count) VALUES ($1, $2)", user_id, fail_count)
+        else:
+            fail_count = row['fail_count'] + 1
+            disabled_until = None
+            if fail_count >= 2:
+                disabled_until = datetime.utcnow() + timedelta(hours=5)
+                await conn.execute("UPDATE verification_status SET fail_count=$1, disabled_until=$2 WHERE user_id=$3", fail_count, disabled_until, user_id)
+            else:
+                await conn.execute("UPDATE verification_status SET fail_count=$1 WHERE user_id=$2", fail_count, user_id)
+        return fail_count, disabled_until
+
+# 点击开始验证按钮，显示VIP说明页
+async def start_verification_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    disabled, disabled_until = await is_verification_disabled(user_id)
+    if disabled:
+        unlock_time = disabled_until.strftime("%Y-%m-%d %H:%M UTC")
+        await query.edit_message_text(f"🚫 验证功能锁定中，解锁时间：{unlock_time}\n请稍后再试。")
+        return
+
+    text = (
+        "💎 VIP会员特权说明：\n"
+        "✅ 专属中转通道\n"
+        "✅ 优先审核入群\n"
+        "✅ 7x24小时客服支持\n"
+        "✅ 定期福利活动\n"
+    )
+    keyboard = [
+        [InlineKeyboardButton("✅ 我已付款，开始验证", callback_data="paid_start_verify")],
+        [InlineKeyboardButton("⬅️ 返回首页", callback_data="back_start")]
+    ]
+
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.message.reply_photo(VIP_EXPLAIN_FILE_ID)
+    context.user_data["verify_state"] = VERIFY_START
+
+# 点击“我已付款，开始验证”，进入订单号输入页
+async def paid_start_verify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    disabled, disabled_until = await is_verification_disabled(user_id)
+    if disabled:
+        unlock_time = disabled_until.strftime("%Y-%m-%d %H:%M UTC")
+        await query.edit_message_text(f"🚫 验证功能锁定中，解锁时间：{unlock_time}\n请稍后再试。")
+        return
+
+    context.user_data["verify_state"] = VERIFY_WAIT_ORDER
+    context.user_data["verify_fail_count"] = 0
+
+    text = (
+        "请输入订单号。\n\n"
+        "查找订单号的详细教程：\n"
+        "我的 账单 账单详情 更多 订单号 详细步骤"
+    )
+
+    await query.edit_message_text(text)
+    await query.message.reply_photo(ORDER_INPUT_FILE_ID)
+
+# 订单号输入处理
+async def verify_order_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    state = context.user_data.get("verify_state")
+    if state != VERIFY_WAIT_ORDER:
+        await start(update, context)
+        return
+
+    text = update.message.text.strip()
+    if not re.match(r"^20260\d*$", text):
+        fail_count = context.user_data.get("verify_fail_count", 0) + 1
+        context.user_data["verify_fail_count"] = fail_count
+
+        if fail_count >= 2:
+            await add_verification_fail(user_id)
+            await update.message.reply_text(
+                "未查询到订单信息，请重试。\n\n"
+                "验证失败次数过多，功能已锁定5小时。\n"
+                "请稍后再试。"
+            )
+            context.user_data.pop("verify_state", None)
+            context.user_data.pop("verify_fail_count", None)
+            await start(update, context)
+            return
+        else:
+            await update.message.reply_text("未查询到订单信息，请重试。")
+            return
+
+    await reset_verification_status(user_id)
+    context.user_data.pop("verify_state", None)
+    context.user_data.pop("verify_fail_count", None)
+
+    keyboard = [
+        [InlineKeyboardButton("🔗 加入VIP群", url=VIP_GROUP_LINK)],
+        [InlineKeyboardButton("⬅️ 返回首页", callback_data="back_start")]
+    ]
+    await update.message.reply_text("验证成功！欢迎加入VIP群。", reply_markup=InlineKeyboardMarkup(keyboard))
+    await start(update, context)
+
+# 积分签到功能
+async def get_user_points(user_id: int):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT points, last_sign_date FROM user_points WHERE user_id=$1", user_id)
+        if row:
+            return row['points'], row['last_sign_date']
+        else:
+            await conn.execute("INSERT INTO user_points (user_id, points) VALUES ($1, 0)", user_id)
+            return 0, None
+
+async def jf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    points, last_sign_date = await get_user_points(user_id)
+
+    keyboard = [
+        [InlineKeyboardButton("📝 签到", callback_data="sign_in")],
+        [InlineKeyboardButton("⬅️ 返回首页", callback_data="back_start")]
+    ]
+    text = f"你的积分：{points}\n最后签到日期：{last_sign_date if last_sign_date else '未签到过'}"
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def sign_in_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    today = date.today()
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT points, last_sign_date FROM user_points WHERE user_id=$1", user_id)
+        if not row:
+            points = 0
+            last_sign_date = None
+            await conn.execute("INSERT INTO user_points (user_id, points) VALUES ($1, 0)", user_id)
+        else:
+            points = row['points']
+            last_sign_date = row['last_sign_date']
+
+        if last_sign_date == today:
+            text = f"你今天已经签到过了，当前积分：{points}"
+        else:
+            if last_sign_date is None:
+                add_points = 10
+            else:
+                add_points = random.randint(3, 8)
+            points += add_points
+            await conn.execute(
+                "UPDATE user_points SET points=$1, last_sign_date=$2 WHERE user_id=$3",
+                points, today, user_id
+            )
+            text = f"签到成功！获得积分：{add_points}\n当前积分：{points}"
+
+    keyboard = [
+        [InlineKeyboardButton("📝 签到", callback_data="sign_in")],
+        [InlineKeyboardButton("⬅️ 返回首页", callback_data="back_start")]
+    ]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+# moontag活动按钮一：看视频广告积分
+async def moontag_watch_ad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
-    user = query.from_user
-    user_id = user.id
-    name = user.first_name or user.username or "用户"
-    
-    get_or_create_user(user_id, user.username, user.first_name)
-    
-    data = query.data
-    
-    if data == 'activity_center':
-        await query.edit_message_text(
-            get_activity_message(),
-            reply_markup=get_activity_keyboard()
-        )
-    
-    elif data == 'watch_ad':
-        today_views = get_today_ad_views(user_id)
-        
-        if today_views >= 3:
-            await query.answer("❌ 今日观看次数已达上限（3次），请明天再来！", show_alert=True)
-            return
-        
-        code = create_verification_code(user_id)
-        
-        if not code:
-            await query.answer("❌ 系统错误，请稍后重试", show_alert=True)
-            return
-        
-        if today_views == 0:
-            next_points = "10"
-        elif today_views == 1:
-            next_points = "6"
-        else:
-            next_points = "3-10（随机）"
-        
-        message = f"""📺 观看广告
+    user_id = query.from_user.id
+    today = date.today()
 
-今日已观看：{today_views}/3 次
-本次可获得：{next_points} 积分
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT ad_date, watch_count FROM moontag_ad WHERE user_id=$1", user_id)
+        watch_count = row['watch_count'] if row and row['ad_date'] == today else 0
 
-🔗 请点击下方按钮打开广告页面
-⚠️ 观看完整广告后，返回点击"我已观看完广告"按钮验证"""
-        
-        await query.edit_message_text(
-            message,
-            reply_markup=get_ad_keyboard(user_id, code)
-        )
-    
-    elif data.startswith('verify_ad:'):
-        code = data.split(':', 1)[1]
-        
-        if not verify_code(user_id, code):
-            await query.answer("❌ 验证失败！请先观看广告或验证码已过期", show_alert=True)
-            return
-        
-        result = record_ad_view(user_id)
-        
-        if result['success']:
-            current_points = get_user_points(user_id)
-            message = f"""🎉 恭喜！观看成功
+    if watch_count >= 3:
+        await query.edit_message_text("你今天的广告观看次数已达上限（3次）。明天再来吧！", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ 返回活动中心", callback_data="moontag_hd")]]
+        ))
+        return
 
-✅ 获得积分：+{result['points_earned']}
-💰 当前积分：{current_points}
-📊 今日已观看：{result['view_count']}/3 次
-🔄 剩余次数：{result['remaining_views']} 次"""
-            
-            await query.edit_message_text(
-                message,
-                reply_markup=get_activity_keyboard()
-            )
-            await query.answer(f"🎉 获得 {result['points_earned']} 积分！")
-        else:
-            await query.answer(result['message'], show_alert=True)
-    
-    elif data == 'today_stats':
-        views = get_today_ad_views(user_id)
-        points = get_user_points(user_id)
-        
-        message = f"""📊 今日数据
+    ad_url = f"{MOONTAG_AD_URL_BASE}?user_id={user_id}"
 
-👀 今日观看：{views}/3 次
-💰 当前积分：{points}
-🔄 剩余次数：{3 - views} 次
-
-{'💡 继续观看广告赚取更多积分！' if views < 3 else '✅ 今日次数已用完，明天再来吧！'}"""
-        
-        await query.edit_message_text(
-            message,
-            reply_markup=get_activity_keyboard()
-        )
-    
-    elif data == 'my_points':
-        points = get_user_points(user_id)
-        views = get_today_ad_views(user_id)
-        
-        message = f"""💰 我的积分
-
-当前积分：{points}
-今日观看：{views}/3 次
-
-💡 积分可用于兑换奖励（功能开发中）"""
-        
-        await query.edit_message_text(
-            message,
-            reply_markup=get_main_keyboard()
-        )
-    
-    elif data == 'back_home':
-        await query.edit_message_text(
-            get_welcome_message(name),
-            reply_markup=get_main_keyboard()
-        )
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    get_or_create_user(user.id, user.username, user.first_name)
-    
-    name = user.first_name or user.username or "用户"
-    await update.message.reply_text(
-        get_welcome_message(name),
-        reply_markup=get_main_keyboard()
+    keyboard = [
+        [InlineKeyboardButton("点击观看广告", url=ad_url)],
+        [InlineKeyboardButton("⬅️ 返回活动中心", callback_data="moontag_hd")]
+    ]
+    await query.edit_message_text(
+        "请点击下面按钮观看广告，观看完成后网页会自动奖励积分。",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Update {update} caused error {context.error}")
+# moontag活动按钮二：密钥领取按钮
+async def moontag_secret_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
 
-def main():
+    today = datetime.now(BJ_TZ).date()
+    async with db_pool.acquire() as conn:
+        # 查询用户当天领取次数
+        row = await conn.fetchrow("SELECT redeem1, redeem2, last_redeem_date FROM user_secret_redeem WHERE user_id=$1", user_id)
+        redeem_count = 0
+        if row and row['last_redeem_date'] == today:
+            redeem_count = (1 if row['redeem1'] else 0) + (1 if row['redeem2'] else 0)
+
+        # 查询当天管理员绑定的密钥链接
+        secret_row = await conn.fetchrow("SELECT secret1_link, secret2_link FROM daily_secrets ORDER BY created_at DESC LIMIT 1")
+
+    if redeem_count >= MAX_SECRET_REDEEM:
+        await query.edit_message_text(f"您今天已领取{MAX_SECRET_REDEEM}次密钥积分，明天上午10点后再来哦~", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ 返回活动中心", callback_data="moontag_hd")]]
+        ))
+        return
+
+    if not secret_row or not secret_row['secret1_link'] or not secret_row['secret2_link']:
+        await query.edit_message_text(
+            "管理员尚未绑定当天密钥链接，请等待管理员更换新密钥链接。\n\n"
+            "请稍后再试。",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("⬅️ 返回活动中心", callback_data="moontag_hd")]]
+            )
+        )
+        return
+
+    text = (
+        f"{BUTTON_TWO_NAME} 功能说明：\n"
+        "每天可通过夸克网盘获取密钥。\n"
+        "点击“开始获得密钥”按钮后，将打开广告直链，\n"
+        "3秒后自动跳转到密钥链接，请耐心等待。\n"
+        "请保存网盘，重命名名字，复制文本发送给机器人领取积分。\n\n"
+        f"密钥链接示例：\n1️⃣ {SECRET_LINK_1}\n2️⃣ {SECRET_LINK_2}"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🎯 开始获得密钥", url=MOONTAG_LINK_2)],
+        [InlineKeyboardButton("⬅️ 返回活动中心", callback_data="moontag_hd")]
+    ]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+# 用户输入密钥领取积分逻辑
+async def secret_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+
+    today = datetime.now(BJ_TZ).date()
+    async with db_pool.acquire() as conn:
+        secret_row = await conn.fetchrow("SELECT secret1, secret2 FROM daily_secrets ORDER BY created_at DESC LIMIT 1")
+        if not secret_row:
+            await update.message.reply_text("密钥尚未生成，请稍后再试。")
+            return
+
+        secret1 = secret_row['secret1']
+        secret2 = secret_row['secret2']
+
+        user_row = await conn.fetchrow("SELECT redeem1, redeem2, last_redeem_date FROM user_secret_redeem WHERE user_id=$1", user_id)
+        if user_row and user_row['last_redeem_date'] == today:
+            redeem1 = user_row['redeem1']
+            redeem2 = user_row['redeem2']
+        else:
+            redeem1 = False
+            redeem2 = False
+
+        if text == secret1:
+            if redeem1:
+                await update.message.reply_text("您今天已经领取过密钥1积分，不能重复领取。")
+                return
+            await add_points(user_id, 8)
+            await conn.execute("""
+                INSERT INTO user_secret_redeem (user_id, redeem1, redeem2, last_redeem_date)
+                VALUES ($1, TRUE, $2, $3)
+                ON CONFLICT (user_id) DO UPDATE SET redeem1=TRUE, last_redeem_date=$3
+            """, user_id, redeem2, today)
+            await update.message.reply_text("密钥1验证成功，获得8积分！已返回活动中心。")
+            await back_to_hd(update, context)
+            return
+
+        elif text == secret2:
+            if redeem2:
+                await update.message.reply_text("您今天已经领取过密钥2积分，不能重复领取。")
+                return
+            await add_points(user_id, 6)
+            await conn.execute("""
+                INSERT INTO user_secret_redeem (user_id, redeem1, redeem2, last_redeem_date)
+                VALUES ($1, $2, TRUE, $3)
+                ON CONFLICT (user_id) DO UPDATE SET redeem2=TRUE, last_redeem_date=$3
+            """, user_id, redeem1, today)
+            await update.message.reply_text("密钥2验证成功，获得6积分！已返回活动中心。")
+            await back_to_hd(update, context)
+            return
+
+        else:
+            await update.message.reply_text("密钥错误，请确认后重新输入。")
+
+async def add_points(user_id: int, points_to_add: int):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT points FROM user_points WHERE user_id=$1", user_id)
+        if row:
+            points = row['points'] + points_to_add
+            await conn.execute("UPDATE user_points SET points=$1 WHERE user_id=$2", points, user_id)
+        else:
+            await conn.execute("INSERT INTO user_points (user_id, points) VALUES ($1, $2)", user_id, points_to_add)
+
+async def back_to_hd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("⬅️ 返回活动中心", callback_data="moontag_hd")]
+    ]
+    await update.message.reply_text("点击下面按钮返回活动中心。", reply_markup=InlineKeyboardMarkup(keyboard))
+
+# 管理员 /my 命令绑定密钥链接逻辑
+async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("你不是管理员，无权限使用此命令。")
+        return
+
+    now = datetime.now(BJ_TZ)
+    if now.hour < 10:
+        await update.message.reply_text("请北京时间上午10点后再使用此命令。")
+        return
+
+    bind_count = context.user_data.get("my_bind_count", 0) + 1
+    context.user_data["my_bind_count"] = bind_count
+
+    if bind_count == 1:
+        context.user_data["awaiting_secret1_link"] = True
+        context.user_data["awaiting_secret2_link"] = False
+        await update.message.reply_text("请输入密钥一的链接（示例：https://pan.quark.cn/s/xxxxxx）")
+    elif bind_count == 2:
+        context.user_data["awaiting_secret1_link"] = False
+        context.user_data["awaiting_secret2_link"] = True
+        await update.message.reply_text("请输入密钥二的链接")
+    elif bind_count == 3:
+        context.user_data["awaiting_secret1_link"] = True
+        context.user_data["awaiting_secret2_link"] = False
+        await update.message.reply_text("第三次绑定，覆盖之前所有密钥链接。\n请输入新的密钥一链接")
+    else:
+        context.user_data["my_bind_count"] = 1
+        context.user_data["awaiting_secret1_link"] = True
+        context.user_data["awaiting_secret2_link"] = False
+        await update.message.reply_text("绑定次数超过3次，计数重置。\n请输入密钥一链接")
+
+async def my_link_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+
+    now = datetime.now(BJ_TZ)
+    if now.hour < 10:
+        await update.message.reply_text("请北京时间上午10点后再绑定密钥链接。")
+        return
+
+    text = update.message.text.strip()
+
+    if context.user_data.get("awaiting_secret1_link"):
+        async with db_pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE daily_secrets SET secret1_link=$1, created_at=NOW()
+                WHERE id = (SELECT id FROM daily_secrets ORDER BY created_at DESC LIMIT 1)
+            """, text)
+        context.user_data["awaiting_secret1_link"] = False
+        await update.message.reply_text("密钥一链接绑定完成。请输入密钥二链接。")
+        context.user_data["awaiting_secret2_link"] = True
+    elif context.user_data.get("awaiting_secret2_link"):
+        async with db_pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE daily_secrets SET secret2_link=$1, created_at=NOW()
+                WHERE id = (SELECT id FROM daily_secrets ORDER BY created_at DESC LIMIT 1)
+            """, text)
+        context.user_data["awaiting_secret2_link"] = False
+        await update.message.reply_text("密钥二链接绑定完成。绑定流程结束。")
+        context.user_data["my_bind_count"] = 0
+
+# 定时任务，每天北京时间10点自动生成密钥并私信管理员
+async def scheduled_secret_generation(application):
+    now = datetime.now(BJ_TZ)
+    secret1 = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+    secret2 = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO daily_secrets (secret1, secret2, created_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (id) DO UPDATE SET
+                secret1=EXCLUDED.secret1,
+                secret2=EXCLUDED.secret2,
+                created_at=EXCLUDED.created_at
+        """, secret1, secret2, now)
+
     try:
-        logger.info("=" * 50)
-        logger.info("🚀 Telegram 广告积分机器人启动中...")
-        logger.info("=" * 50)
-        
-        # 初始化数据库
-        init_database()
-        
-        # 创建应用
-        logger.info("📱 创建 Telegram 应用...")
-        application = Application.builder().token(BOT_TOKEN).build()
-        
-        # 添加处理器
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CallbackQueryHandler(button_callback))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        application.add_error_handler(error_handler)
-        
-        # 启动机器人
-        logger.info("✅ 机器人启动成功！等待用户消息...")
-        logger.info("=" * 50)
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-        
+        await application.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"【每日密钥更新】\n"
+                f"时间：{now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"密钥1（8积分）：{secret1}\n"
+                f"密钥2（6积分）：{secret2}\n\n"
+                f"请使用 /my 命令绑定密钥链接。"
+            )
+        )
     except Exception as e:
-        logger.error(f"❌ 启动失败: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
+        logger.error(f"发送管理员消息失败: {e}")
 
-if __name__ == '__main__':
+# main函数中添加定时任务
+def main():
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # 之前所有handler注册...
+
+    application.add_handler(CommandHandler("my", my_command))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), my_link_input_handler))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), secret_code_handler))
+
+    scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+    scheduler.add_job(scheduled_secret_generation, "cron", hour=10, minute=0, args=[application])
+    scheduler.start()
+
+    # 其他handler注册...
+
+    application.run_polling()
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(init_db_pool())
     main()
