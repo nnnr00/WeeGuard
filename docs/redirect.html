@@ -2,9 +2,8 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>正在跳转...</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         * {
             margin: 0;
@@ -13,398 +12,329 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
-            flex-direction: column;
-            align-items: center;
             justify-content: center;
+            align-items: center;
             padding: 20px;
             color: #fff;
         }
 
         .container {
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.15);
             backdrop-filter: blur(10px);
             border-radius: 24px;
-            padding: 40px 30px;
+            padding: 50px 40px;
+            max-width: 450px;
             width: 100%;
-            max-width: 400px;
-            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3);
             text-align: center;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
         }
 
         .icon {
-            font-size: 60px;
-            margin-bottom: 20px;
-            animation: bounce 2s infinite;
+            font-size: 72px;
+            margin-bottom: 25px;
+            animation: bounce 1s ease infinite;
         }
 
         @keyframes bounce {
-            0%, 20%, 50%, 80%, 100% {
-                transform: translateY(0);
-            }
-            40% {
-                transform: translateY(-20px);
-            }
-            60% {
-                transform: translateY(-10px);
-            }
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
         }
 
         h1 {
-            font-size: 24px;
+            font-size: 28px;
             margin-bottom: 15px;
-            color: #fff;
+            font-weight: 600;
         }
 
-        .step-info {
-            background: rgba(255, 255, 255, 0.1);
+        .description {
+            color: rgba(255, 255, 255, 0.9);
+            margin-bottom: 35px;
+            line-height: 1.7;
+            font-size: 16px;
+        }
+
+        .countdown-container {
+            background: rgba(255, 255, 255, 0.2);
             border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+
+        .countdown {
+            font-size: 64px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .countdown-label {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.8);
+            margin-top: 10px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 20px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4ade80, #22c55e);
+            border-radius: 3px;
+            transition: width 1s linear;
+            width: 0%;
+        }
+
+        .steps {
+            text-align: left;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
             padding: 20px;
-            margin-bottom: 25px;
+            margin-top: 25px;
+        }
+
+        .steps h3 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            color: #fbbf24;
         }
 
         .step {
             display: flex;
             align-items: center;
-            margin-bottom: 12px;
-            text-align: left;
-        }
-
-        .step:last-child {
-            margin-bottom: 0;
+            gap: 12px;
+            padding: 8px 0;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 14px;
         }
 
         .step-number {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: #fff;
-            width: 28px;
-            height: 28px;
+            width: 24px;
+            height: 24px;
+            background: rgba(255, 255, 255, 0.2);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 14px;
+            font-size: 12px;
             font-weight: bold;
-            margin-right: 12px;
-            flex-shrink: 0;
         }
 
-        .step-text {
-            font-size: 14px;
-            color: rgba(255, 255, 255, 0.9);
-            line-height: 1.4;
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
         }
 
-        .progress-container {
-            margin-bottom: 25px;
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
 
-        .progress-bar {
-            background: rgba(255, 255, 255, 0.2);
-            border-radius: 10px;
-            height: 8px;
-            overflow: hidden;
-            margin-bottom: 10px;
-        }
-
-        .progress-fill {
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
-            height: 100%;
-            border-radius: 10px;
-            width: 0%;
-            transition: width 0.3s ease;
-        }
-
-        .countdown {
-            font-size: 48px;
-            font-weight: bold;
-            color: #667eea;
-            text-shadow: 0 0 20px rgba(102, 126, 234, 0.5);
-            margin-bottom: 10px;
-        }
-
-        .countdown-text {
-            font-size: 14px;
-            color: rgba(255, 255, 255, 0.7);
-        }
-
-        .status-text {
-            font-size: 16px;
-            color: rgba(255, 255, 255, 0.8);
-            margin-top: 15px;
-        }
-
-        .warning {
-            background: rgba(255, 193, 7, 0.2);
-            border: 1px solid rgba(255, 193, 7, 0.3);
-            border-radius: 12px;
-            padding: 15px;
+        .redirecting {
+            display: none;
             margin-top: 20px;
         }
 
-        .warning-icon {
-            font-size: 20px;
-            margin-right: 8px;
-        }
-
-        .warning-text {
-            font-size: 13px;
-            color: #ffc107;
-            line-height: 1.5;
-        }
-
-        .error-container {
-            display: none;
-        }
-
-        .error-container.show {
+        .redirecting.active {
             display: block;
         }
 
-        .error-icon {
-            font-size: 60px;
-            margin-bottom: 20px;
+        .stage-indicator {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 30px;
         }
 
-        .error-text {
-            font-size: 16px;
-            color: #ff6b6b;
-            margin-bottom: 20px;
-        }
-
-        .btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: #fff;
-            border: none;
-            padding: 15px 30px;
-            border-radius: 12px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
+        .stage-dot {
+            width: 12px;
+            height: 12px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
             transition: all 0.3s ease;
         }
 
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        .stage-dot.active {
+            background: #4ade80;
+            box-shadow: 0 0 10px #4ade80;
         }
 
-        .footer {
-            margin-top: 30px;
-            font-size: 12px;
-            color: rgba(255, 255, 255, 0.5);
-        }
-
-        /* 粒子背景 */
-        .particles {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            overflow: hidden;
-            z-index: -1;
-        }
-
-        .particle {
-            position: absolute;
-            width: 4px;
-            height: 4px;
-            background: rgba(255, 255, 255, 0.3);
-            border-radius: 50%;
-            animation: float 15s infinite;
-        }
-
-        @keyframes float {
-            0%, 100% {
-                transform: translateY(100vh) rotate(0deg);
-                opacity: 0;
-            }
-            10% {
-                opacity: 1;
-            }
-            90% {
-                opacity: 1;
-            }
-            100% {
-                transform: translateY(-100vh) rotate(720deg);
-                opacity: 0;
-            }
+        .stage-dot.completed {
+            background: #22c55e;
         }
     </style>
 </head>
 <body>
-    <!-- 粒子背景 -->
-    <div class="particles" id="particles"></div>
-
     <div class="container">
-        <!-- 正常状态 -->
-        <div id="normalState">
-            <div class="icon">🔑</div>
-            <h1>正在获取密钥</h1>
-            
-            <div class="step-info">
-                <div class="step">
-                    <div class="step-number">1</div>
-                    <div class="step-text">即将跳转到广告页面</div>
-                </div>
-                <div class="step">
-                    <div class="step-number">2</div>
-                    <div class="step-text">等待 3 秒后自动跳转网盘</div>
-                </div>
-                <div class="step">
-                    <div class="step-number">3</div>
-                    <div class="step-text">保存文件并复制密钥</div>
-                </div>
-                <div class="step">
-                    <div class="step-number">4</div>
-                    <div class="step-text">返回机器人发送密钥领取积分</div>
-                </div>
-            </div>
+        <div class="stage-indicator">
+            <div class="stage-dot active" id="stage1"></div>
+            <div class="stage-dot" id="stage2"></div>
+            <div class="stage-dot" id="stage3"></div>
+        </div>
 
-            <div class="progress-container">
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progressFill"></div>
-                </div>
-                <div class="countdown" id="countdown">3</div>
-                <div class="countdown-text">秒后跳转到网盘页面</div>
-            </div>
+        <div class="icon" id="icon">🚀</div>
+        <h1 id="title">正在准备...</h1>
+        <p class="description" id="description">
+            请稍候，系统正在为您准备密钥页面
+        </p>
 
-            <div class="status-text" id="statusText">正在加载广告页面...</div>
-
-            <div class="warning">
-                <span class="warning-icon">⚠️</span>
-                <span class="warning-text">
-                    请勿关闭此页面，等待自动跳转<br>
-                    获取密钥后返回机器人输入即可领取积分
-                </span>
+        <div class="countdown-container">
+            <div class="countdown" id="countdown">3</div>
+            <div class="countdown-label">秒后自动跳转</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress"></div>
             </div>
         </div>
 
-        <!-- 错误状态 -->
-        <div id="errorState" class="error-container">
-            <div class="error-icon">😢</div>
-            <h1>加载失败</h1>
-            <p class="error-text" id="errorText">请稍后重试</p>
-            <button class="btn" onclick="closeWebApp()">返回机器人</button>
+        <div class="redirecting" id="redirecting">
+            <div class="spinner"></div>
+            <p style="margin-top: 15px;">正在跳转到密钥页面...</p>
         </div>
-    </div>
 
-    <div class="footer">
-        <p>每日北京时间 10:00 更新密钥</p>
+        <div class="steps">
+            <h3>📋 获取密钥步骤</h3>
+            <div class="step">
+                <span class="step-number">1</span>
+                <span>等待页面自动跳转</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <span>保存网盘文件到您的账号</span>
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <span>重命名文件查看密钥内容</span>
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <span>返回机器人输入密钥领积分</span>
+            </div>
+        </div>
     </div>
 
     <script>
-        // 配置
-        const API_BASE_URL = 'https://your-railway-app.railway.app';
-        
-        // 固定的 Monetag 直链
-        const MONETAG_LINKS = {
-            1: 'https://otieu.com/4/10489994',
-            2: 'https://otieu.com/4/10489998'
-        };
-
-        // 获取 URL 参数
         const urlParams = new URLSearchParams(window.location.search);
-        const type = parseInt(urlParams.get('type')) || 1;
+        const monetagLink = urlParams.get('monetag');
+        const targetLink = urlParams.get('target');
+        const userId = urlParams.get('user_id');
 
-        // Telegram WebApp
-        const tg = window.Telegram?.WebApp;
-        if (tg) {
-            tg.ready();
-            tg.expand();
-        }
+        let countdown = 3;
+        let stage = 1;
+        let monetagOpened = false;
 
-        // 创建粒子背景
-        function createParticles() {
-            const container = document.getElementById('particles');
-            for (let i = 0; i < 50; i++) {
-                const particle = document.createElement('div');
-                particle.className = 'particle';
-                particle.style.left = Math.random() * 100 + '%';
-                particle.style.animationDelay = Math.random() * 15 + 's';
-                particle.style.animationDuration = (15 + Math.random() * 10) + 's';
-                container.appendChild(particle);
-            }
-        }
-
-        // 显示错误
-        function showError(message) {
-            document.getElementById('normalState').style.display = 'none';
-            document.getElementById('errorState').classList.add('show');
-            document.getElementById('errorText').textContent = message;
-        }
-
-        // 关闭 WebApp
-        function closeWebApp() {
-            if (tg) {
-                tg.close();
-            } else {
-                window.close();
-            }
-        }
-
-        // 开始跳转流程
-        async function startRedirect() {
-            try {
-                // 获取密钥链接
-                const response = await fetch(`${API_BASE_URL}/api/key/urls?type=${type}`);
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    showError(data.detail || '获取链接失败');
-                    return;
-                }
-
-                const monetagUrl = MONETAG_LINKS[type];
-                const keyUrl = data.key_url;
-
-                // 第一步：打开 Monetag 直链
-                document.getElementById('statusText').textContent = '正在打开广告页面...';
-                
-                // 使用 window.open 打开 Monetag
-                window.open(monetagUrl, '_blank');
-
-                // 第二步：倒计时 3 秒后跳转到密钥链接
-                let countdown = 3;
-                const countdownEl = document.getElementById('countdown');
-                const progressFill = document.getElementById('progressFill');
-                const statusText = document.getElementById('statusText');
-
-                statusText.textContent = '广告已打开，即将跳转到网盘...';
-
-                const timer = setInterval(() => {
-                    countdown--;
-                    countdownEl.textContent = countdown;
-                    progressFill.style.width = ((3 - countdown) / 3 * 100) + '%';
-
-                    if (countdown <= 0) {
-                        clearInterval(timer);
-                        statusText.textContent = '正在跳转到网盘...';
-                        
-                        // 跳转到密钥链接
-                        window.location.href = keyUrl;
-                    }
-                }, 1000);
-
-            } catch (error) {
-                console.error('跳转失败:', error);
-                showError('网络错误，请重试');
-            }
-        }
-
-        // 页面加载完成后执行
-        window.onload = function() {
-            createParticles();
+        function updateStage(newStage) {
+            stage = newStage;
             
-            // 延迟 500ms 开始跳转流程
-            setTimeout(startRedirect, 500);
-        };
+            for (let i = 1; i <= 3; i++) {
+                const dot = document.getElementById('stage' + i);
+                dot.classList.remove('active', 'completed');
+                
+                if (i < newStage) {
+                    dot.classList.add('completed');
+                } else if (i === newStage) {
+                    dot.classList.add('active');
+                }
+            }
+        }
+
+        function startCountdown() {
+            const countdownEl = document.getElementById('countdown');
+            const progressEl = document.getElementById('progress');
+            const iconEl = document.getElementById('icon');
+            const titleEl = document.getElementById('title');
+            const descEl = document.getElementById('description');
+            
+            updateStage(1);
+            iconEl.textContent = '🚀';
+            titleEl.textContent = '正在准备...';
+            descEl.textContent = '请稍候，系统正在为您准备内容';
+            
+            const timer = setInterval(function() {
+                countdown--;
+                countdownEl.textContent = countdown;
+                progressEl.style.width = ((3 - countdown) / 3 * 100) + '%';
+                
+                if (countdown === 2) {
+                    updateStage(2);
+                    iconEl.textContent = '📺';
+                    titleEl.textContent = '即将打开广告...';
+                    descEl.textContent = '广告页面将在新窗口打开';
+                }
+                
+                if (countdown === 1) {
+                    // 打开 Monetag 广告
+                    if (monetagLink && !monetagOpened) {
+                        window.open(monetagLink, '_blank');
+                        monetagOpened = true;
+                    }
+                }
+                
+                if (countdown <= 0) {
+                    clearInterval(timer);
+                    
+                    updateStage(3);
+                    iconEl.textContent = '🔑';
+                    titleEl.textContent = '正在跳转...';
+                    descEl.textContent = '即将跳转到密钥页面';
+                    
+                    document.getElementById('redirecting').classList.add('active');
+                    document.querySelector('.countdown-container').style.display = 'none';
+                    
+                    // 跳转到目标页面
+                    setTimeout(function() {
+                        if (targetLink) {
+                            window.location.href = targetLink;
+                        } else {
+                            titleEl.textContent = '跳转失败';
+                            descEl.textContent = '密钥链接未配置，请联系管理员';
+                            iconEl.textContent = '❌';
+                            document.getElementById('redirecting').classList.remove('active');
+                        }
+                    }, 1000);
+                }
+            }, 1000);
+        }
+
+        // 验证参数
+        if (!monetagLink) {
+            document.getElementById('icon').textContent = '⚠️';
+            document.getElementById('title').textContent = '参数错误';
+            document.getElementById('description').textContent = '缺少必要的跳转参数';
+            document.querySelector('.countdown-container').style.display = 'none';
+        } else if (!targetLink) {
+            document.getElementById('icon').textContent = '⏳';
+            document.getElementById('title').textContent = '请稍候';
+            document.getElementById('description').textContent = '管理员正在配置密钥链接，请稍后再试';
+            document.querySelector('.countdown-container').style.display = 'none';
+        } else {
+            // 开始倒计时
+            document.addEventListener('DOMContentLoaded', startCountdown);
+        }
+
+        // 防止右键和开发者工具
+        document.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+        });
+        
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I')) {
+                e.preventDefault();
+            }
+        });
     </script>
 </body>
 </html>
