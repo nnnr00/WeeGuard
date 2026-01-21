@@ -1,9 +1,9 @@
 python-telegram-bot==20.7
 SQLAlchemy==2.0.30
-asyncpg==0.29.0
+asyncpg==0.29.0          # <-- 唯一 PostgreSQL driver 這裡
 python-dotenv==1.0.1
 fastapi==0.110.0
 uvicorn[standard]==0.23.0
 apscheduler==3.10.4
 python-dateutil==2.9.0.post0
-psycopg2-binary==2.9.9   # <-- 必須保留，這是 PostgreSQL 同步驅動，SQLAlchemy 在建立 dialect 時會使用它
+# 刪除所有 psycopg2 / psycopg2‑binary 行
