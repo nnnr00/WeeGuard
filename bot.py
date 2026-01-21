@@ -23,7 +23,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ========== 配置区（请替换） ==========
+# ========== 配置区（请替换以下内容） ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -65,6 +65,7 @@ async def init_db_pool():
     global db_pool
     db_pool = await asyncpg.create_pool(dsn=DATABASE_URL)
     async with db_pool.acquire() as conn:
+        # 保留原有file_ids表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS file_ids (
             id SERIAL PRIMARY KEY,
@@ -73,6 +74,7 @@ async def init_db_pool():
             added_at TIMESTAMP DEFAULT NOW()
         )
         """)
+        # 积分表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS user_points (
             user_id BIGINT PRIMARY KEY,
@@ -80,6 +82,7 @@ async def init_db_pool():
             last_sign_date DATE
         )
         """)
+        # moontag广告观看次数表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS moontag_ad (
             user_id BIGINT PRIMARY KEY,
@@ -87,6 +90,7 @@ async def init_db_pool():
             watch_count INTEGER NOT NULL DEFAULT 0
         )
         """)
+        # 验证失败次数和禁用时间表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS verification_status (
             user_id BIGINT PRIMARY KEY,
@@ -94,6 +98,7 @@ async def init_db_pool():
             disabled_until TIMESTAMP
         )
         """)
+        # 中转站密钥表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS daily_secrets (
             id SERIAL PRIMARY KEY,
@@ -104,6 +109,7 @@ async def init_db_pool():
             created_at TIMESTAMP DEFAULT NOW()
         )
         """)
+        # 用户密钥领取记录表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS user_secret_redeem (
             user_id BIGINT PRIMARY KEY,
@@ -336,7 +342,7 @@ async def sign_in_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ 返回首页", callback_data="back_start")]
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-from fastapi import FastAPI, Request
+    from fastapi import FastAPI, Request
 from telegram.ext import Application
 
 app = FastAPI()
@@ -584,24 +590,13 @@ async def scheduled_secret_generation(application):
     except Exception as e:
         logger.error(f"发送管理员消息失败: {e}")
 
-# 主函数启动
+# 启动FastAPI和Telegram机器人
 def run_fastapi():
     uvicorn.run(app, host="0.0.0.0", port=PORT)
-
-import asyncio
 
 def main():
     global application
     application = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    # 创建并设置事件循环（解决 apscheduler 报错）
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    # 创建调度器
-    scheduler = AsyncIOScheduler(timezone="Asia/Shanghai", event_loop=loop)
-    scheduler.add_job(scheduled_secret_generation, "cron", hour=10, minute=0, args=[application])
-    scheduler.start()
 
     # 注册Telegram所有handler（请补充之前代码中的handler）
 
@@ -610,7 +605,9 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), secret_code_handler))
 
     # APScheduler定时任务
-    scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    scheduler = AsyncIOScheduler(timezone="Asia/Shanghai", event_loop=loop)
     scheduler.add_job(scheduled_secret_generation, "cron", hour=10, minute=0, args=[application])
     scheduler.start()
 
