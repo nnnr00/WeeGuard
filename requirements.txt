@@ -1,9 +1,9 @@
 python-telegram-bot==20.7
 SQLAlchemy==2.0.30
-asyncpg==0.29.0          # <-- 唯一 PostgreSQL driver 這裡
+asyncpg==0.29.0
 python-dotenv==1.0.1
 fastapi==0.110.0
 uvicorn[standard]==0.23.0
 apscheduler==3.10.4
 python-dateutil==2.9.0.post0
-# 刪除所有 psycopg2 / psycopg2‑binary 行
+psycopg2-binary==2.9.9
