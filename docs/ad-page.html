@@ -1,138 +1,46 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>观看广告赚积分</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 20px;
-        }
-        .container {
-            text-align: center;
-            background: white;
-            padding: 40px;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 500px;
-            width: 100%;
-        }
-        h1 {
-            color: #667eea;
-            margin-bottom: 20px;
-            font-size: 24px;
-        }
-        #ad-container {
-            margin: 30px 0;
-            min-height: 250px;
-            background: #f5f5f5;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        #status {
-            font-size: 16px;
-            margin: 20px 0;
-            color: #666;
-        }
-        .button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 15px 40px;
-            border-radius: 30px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-            margin-top: 20px;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
-        }
-        .button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-            transform: none;
-        }
-        .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        .success {
-            color: #4caf50;
-            font-weight: bold;
-        }
-        .error {
-            color: #f44336;
-            font-weight: bold;
-        }
-    </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>观看广告领取积分</title>
+<!-- 替换 data-zone 和 data-sdk 为你的广告SDK参数 -->
+<script src="//libtl.com/sdk.js" data-zone="10489957" data-sdk="show_10489957"></script>
 </head>
 <body>
-    <div class="container">
-        <h1>📺 广告加载中...</h1>
-        <div id="ad-container">
-            <div class="spinner"></div>
-        </div>
-        <p id="status">请完整观看广告以获得积分</p>
-        <button class="button" onclick="returnToBot()" id="returnBtn">返回机器人验证</button>
-    </div>
+<h2>观看广告领取积分</h2>
+<p>请点击下面按钮观看广告，观看至少5秒，观看完成后自动通知机器人发放积分。</p>
+<button id="watchAdBtn">观看广告</button>
+<p id="status"></p>
 
-    <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
-    <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const userId = urlParams.get('user');
-        const code = urlParams.get('code');
+<script>
+// 从URL获取user_id参数
+const urlParams = new URLSearchParams(window.location.search);
+const userId = urlParams.get('user_id');
+const statusEl = document.getElementById('status');
+const btn = document.getElementById('watchAdBtn');
 
-        let adWatched = false;
-
-        // 加载广告
-        setTimeout(() => {
-            show_10489957('pop').then(() => {
-                adWatched = true;
-                document.getElementById('status').textContent = '✅ 观看完成！请返回机器人点击验证按钮';
-                document.getElementById('status').className = 'success';
-                document.querySelector('h1').textContent = '🎉 广告观看成功';
-                document.getElementById('ad-container').innerHTML = '<div style="font-size: 48px;">✅</div>';
-            }).catch(e => {
-                console.error('广告加载错误:', e);
-                document.getElementById('status').textContent = '❌ 广告加载失败，请刷新重试';
-                document.getElementById('status').className = 'error';
-                document.querySelector('h1').textContent = '⚠️ 出现错误';
-                document.getElementById('ad-container').innerHTML = '<div style="font-size: 48px;">❌</div>';
+btn.onclick = () => {
+    statusEl.textContent = "广告加载中...";
+    show_10489957('pop').then(() => {
+        statusEl.textContent = "广告观看完成，正在通知机器人...";
+        // 调用后端接口通知机器人广告观看成功
+        fetch(`https://你的后端域名/api/mark_ad_watched?user_id=${userId}`)
+            .then(res => res.json())
+            .then(data => {
+                if(data.success){
+                    statusEl.textContent = "积分领取资格已激活，请返回机器人输入隐藏密令领取积分。";
+                } else {
+                    statusEl.textContent = "通知失败，请稍后重试。";
+                }
+            })
+            .catch(() => {
+                statusEl.textContent = "网络错误，通知失败。";
             });
-        }, 1000);
-
-        function returnToBot() {
-            if (adWatched) {
-                // 返回 Telegram 机器人
-                window.location.href = `tg://resolve?domain=YOUR_BOT_USERNAME`;
-            } else {
-                alert('请先完整观看广告！');
-            }
-        }
-    </script>
+    }).catch(() => {
+        statusEl.textContent = "广告未完成观看，未获得积分。";
+    });
+};
+</script>
 </body>
 </html>
