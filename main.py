@@ -2,12 +2,15 @@
 # main.py
 # ------------------------------------------------------------
 # 功能：
-#   1️⃣ Telegram Bot（/start、 /admin、File‑ID、积分、moontag …）
+#   1️⃣ Telegram Bot（/start、/admin、File‑ID、积分、moontag 等）
 #   2️⃣ FastAPI 伺服器（提供 HTML、廣告回調、密鑰驗證等）
-#   3️⃣ 每日自動生成兩個 10 位隨機密鑰、使用計數與重置
-#   4️⃣ 完整的防作弊、計數、通知與积分奖励
+#   3️⃣ 每天自動生成兩個 10 位隨機密鑰、使用計數與重置
+#   4️⃣ 完備的防作弊、計數、通知與积分奖励
 #   5️⃣ 所有 `await` 都在 `async def` 內部，避免
 #      "SyntaxError: 'await' outside function"
+# ------------------------------------------------------------
+# 记得把 *所有* 代码一次性复制到项目根目录的 `main.py`
+# 运行方式（在容器里或本地） →  `python main.py`
 # ------------------------------------------------------------
 
 from __future__ import annotations
@@ -39,8 +42,8 @@ from telegram.ext import (
 )
 
 # ------------------- 常量 -------------------
-# 在平台的環境變數必須提供這兩個
-TELEGRAM_BOT_TOKEN: str = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")   # ← 替換成真實的 Bot Token
+# 必须在平台的环境变量里提供这两个
+TELEGRAM_BOT_TOKEN: str = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")   # 替换为真实的 Bot Token
 BEAJING_TIMEZONE = pytz.timezone("Asia/Shanghai")
 DB_FILE = "data.sqlite"
 
@@ -52,23 +55,24 @@ TABLE_KEYS = "daily_keys"
 TABLE_KEY_USAGE = "key_usage"
 
 # 奖励数值
-REWARD_FIRST_TIME = 10           # 第一次观看视频获得的积分
-REWARD_SECOND_TIME = 6           # 第二次观看视频获得的积分
-REWARD_THIRD_MIN = 3             # 第三次及以后随机下限
-REWARD_THIRD_MAX = 10            # 第三次及以后随机上限
+REWARD_FIRST_TIME = 10            # 第一次观看视频获得的积分
+REWARD_SECOND_TIME = 6            # 第二次观看视频获得的积分
+REWARD_THIRD_MIN = 3              # 第三次及以后随机下限
+REWARD_THIRD_MAX = 10             # 第三次及以后随机上限
 
 # 密钥相关常量
-KEY_POINT_1 = 8                  # 使用密钥 1 获得的积分
-KEY_POINT_2 = 6                  # 使用密钥 2 获得的积分
-MAX_DAILY_AD_WATCHES = 3        # 每位用户每天最多观看 rewarded ad 的次数
-MAX_KEY_CLICKS_PER_DAY = 2       # 每位用户每天最多使用密钥的次数
-KEY_RESET_HOUR = 10              # 北京时间 10:00 自动重置密钥与计数
+KEY_POINT_1 = 8                   # 使用密钥 1 获得的积分
+KEY_POINT_2 = 6                   # 使用密钥 2 获得的积分
+MAX_DAILY_AD_WATCHES = 3         # 每位用户每天最多观看 rewarded ad 的次数
+MAX_KEY_CLICKS_PER_DAY = 2        # 每位用户每天最多使用密钥的次数
+KEY_RESET_HOUR = 10               # 北京时间 10:00 自动重置密钥与计数
 
-# ------------------- SQLite 辅助 -------------------
+# ------------------- SQLite 辅助（每次调用均新建连接） -------------------
 async def get_db_connection() -> aiosqlite.Connection:
     """
     返回一个已经设置好 `row_factory` 的 SQLite 连接。
-    第一次调用时创建连接，之后直接复用同一个连接对象。
+    每次调用都会新建一个连接，避免在多线程/多任务环境下出现
+    “threads can only be started once” 的错误。
     """
     conn = await aiosqlite.connect(DB_FILE)
     conn.row_factory = aiosqlite.Row
@@ -215,7 +219,7 @@ async def reset_daily_key_records() -> None:
     """
     每天北京时间 10:00 自动执行：
       1️⃣ 生成两个 10 位随机密钥（大小写字母+数字）
-      2️⃣ 把 key_usage 表中两条记录的 `used` 标记为 0（未使用）
+      2️⃣ 把 `key_usage` 表中两条记录的 `used` 标记为 0（未使用）
       3️⃣ 把新密钥写入 `daily_keys` 表
     若已经过去 10:00，则等到第二天再执行。
     """
@@ -251,7 +255,7 @@ async def reset_daily_key_records() -> None:
 
 async def get_today_keys() -> List[Dict]:
     """
-    返回今天生成的两个密钥以及它们的使用状态。
+    返回今天生成的两个密钥及其使用状态。
     如果当天的记录尚未生成则返回空列表。
     """
     async with await get_db_connection() as conn:
@@ -503,7 +507,7 @@ async def build_telegram_application() -> Application:
                 reply_markup=InlineKeyboardMarkup([[]]),
             )
         elif data == "menu_campaign":
-            # 这里假设您把页面部署在 GitHub Pages，请自行替换为自己的 URL
+            # 假设你把页面部署在 GitHub Pages，请自行替换为自己的 URL
             github_page = "https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPO_NAME/docs/webapp.html"
             encoded_user_id = "?user_id=" + str(query.from_user.id)
             full_url = github_page + encoded_user_id
@@ -591,7 +595,7 @@ async def build_telegram_application() -> Application:
         await update.message.reply_text(
             "密钥一绑定完成，请继续提供 **密钥二** 的链接："
         )
-        # 实际项目里这里可以继续等待第二个链接的消息，简化示例未实现完整对话。
+        # 实际项目里这里可以继续等待第二个链接的消息，这里仅示例。
 
     app_tg.add_handler(CommandHandler("my", cmd_my))
     app_tg.add_handler(CommandHandler("my无限次", cmd_set_new_keys))
@@ -604,7 +608,7 @@ async def daily_key_task() -> None:
     """
     每天北京时间 10:00 自动触发一次，完成以下步骤：
       1️⃣ 生成两个 10 位随机密钥（大小写字母+数字）
-      2️⃣ 把 key_usage 表中两条记录的 `used` 标记为 0（未使用）
+      2️⃣ 把 `key_usage` 表中两条记录的 `used` 标记为 0（未使用）
       3️⃣ 把新密钥写入 `daily_keys` 表
     若已经过去 10:00，则等到第二天再执行。
     """
@@ -659,7 +663,7 @@ async def main() -> None:
 if __name__ == "__main__":
     import uvicorn
 
-    # `asyncio.run(main())` 會在 `main()` 內部的所有 `await`
-    # 都保持在 `async def` 內部，不会出现
-    # "`await` outside function" 的錯誤。
+    # asyncio.run() 會在最外層執行 `main()`，
+    # 所有 `await` 都在 `async def` 內部，不会再出现
+    # "await outside function" 的錯誤。
     asyncio.run(main())
