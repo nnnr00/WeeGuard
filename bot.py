@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import (
-    Boolean,               # <-- 必须导入，否则会 NameError
+    Boolean,
     Column,
     DateTime,
     Enum,
@@ -149,7 +149,11 @@ class ExplanationViewUsage(Base):
 
 
 # ---------------------------- 4️⃣ 异步 Engine & Session ----------------------------
-engine: AsyncEngine = create_async_engine(DATABASE_URL, echo=False, future=True)
+engine: AsyncEngine = create_async_engine(
+    DATABASE_URL,          # 这里直接使用上面的 DATABASE_URL
+    echo=False,
+    future=True
+)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
