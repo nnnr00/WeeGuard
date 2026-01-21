@@ -47,12 +47,12 @@ from sqlalchemy import (
     Column,
     Integer,
     String,
-    Date，
+    Date,          # <-- 日期类型（对应 DATE）
     DateTime,
     Boolean,
     Text,
     text,
-)
+)  # <-- 这里的逗号都是半角英文逗号
 from sqlalchemy.ext.asyncio import create_async_engine
 
 metadata = MetaData()
