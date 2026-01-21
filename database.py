@@ -1,7 +1,7 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, timedelta
 import random
 import hashlib
 import time as time_module
@@ -187,12 +187,10 @@ def get_or_create_user(user_id: int, username: str = None):
     conn = get_connection()
     cur = conn.cursor()
     
-    # 尝试获取用户
     cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
     user = cur.fetchone()
     
     if not user:
-        # 创建新用户
         cur.execute(
             "INSERT INTO users (user_id, username, points, first_checkin, ad_watch_count, ad_watch_date, key_claim_count) VALUES (%s, %s, 0, TRUE, 0, NULL, 0) RETURNING *",
             (user_id, username)
@@ -235,19 +233,14 @@ def update_user_points(user_id: int, points: int):
     conn.close()
 
 def check_and_do_checkin(user_id: int, username: str = None):
-    """
-    检查并执行签到
-    返回: (success: bool, points_earned: int, message: str, is_first: bool)
-    """
+    """检查并执行签到"""
     conn = get_connection()
     cur = conn.cursor()
     
-    # 获取或创建用户
     cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
     user = cur.fetchone()
     
     if not user:
-        # 创建新用户
         cur.execute(
             "INSERT INTO users (user_id, username, points, first_checkin, last_checkin_date, ad_watch_count, ad_watch_date, key_claim_count) VALUES (%s, %s, 0, TRUE, NULL, 0, NULL, 0) RETURNING *",
             (user_id, username)
@@ -258,17 +251,14 @@ def check_and_do_checkin(user_id: int, username: str = None):
     today = date.today()
     last_checkin = user['last_checkin_date']
     
-    # 检查今天是否已签到
     if last_checkin and last_checkin == today:
         cur.close()
         conn.close()
         return False, 0, "您今天已经签到过了，明天再来吧！", False
     
-    # 判断是否首次签到
     is_first = user['first_checkin']
     
     if is_first:
-        # 首次签到获得10积分
         points_earned = 10
         cur.execute(
             """UPDATE users 
@@ -280,7 +270,6 @@ def check_and_do_checkin(user_id: int, username: str = None):
             (points_earned, today, user_id)
         )
     else:
-        # 非首次签到随机获得3-8积分
         points_earned = random.randint(3, 8)
         cur.execute(
             """UPDATE users 
@@ -326,7 +315,6 @@ def get_current_key_period_start():
     if now >= today_10am:
         return today_10am
     else:
-        # 还没到今天10点，使用昨天10点
         return today_10am - timedelta(days=1)
 
 def get_next_key_reset_time():
@@ -368,11 +356,9 @@ def generate_ad_token(user_id: int) -> str:
     conn = get_connection()
     cur = conn.cursor()
     
-    # 生成唯一令牌
     raw_token = f"{user_id}_{time_module.time()}_{random.randint(100000, 999999)}"
     token = hashlib.sha256(raw_token.encode()).hexdigest()[:32]
     
-    # 保存令牌
     cur.execute(
         "INSERT INTO ad_tokens (user_id, token) VALUES (%s, %s)",
         (user_id, token)
@@ -385,14 +371,10 @@ def generate_ad_token(user_id: int) -> str:
     return token
 
 def verify_ad_token(token: str, ip_address: str = None, user_agent: str = None):
-    """
-    验证广告令牌并发放积分
-    返回: (success: bool, points: int, message: str)
-    """
+    """验证广告令牌并发放积分"""
     conn = get_connection()
     cur = conn.cursor()
     
-    # 查找令牌
     cur.execute("SELECT * FROM ad_tokens WHERE token = %s", (token,))
     token_record = cur.fetchone()
     
@@ -406,7 +388,6 @@ def verify_ad_token(token: str, ip_address: str = None, user_agent: str = None):
         conn.close()
         return False, 0, "该令牌已被使用"
     
-    # 检查令牌是否过期（5分钟内有效）
     token_age = (datetime.now() - token_record['created_at']).total_seconds()
     if token_age > 300:
         cur.close()
@@ -416,7 +397,6 @@ def verify_ad_token(token: str, ip_address: str = None, user_agent: str = None):
     user_id = token_record['user_id']
     today = get_beijing_date()
     
-    # 获取用户信息
     cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
     user = cur.fetchone()
     
@@ -425,7 +405,6 @@ def verify_ad_token(token: str, ip_address: str = None, user_agent: str = None):
         conn.close()
         return False, 0, "用户不存在"
     
-    # 检查今日观看次数
     current_count = 0
     if user['ad_watch_date'] and user['ad_watch_date'] == today:
         current_count = user['ad_watch_count'] or 0
@@ -435,7 +414,6 @@ def verify_ad_token(token: str, ip_address: str = None, user_agent: str = None):
         conn.close()
         return False, 0, "今日观看次数已达上限"
     
-    # 计算积分
     new_count = current_count + 1
     if new_count == 1:
         points = 10
@@ -444,7 +422,6 @@ def verify_ad_token(token: str, ip_address: str = None, user_agent: str = None):
     else:
         points = random.randint(3, 10)
     
-    # 更新用户积分和观看次数
     cur.execute(
         """UPDATE users 
            SET points = points + %s, 
@@ -455,7 +432,6 @@ def verify_ad_token(token: str, ip_address: str = None, user_agent: str = None):
         (points, new_count, today, user_id)
     )
     
-    # 标记令牌已使用
     cur.execute(
         """UPDATE ad_tokens 
            SET is_used = TRUE, 
@@ -466,7 +442,6 @@ def verify_ad_token(token: str, ip_address: str = None, user_agent: str = None):
         (ip_address, user_agent, token)
     )
     
-    # 记录观看日志
     cur.execute(
         """INSERT INTO ad_watch_logs 
            (user_id, token, ip_address, user_agent, is_valid, points_earned) 
@@ -502,7 +477,6 @@ def check_duplicate_ip(user_id: int, ip_address: str) -> bool:
     
     today = get_beijing_date()
     
-    # 检查同一IP今天是否给多个用户发放过积分
     cur.execute(
         """SELECT COUNT(DISTINCT user_id) as user_count 
            FROM ad_watch_logs 
@@ -516,13 +490,10 @@ def check_duplicate_ip(user_id: int, ip_address: str) -> bool:
     cur.close()
     conn.close()
     
-    # 如果同一IP今天已有超过3个不同用户，视为可疑
     if result and result['user_count'] >= 3:
         return True
     
     return False
-
-# ==================== 密钥相关函数 ====================
 
 def generate_random_key(length: int = 12) -> str:
     """生成随机密钥（大小写字母和数字）"""
@@ -554,10 +525,8 @@ def create_new_daily_keys():
     conn = get_connection()
     cur = conn.cursor()
     
-    # 将旧密钥设为无效
     cur.execute("UPDATE daily_keys SET is_active = FALSE WHERE is_active = TRUE")
     
-    # 生成新密钥
     key1 = generate_random_key(12)
     key2 = generate_random_key(12)
     today = get_beijing_date()
@@ -570,7 +539,6 @@ def create_new_daily_keys():
     
     result = cur.fetchone()
     
-    # 重置所有用户的密钥领取状态
     cur.execute(
         """UPDATE users 
            SET key_claim_count = 0, 
@@ -634,7 +602,6 @@ def get_user_key_claim_count(user_id: int) -> int:
         period_start = get_current_key_period_start()
         claim_date = result['key_claim_date']
         
-        # 检查是否在当前周期内
         if claim_date and claim_date >= period_start.replace(tzinfo=None):
             return result['key_claim_count'] or 0
         else:
@@ -659,7 +626,6 @@ def check_user_claimed_key(user_id: int, key_type: str) -> bool:
         period_start = get_current_key_period_start()
         claim_date = result['key_claim_date']
         
-        # 检查是否在当前周期内
         if claim_date and claim_date >= period_start.replace(tzinfo=None):
             if key_type == "key1":
                 return result['claimed_key1'] or False
@@ -670,14 +636,10 @@ def check_user_claimed_key(user_id: int, key_type: str) -> bool:
     return False
 
 def claim_key(user_id: int, key_value: str, username: str = None):
-    """
-    领取密钥积分
-    返回: (success: bool, points: int, message: str, key_type: str)
-    """
+    """领取密钥积分"""
     conn = get_connection()
     cur = conn.cursor()
     
-    # 获取今日密钥
     keys = get_today_keys()
     
     if not keys:
@@ -685,7 +647,6 @@ def claim_key(user_id: int, key_value: str, username: str = None):
         conn.close()
         return False, 0, "今日密钥尚未生成，请稍后再试", None
     
-    # 确定是哪个密钥
     key_type = None
     points = 0
     
@@ -700,12 +661,10 @@ def claim_key(user_id: int, key_value: str, username: str = None):
         conn.close()
         return False, 0, "❌ 密钥无效，请检查是否输入正确", None
     
-    # 获取用户信息
     cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
     user = cur.fetchone()
     
     if not user:
-        # 创建用户
         cur.execute(
             "INSERT INTO users (user_id, username, points, first_checkin, key_claim_count) VALUES (%s, %s, 0, TRUE, 0) RETURNING *",
             (user_id, username)
@@ -716,7 +675,6 @@ def claim_key(user_id: int, key_value: str, username: str = None):
     period_start = get_current_key_period_start()
     claim_date = user.get('key_claim_date')
     
-    # 检查是否在当前周期内已领取
     in_current_period = claim_date and claim_date >= period_start.replace(tzinfo=None)
     
     if in_current_period:
@@ -729,7 +687,6 @@ def claim_key(user_id: int, key_value: str, username: str = None):
             conn.close()
             return False, 0, "⚠️ 您已领取过密钥二的积分，请勿重复领取", key_type
     
-    # 更新用户积分和领取状态
     now = datetime.now()
     
     if key_type == "key1":
@@ -755,7 +712,6 @@ def claim_key(user_id: int, key_value: str, username: str = None):
             (points, period_start.replace(tzinfo=None), now, user_id)
         )
     
-    # 记录领取日志
     cur.execute(
         """INSERT INTO key_claim_logs (user_id, key_type, key_value, points_earned) 
            VALUES (%s, %s, %s, %s)""",
