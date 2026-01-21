@@ -86,7 +86,7 @@ class SecretKey(Base):
         Enum("key1", "key2", name="secret_type_enum"), nullable=False
     )
     secret_value = Column(Text, nullable=False, unique=True)
-    is_active = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=False, nullable=False)   # ← 这里使用了 Boolean
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -101,8 +101,7 @@ class AdminLink(Base):
         Enum("key1", "key2", name="link_type_enum"), nullable=False
     )
     url = Column(Text, nullable=False)
-    is_active = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=False, nullable=False)   # ← 这里也用了 Boolean
 
 
 class UserKeyUsage(Base):
@@ -116,17 +115,6 @@ class UserKeyUsage(Base):
     usage_date = Column(DateTime, nullable=False)
 
     __table_args__ = (UniqueConstraint("user_id", "secret_type", name="uq_user_type"),)
-
-
-# ----------------- 视频观看计数（新功能） -----------------
-class VideoViewUsage(Base):
-    """记录用户当天观看奖励视频的次数（上限 3）"""
-    __tablename__ = "video_view_usage"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, index=True, nullable=False)
-    usage_date = Column(DateTime, nullable=False)
-
-    __table_args__ = (UniqueConstraint("user_id", "usage_date", name="uq_user_date"),)
 
 
 # -------------------- 3️⃣ 异步 Engine & Session --------------------
