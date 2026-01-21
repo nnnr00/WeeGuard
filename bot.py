@@ -310,38 +310,34 @@ async def serve_hd_page(request: Request) -> str:
     活动中心页面，展示两个按钮：
       1️⃣ 观看视频获取积分（计数 0/3，每天 0:00 重置）
       2️⃣ 查看说明（计数 0/2，每天 10:00 重置）
-    前端会向后端请求计数信息并实时刷新。
     """
-    # 读取当前视频计数与说明计数的接口
+    # 读取当前计数并返回给前端（后面会用到）
     async def _fetch_counters():
         uid = request.headers.get("X-Telegram-User-Id")
         uid = int(uid) if uid else 0
         async with AsyncSessionLocal() as session:
-            # 视频计数
             video_row = await session.execute(
                 """
                 SELECT COUNT(*) FROM video_view_usage
-                WHERE user_id = :uid
-                  AND usage_date::date = CURRENT_DATE
+                WHERE user_id = :uid AND usage_date::date = CURRENT_DATE
                 """,
                 {"uid": uid},
             )
             video_used = video_row.scalar() or 0
 
-            # 说明计数
             explain_row = await session.execute(
                 """
                 SELECT COUNT(*) FROM explanation_view_usage
-                WHERE user_id = :uid
-                  AND usage_date::date = CURRENT_DATE
+                WHERE user_id = :uid AND usage_date::date = CURRENT_DATE
                 """,
                 {"uid": uid},
             )
             explain_used = explain_row.scalar() or 0
         return {"video_used": video_used, "explain_used": explain_used}
 
-    # 这里直接返回 HTML，JS 会在页面加载后调用 /current_counters 获取最新计数
-    return f'''
+    # 前端会轮询 /current_counters 获取最新计数
+    # 下面的 HTML 里只需要把变量插入到字符串里，使用普通字符串即可
+    html = f'''
     <!DOCTYPE html>
     <html lang="zh-CN">
     <head>
@@ -366,47 +362,45 @@ async def serve_hd_page(request: Request) -> str:
       <div class="box"><button id="btn_explain">按钮二：查看说明</button></div>
 
       <script>
-        // 读取当前计数
+        // 读取计数
         async function loadCounters(){
-          const resp = await fetch('/current_counters');
-          const data = await resp.json();
-          document.getElementById('videoCounter').innerText = `$(data.video_used)/(3)`;
-          document.getElementById('explainCounter').innerText = `$(data.explain_used)/(2)`;
+          const r = await fetch('/current_counters');
+          const d = await r.json();
+          document.getElementById('videoCounter').innerText = `$(d.video_used)/(3)`;
+          document.getElementById('explainCounter').innerText = `$(d.explain_used)/(2)`;
         }
         loadCounters();
 
-        // 读取后端链接（用于按钮二）
+        // 读取管理员绑定的链接（用于按钮二）
         async function fetchLinks(){
           const r = await fetch('/active_admin_links');
           const d = await r.json();
           return d;
         }
 
-        // 按钮一 – 观看视频（只有未满 3 次才可点）
-        document.getElementById('btn_video').onclick = async () => {
+        // 按钮一 – 观看视频（3 秒后打开奖励视频）
+        document.getElementById('btn_video').onclick = async () => {{
           const used = await fetch('/current_counters').then(r=>r.json()).then(d=>d.video_used);
           if (used >= 3){
             alert('已达今日观看上限，请明天再来');
             return;
           }
-          // 3 秒后打开奖励视频
-          setTimeout(()=>{window.location.href = '{AD_AD_URL}';}, 3000);
-        };
+          setTimeout(()=>{{window.location.href = '{AD_AD_URL}';}}, 3000);
+        }};
 
-        // 按钮二 – 查看说明（进入说明页面）
+        // 按钮二 – 查看说明（3 秒后打开说明页）
         document.getElementById('btn_explain').onclick = async () => {{
           const links = await fetchLinks();
-          // 若管理员尚未绑定密钥链接，则提示等待
           if (!links.key1 || !links.key2){
             alert('请等待管理员更换新密钥链接');
             return;
           }
-          // 3 秒后跳转到说明页面
           setTimeout(()=>{{window.location.href = '/explanation_page.html';}}, 3000);
         }};
       </script>
     </body></html>
-    '''.format(AD_AD_URL=AD_AD_URL)
+    '''
+    return html
 
 
 # ---------- 5.2 说明页面（/explanation_page.html） ----------
