@@ -1,8 +1,14 @@
 import os
 import logging
 import random
+import string
 import re
 from datetime import datetime, date, timedelta, timezone
+import threading
+import asyncio
+
+from fastapi import FastAPI, Request
+import uvicorn
 
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
@@ -12,14 +18,16 @@ from telegram.ext import (
     MessageHandler, filters, ConversationHandler
 )
 import asyncpg
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ========== 配置区（请替换） ==========
+# ========== 配置区（请替换以下内容） ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 DATABASE_URL = os.getenv("DATABASE_URL")
+PORT = int(os.getenv("PORT", "8000"))  # Railway自动设置
 
 VIP_GROUP_LINK = "https://t.me/your_vip_group_link"
 
@@ -31,20 +39,33 @@ START_VERIFY_FILE_IDS = [
 VIP_EXPLAIN_FILE_ID = "file_id_for_vip_explain"
 ORDER_INPUT_FILE_ID = "file_id_for_order_input"
 
+MOONTAG_AD_URL_BASE = "https://你的github用户名.github.io/你的仓库名/moontag.html"
+
+MOONTAG_LINK_1 = "https://otieu.com/4/10489994"
+MOONTAG_LINK_2 = "https://otieu.com/4/10489998"
+
+SECRET_LINK_1 = "https://pan.quark.cn/s/c0cac0ff25a5"
+SECRET_LINK_2 = "https://pan.quark.cn/s/b1dd3806ff25a5"
+
 BUTTON_TWO_NAME = "🔑 密钥领取"
+MAX_SECRET_REDEEM = 2
 
 BJ_TZ = timezone(timedelta(hours=8))
 
 WAITING_IMAGE = 1
+CONFIRM_DELETE = 2
 VERIFY_START, VERIFY_WAIT_ORDER = range(2)
 
 db_pool = None
+app = FastAPI()
+application = None  # Telegram Application实例
 
 # ========== 数据库初始化 ==========
 async def init_db_pool():
     global db_pool
     db_pool = await asyncpg.create_pool(dsn=DATABASE_URL)
     async with db_pool.acquire() as conn:
+        # 保留原有file_ids表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS file_ids (
             id SERIAL PRIMARY KEY,
@@ -53,6 +74,7 @@ async def init_db_pool():
             added_at TIMESTAMP DEFAULT NOW()
         )
         """)
+        # 积分表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS user_points (
             user_id BIGINT PRIMARY KEY,
@@ -60,6 +82,15 @@ async def init_db_pool():
             last_sign_date DATE
         )
         """)
+        # moontag广告观看次数表
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS moontag_ad (
+            user_id BIGINT PRIMARY KEY,
+            ad_date DATE,
+            watch_count INTEGER NOT NULL DEFAULT 0
+        )
+        """)
+        # 验证失败次数和禁用时间表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS verification_status (
             user_id BIGINT PRIMARY KEY,
@@ -67,41 +98,29 @@ async def init_db_pool():
             disabled_until TIMESTAMP
         )
         """)
+        # 中转站密钥表
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS daily_secrets (
+            id SERIAL PRIMARY KEY,
+            secret1 TEXT,
+            secret2 TEXT,
+            secret1_link TEXT,
+            secret2_link TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+        """)
+        # 用户密钥领取记录表
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_secret_redeem (
+            user_id BIGINT PRIMARY KEY,
+            redeem1 BOOLEAN DEFAULT FALSE,
+            redeem2 BOOLEAN DEFAULT FALSE,
+            last_redeem_date DATE
+        )
+        """)
 
-# ========== 工具函数 ==========
 def is_admin(user_id):
     return user_id == ADMIN_ID
-
-async def is_verification_disabled(user_id):
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT fail_count, disabled_until FROM verification_status WHERE user_id=$1", user_id)
-        if not row:
-            return False, None
-        disabled_until = row['disabled_until']
-        if disabled_until and disabled_until > datetime.utcnow():
-            return True, disabled_until
-        return False, None
-
-async def reset_verification_status(user_id):
-    async with db_pool.acquire() as conn:
-        await conn.execute("DELETE FROM verification_status WHERE user_id=$1", user_id)
-
-async def add_verification_fail(user_id):
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT fail_count FROM verification_status WHERE user_id=$1", user_id)
-        if not row:
-            fail_count = 1
-            disabled_until = None
-            await conn.execute("INSERT INTO verification_status (user_id, fail_count) VALUES ($1, $2)", user_id, fail_count)
-        else:
-            fail_count = row['fail_count'] + 1
-            disabled_until = None
-            if fail_count >= 2:
-                disabled_until = datetime.utcnow() + timedelta(hours=5)
-                await conn.execute("UPDATE verification_status SET fail_count=$1, disabled_until=$2 WHERE user_id=$3", fail_count, disabled_until, user_id)
-            else:
-                await conn.execute("UPDATE verification_status SET fail_count=$1 WHERE user_id=$2", fail_count, user_id)
-        return fail_count, disabled_until
 
 # ========== 首页 /start 命令 ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,7 +153,49 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_media_group(media_group)
 
-# ========== 验证流程 ==========
+# 拦截所有消息，非验证流程时显示首页
+async def echo_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    state = context.user_data.get("verify_state")
+    if state in [VERIFY_START, VERIFY_WAIT_ORDER]:
+        return
+    await start(update, context)
+
+# 判断验证是否禁用
+async def is_verification_disabled(user_id):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT fail_count, disabled_until FROM verification_status WHERE user_id=$1", user_id)
+        if not row:
+            return False, None
+        disabled_until = row['disabled_until']
+        if disabled_until and disabled_until > datetime.utcnow():
+            return True, disabled_until
+        return False, None
+
+# 重置验证状态
+async def reset_verification_status(user_id):
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM verification_status WHERE user_id=$1", user_id)
+
+# 增加失败次数，禁用5小时
+async def add_verification_fail(user_id):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT fail_count FROM verification_status WHERE user_id=$1", user_id)
+        if not row:
+            fail_count = 1
+            disabled_until = None
+            await conn.execute("INSERT INTO verification_status (user_id, fail_count) VALUES ($1, $2)", user_id, fail_count)
+        else:
+            fail_count = row['fail_count'] + 1
+            disabled_until = None
+            if fail_count >= 2:
+                disabled_until = datetime.utcnow() + timedelta(hours=5)
+                await conn.execute("UPDATE verification_status SET fail_count=$1, disabled_until=$2 WHERE user_id=$3", fail_count, disabled_until, user_id)
+            else:
+                await conn.execute("UPDATE verification_status SET fail_count=$1 WHERE user_id=$2", fail_count, user_id)
+        return fail_count, disabled_until
+
+# 点击开始验证按钮，显示VIP说明页
 async def start_verification_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -162,6 +223,7 @@ async def start_verification_callback(update: Update, context: ContextTypes.DEFA
     await query.message.reply_photo(VIP_EXPLAIN_FILE_ID)
     context.user_data["verify_state"] = VERIFY_START
 
+# 点击“我已付款，开始验证”，进入订单号输入页
 async def paid_start_verify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -185,6 +247,7 @@ async def paid_start_verify_callback(update: Update, context: ContextTypes.DEFAU
     await query.edit_message_text(text)
     await query.message.reply_photo(ORDER_INPUT_FILE_ID)
 
+# 订单号输入处理
 async def verify_order_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     state = context.user_data.get("verify_state")
@@ -223,7 +286,7 @@ async def verify_order_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("验证成功！欢迎加入VIP群。", reply_markup=InlineKeyboardMarkup(keyboard))
     await start(update, context)
 
-# ========== 积分签到 ==========
+# 积分签到功能
 async def get_user_points(user_id: int):
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow("SELECT points, last_sign_date FROM user_points WHERE user_id=$1", user_id)
@@ -280,7 +343,7 @@ async def sign_in_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# ========== 管理后台 File ID 管理 ==========
+# 管理后台 File ID 管理相关命令和回调
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
@@ -446,24 +509,50 @@ def register_handlers(application):
     application.add_handler(CallbackQueryHandler(del_confirm, pattern="^del_confirm_"))
     application.add_handler(CallbackQueryHandler(del_file_id, pattern="^del_"))
     application.add_handler(CallbackQueryHandler(back_admin, pattern="^back_admin$"))
+def register_handlers(application):
+    # ConversationHandler 用于图片File ID添加流程
+    conv_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(add_file_id_start, pattern="^add_file_id$"),
+            CommandHandler("id", id_command)
+        ],
+        states={
+            WAITING_IMAGE: [MessageHandler(filters.PHOTO & filters.User(ADMIN_ID), receive_image)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
 
-    # 这里后续会补充更多handler注册
+    # 注册命令处理器
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("jf", jf_command))
+    application.add_handler(CommandHandler("admin", admin))
+    application.add_handler(CommandHandler("my", my_command))  # 管理员绑定密钥命令
 
-# ========== main函数 ==========
-def main():
-    global application
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    # 注册回调查询处理器
+    application.add_handler(CallbackQueryHandler(file_id_main, pattern="^file_id_main$"))
+    application.add_handler(CallbackQueryHandler(list_file_ids, pattern="^list_file_ids$"))
+    application.add_handler(CallbackQueryHandler(del_confirm, pattern="^del_confirm_"))
+    application.add_handler(CallbackQueryHandler(del_file_id, pattern="^del_"))
+    application.add_handler(CallbackQueryHandler(back_admin, pattern="^back_admin$"))
 
-    register_handlers(application)
+    application.add_handler(CallbackQueryHandler(start_verification_callback, pattern="^start_verification$"))
+    application.add_handler(CallbackQueryHandler(paid_start_verify_callback, pattern="^paid_start_verify$"))
+    application.add_handler(CallbackQueryHandler(moontag_watch_ad_start, pattern="^moontag_watch_ad$"))
+    application.add_handler(CallbackQueryHandler(moontag_secret_start, pattern="^moontag_secret_start$"))
+    application.add_handler(CallbackQueryHandler(moontag_secret_watch_ad, pattern="^moontag_secret_watch_ad$"))
+    application.add_handler(CallbackQueryHandler(back_start, pattern="^back_start$"))
+    application.add_handler(CallbackQueryHandler(disabled_verify, pattern="^disabled_verify$"))
+    application.add_handler(CallbackQueryHandler(start_button_handler, pattern="^(show_points|sign_in|moontag_hd)$"))
 
-    # 这里后续会补充更多handler注册和定时任务启动
+    # 注册消息处理器
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), verify_order_handler))  # 订单号输入
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), secret_code_handler))   # 密钥输入
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), my_link_input_handler))  # 管理员密钥链接输入
+    application.add_handler(MessageHandler(filters.ALL & (~filters.COMMAND), echo_all))                # 非验证流程消息回首页
 
-    application.run_polling()
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(init_db_pool())
-    main()
+    # 注册签到回调
+    application.add_handler(CallbackQueryHandler(sign_in_callback, pattern="^sign_in$"))
 from fastapi import FastAPI, Request
 from telegram.ext import Application
 
@@ -720,10 +809,6 @@ def main():
     global application
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # 创建并设置事件循环（解决 apscheduler 报错）
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
     # 注册Telegram所有handler（请补充之前代码中的handler）
 
     application.add_handler(CommandHandler("my", my_command))
@@ -737,15 +822,10 @@ def main():
     scheduler.add_job(scheduled_secret_generation, "cron", hour=10, minute=0, args=[application])
     scheduler.start()
 
-    # 创建调度器，传入事件循环
-    scheduler = AsyncIOScheduler(timezone="Asia/Shanghai", event_loop=loop)
-    scheduler.add_job(scheduled_secret_generation, "cron", hour=10, minute=0, args=[application])
-    scheduler.start()
-
-    # 启动FastAPI服务线程（如果有）
+    # 启动FastAPI服务线程
     threading.Thread(target=run_fastapi, daemon=True).start()
 
-    # 启动机器人轮询
+    # 启动Telegram机器人轮询
     application.run_polling()
 
 if __name__ == "__main__":
