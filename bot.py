@@ -1,5 +1,5 @@
 # ======================================================================
-#  bot.py – 完整、已修復的 Railway 版（已移除所有 psycopg2 痕跡）
+#  bot.py – 完整、已修復的 Railway 版（已解決 StaticFiles 找不到 doc 目錄）
 # ======================================================================
 
 # ---------------------------- 1️⃣ 基礎 import ----------------------------
@@ -28,7 +28,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
-    create_async_engine,   # 只保留這個函式
+    create_async_engine,   # 只需要這個函式
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 from telegram import (
@@ -49,7 +49,7 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS_RAW = os.getenv("ADMIN_ID", "")
 DATABASE_URL = os.getenv("DATABASE_URL")
-DOMAIN = os.getenv("DOMAIN")               # 必须是完整的 https:// URL
+DOMAIN = os.getenv("DOMAIN")               # 必須是完整的 https:// URL
 
 if not (BOT_TOKEN and ADMIN_IDS_RAW and DATABASE_URL and DOMAIN):
     raise RuntimeError(
@@ -61,7 +61,7 @@ ADMIN_IDS = [int(x) for x in ADMIN_IDS_RAW.split(",") if x.strip().isdigit()]
 Base = declarative_base()
 
 
-# ---------- 3.1 表模型（保持原有結構） ----------
+# ---------- 3.1 表模型（保持原有） ----------
 class FileIDRecord(Base):
     __tablename__ = "file_ids"
     id = Column(Integer, primary_key=True)
@@ -87,7 +87,7 @@ class SecretKey(Base):
         Enum("key1", "key2", name="secret_type_enum"), nullable=False
     )
     secret_value = Column(Text, nullable=False, unique=True)
-    is_active = Column(Boolean, default=False, nullable=False)   # 需要 Boolean
+    is_active = Column(Boolean, default=False, nullable=False)   # 必須 Boolean
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -101,7 +101,7 @@ class AdminLink(Base):
         Enum("key1", "key2", name="link_type_enum"), nullable=False
     )
     url = Column(Text, nullable=False)
-    is_active = Column(Boolean, default=False, nullable=False)   # 需要 Boolean
+    is_active = Column(Boolean, default=False, nullable=False)   # Boolean
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -137,7 +137,7 @@ class ExplanationViewUsage(Base):
 
 # ---------------------------- 4️⃣ Async Engine ----------------------------
 engine: AsyncEngine = create_async_engine(
-    DATABASE_URL,          # 直接把 env 變量傳進去；SQLAlchemy 會自動使用 asyncpg
+    DATABASE_URL,          # 直接把 env 變量傳給 create_async_engine
     echo=False,
     future=True
 )
@@ -233,12 +233,7 @@ async def upsert_user_usage(
     )
 
 
-async def generate_random_string(length: int = 10) -> str:
-    alphabet = string.ascii_letters + string.digits
-    return "".join(random.choice(alphabet) for _ in range(length))
-
-
-# ---------------------------- 6️⃣ 今日密钥生成 & 私聊 ----------------------------
+# ---------------------------- 6️⃣ 今日密鑰生成與私聊 ----------------------------
 async def store_today_secrets(session: AsyncSession, bot) -> None:
     """每天 10:00 生成新的 key1 / key2，標記為 active，並私聊管理員。"""
     await session.execute("UPDATE secret_keys SET is_active = FALSE")
@@ -285,7 +280,9 @@ fastapi_app = FastAPI()
 fastapi_app.mount(
     "/static",
     StaticFiles(
-        directory=os.path.join(os.path.dirname(__file__), "doc")
+        directory=os.path.join(os.path.dirname(__file__), "doc"),
+        # 如果未来不想用StaticFiles，直接刪掉這行也行（因為我們已經在路由裡直接返回 HTML）
+        name="static",
     ),
     name="static",
 )
@@ -294,12 +291,12 @@ fastapi_app.mount(
 # ---------- 8.1 首頁（自動跳轉） ----------
 @fastapi_app.get("/", response_class=HTMLResponse)
 async def serve_root_page() -> str:
-    """首頁直接跳轉到獎勵視頻，3 秒後回到 /hd（活動中心）。"""
+    """首頁直接跳轉到獎勵影片，3 秒後回到 /hd（活動中心）。"""
     return f"""
     <html lang="zh-CN"><head><meta charset="UTF-8"><title>MoonTag 入口</title></head>
     <body style="text-align:center;margin-top:30px;">
       <div style="margin-bottom:15px;color:#555;">
-        正在跳轉至獎勵視頻，請稍等…
+        正在跳轉至獎勵視頻頁面，請稍等…
       </div>
       <script>
         window.location.href = '{AD_AD_URL}';
@@ -312,7 +309,7 @@ async def serve_root_page() -> str:
 # ---------- 8.2 活動中心頁面（/hd） ----------
 @fastapi_app.get("/hd", response_class=HTMLResponse)
 async def serve_hd_page(request: Request) -> str:
-    """活動中心頁面，顯示兩個按鈕與即時計數"""
+    """活動中心頁面，顯示兩個按鈕以及即時計數。"""
     # ---- 讀取即時計數 ----
     async def _fetch_counters():
         uid = request.headers.get("X-Telegram-User-Id")
@@ -347,64 +344,64 @@ async def serve_hd_page(request: Request) -> str:
 
     # ---------- 完整 HTML（使用 .format() 注入 AD_AD_URL） ----------
     html = """
-    <!DOCTYPE html>
-    <html lang="zh-CN">
-    <head>
-      <meta charset="UTF-8"><title>活動中心 – 開幕慶典</title>
-      <style>
-        body{{font-family:Arial,sans-serif;text-align:center;margin-top:30px;}}
-        .box{{display:inline-block;padding:12px 20px;margin:10px;border:1px solid #888;
-               border-radius:6px;background:#f9f9f9;}}
-        .counter{{font-weight:bold;color:#d00;}}
-        button{{padding:10px 18px;margin:5px;cursor:pointer;}}
-      </style>
-    </head>
-    <body>
-      <div class="box">
-        觀看視頻可獲得積分，每日最多 3 次，已觀看 <span id="videoCounter"
-        class="counter">(0/3)</span> 次。&#13;
-        說明頁面每日可點擊 2 次，已點擊 <span id="explainCounter"
-        class="counter">(0/2)</span> 次。
-      </div>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><title>活動中心 – 開幕慶典</title>
+  <style>
+    body{{font-family:Arial,sans-serif;text-align:center;margin-top:30px;}}
+    .box{{display:inline-block;padding:12px 20px;margin:10px;border:1px solid #888;
+           border-radius:6px;background:#f9f9f9;}}
+    .counter{{font-weight:bold;color:#d00;}}
+    button{{padding:10px 18px;margin:5px;cursor:pointer;}}
+    </style>
+</head>
+<body>
+  <div class="box">
+    觀看視頻可獲得積分，每日最多 3 次，已觀看 <span id="videoCounter"
+    class="counter">(0/3)</span> 次。&#13;
+    說明頁面每日可點擊 2 次，已點擊 <span id="explainCounter"
+    class="counter">(0/2)</span> 次。
+    </div>
 
-      <div class="box"><button id="btn_video">按鈕一：觀看視頻獲取積分</button></div>
-      <div class="box"><button id="btn_explain">按鈳二：查看說明</button></div>
+    <div class="box"><button id="btn_video">按鈕一：觀看視頻獲取積分</button></div>
+    <div class="box"><button id="btn_explain">按鈳二：查看說明</button></div>
 
-      <script>
-        async function loadCounters(){
-          const r = await fetch('/current_counters');
-          const d = await r.json();
-          document.getElementById('videoCounter').innerText = `$(d.video_used)/(3)`;
-          document.getElementById('explainCounter').innerText = `$(d.explain_used)/(2)`;
+    <script>
+      async function loadCounters(){
+        const r = await fetch('/current_counters');
+        const d = await r.json();
+        document.getElementById('videoCounter').innerText = `$(d.video_used)/(3)`;
+        document.getElementById('explainCounter').innerText = `$(d.explain_used)/(2)`;
+      }
+      loadCounters();
+
+      async function fetchLinks(){
+        const r = await fetch('/active_admin_links');
+        const d = await r.json();
+        return d;
+      }
+
+      // 按鈕一 – 觀看視頻（3 秒後打開獎勵視頻）
+      document.getElementById('btn_video').onclick = async () => {{
+        const used = await fetch('/current_counters').then(r=>r.json()).then(d=>d.video_used);
+        if (used >= 3){
+          alert('已達今日觀看上限，請明天再來');
+          return;
         }
-        loadCounters();
+        setTimeout(()=>{{window.location.href = '{AD_AD_URL}';}}, 3000);
+      }};
 
-        async function fetchLinks(){
-          const r = await fetch('/active_admin_links');
-          const d = await r.json();
-          return d;
+      // 按鈳二 – 查看說明（3 秒後打開說明頁）
+      document.getElementById('btn_explain').onclick = async () => {{
+        const links = await fetchLinks();
+        if (!links.key1 || !links.key2){
+          alert('請等待管理者更換新密鑰鏈接');
+          return;
         }
-
-        // 按鈕一 – 觀看視頻（3 秒後打開獎勵視頻）
-        document.getElementById('btn_video').onclick = async () => {{
-          const used = await fetch('/current_counters').then(r=>r.json()).then(d=>d.video_used);
-          if (used >= 3){
-            alert('已達今日觀看上限，請明天再來');
-            return;
-          }
-          setTimeout(()=>{{window.location.href = '{AD_AD_URL}';}}, 3000);
-        }};
-
-        // 按鈳二 – 查看說明（3 秒後打開說明頁）
-        document.getElementById('btn_explain').onclick = async () => {{
-          const links = await fetchLinks();
-          if (!links.key1 || !links.key2){
-            alert('請等待管理者更換新密鑰鏈接');
-            return;
-          }
-          setTimeout(()=>{{window.location.href = '/explanation_page.html';}}, 3000);
-        }};
-      </script>
+        setTimeout(()=>{{window.location.href = '/explanation_page.html';}}, 3000);
+      }};
+    </script>
     </body></html>
     """.format(AD_AD_URL=AD_AD_URL)
 
@@ -416,48 +413,48 @@ async def serve_hd_page(request: Request) -> str:
 async def serve_explanation_page() -> str:
     """說明頁面，展示獲取密鑰的完整步驟並顯示計數（0/2）。"""
     return """
-    <!DOCTYPE html>
-    <html lang="zh-CN">
-    <head>
-      <meta charset="UTF-8"><title>密鑰取得說明</title>
-      <style>
-        body{{font-family:Arial,sans-serif;text-align:center;margin-top:30px;}}
-        .box{{display:inline-block;padding:12px 20px;margin:10px;border:1px solid #888;
-               border-radius:6px;background:#f9f9f9;}}
-        .counter{{font-weight:bold;color:#d00;}}
-      </style>
-    </head>
-    <body>
-      <div class="box">
-        <strong>獲取密鑰的完整步驟：</strong><br>
-        1️⃣ 打開管理員綁定的網盤鏈接，文件名即為密鑰。<br>
-        2️⃣ 將文件下載後保存到夸克網盤。<br>
-        3️⃣ 為文件重新命名（建議使用英文或數字），<br>
-           然後複製 **新文件名** 並在此頁面粘貼發送給機器人。<br>
-        4️⃣ 機器人會返回積分（首次 8，第二次 6），並在成功後給出提示。
-      </div>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><title>密钥获取说明</title>
+  <style>
+    body{{font-family:Arial,sans-serif;text-align:center;margin-top:30px;}}
+    .box{display:inline-block;padding:12px 20px;margin:10px;border:1px solid #888;
+           border-radius:6px;background:#f9f9f9;}
+    .counter{font-weight:bold;color:#d00;}
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <strong>获取密钥的完整步骤：</strong><br>
+      1️⃣ 打開管理員綁定的網盤鏈接，文件名即為密鑰。<br>
+      2️⃣ 將文件下載後保存到夸克網盤。<br>
+      3️⃣ 為文件重新命名（建議使用英文或數字），<br>
+         然後複製 **新文件名** 並在此頁面粘貼發送給機器人。<br>
+      4️⃣ 機器人會返回積分（首次 8，第二次 6），並在成功後給出提示。
+    </div>
 
-      <div class="counter">（已使用 0/2 次今日）</div>
+    <div class="counter">（已使用 0/2 次今日）</div>
 
-      <script>
-        async function refreshCounter(){
-          const r = await fetch('/explanation_counter');
-          const d = await r.json();
-          document.querySelector('.counter').innerText = \`已使用 ${d.used}/2 次今日\`;
-        }
-        refreshCounter();
+    <script>
+      async function refreshCounter(){
+        const r = await fetch('/explanation_counter');
+        const d = await r.json();
+        document.querySelector('.counter').innerText = \`已使用 ${d.used}/2 次今日\`;
+      }
+      refreshCounter();
 
-        // 5 秒後自動返回活動中心（可自行修改）
-        setTimeout(()=>{{window.location.href = '/hd';}}, 5000);
-      </script>
+      // 5 秒后自動返回活動中心（可自行修改）
+      setTimeout(()=>{{window.location.href = '/hd';}}, 5000);
+    </script>
     </body></html>
     """
-
+    
 
 # ---------- 8.4 即時計數 API ----------
 @fastapi_app.get("/current_counters", response_model=Dict[str, int])
 async def current_counters(request: Request):
-    """前端輪詢此介面以獲取：視頻觀看次數（0/3）和說明點擊次數（0/2）。"""
+    """前端輪詢此接口以獲取：視頻觀看次數（0/3）和說明點擊次數（0/2）。"""
     uid = request.headers.get("X-Telegram-User-Id")
     uid = int(uid) if uid else 0
     async with AsyncSessionLocal() as session:
@@ -495,7 +492,7 @@ async def active_admin_links():
 # ---------- 8.6 說明頁面計數 ----------
 @fastapi_app.get("/explanation_counter", response_model=Dict[str, int])
 async def explanation_counter(request: Request):
-    """返回當前用戶今日對說明頁面的點擊次數（0、1、2）。"""
+    """返回当前用户今日對說明頁面的點擊次數（0、1、2）。"""
     uid = request.headers.get("X-Telegram-User-Id")
     uid = int(uid) if uid else 0
     async with AsyncSessionLocal() as session:
@@ -512,7 +509,7 @@ async def explanation_counter(request: Request):
 # ---------- 8.7 記錄說明頁面點擊 ----------
 @fastapi_app.post("/record_explanation_click", status_code=status.HTTP_200_OK)
 async def record_explanation_click(request: Request):
-    """當用戶成功打開說明頁面時記錄一次點擊（用於計數）。"""
+    """在用戶成功打開說明頁面後記錄一次點擊（用於計數）。"""
     uid = request.headers.get("X-Telegram-User-Id")
     uid = int(uid) if uid else 0
     async with AsyncSessionLocal() as session:
@@ -540,7 +537,7 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
     """
     1️⃣ 取出當前活躍的密鑰 (key1 / key2)  
     2️⃣ 與用戶提交的 secret 進行匹配  
-    3️⃣ 若已使用直接拒絕；否則授予 8（key1）或 6（key2）积分  
+    3️⃣ 若已使用直接拒絕；否則授予 8（key1）或 6（key2）積分  
     """
     user_id = request.headers.get("X-Telegram-User-Id")
     if not user_id:
@@ -590,7 +587,7 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
                 status_code=403,
             )
 
-        # 积分
+        # 積分
         points_to_add = 8 if matched_type == "key1" else 6
 
         # 記錄使用
@@ -656,7 +653,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "🛠️ 管理後台已打開，請點按鈕",
+        "🛠️ 管理後台已打開，請點選按鈕",
         reply_markup=reply_markup
     )
 
@@ -785,14 +782,14 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     """
     /my 的完整行為：
       • 第一次 → “請輸入密鑰一鏈結”
-      • 輸入鏈結 → 保存為 key1（8积分）
+      • 輸入鏈結 → 儲存為 key1（8積分）
       • 再次發送 /my → “請輸入密鑰二鏈結”
-      • 輸入鏈結 → 保存為 key2（6积分）
-      • 任何時候單獨發送 /my（不帶狀態） → 私聊管理員當前 key1、key2 與對應積分
+      • 輸入鏈結 → 儲存為 key2（6積分）
+      • 任何時候單独發送 /my（不帶狀態） → 私聊管理員當前 key1、key2 與對應積分
     """
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ 您不是管理員")
+        await update.message.reply_text("❌ 只有管理員可以使用此命令")
         return
 
     state = context.user_data.get("my_state")
@@ -841,7 +838,7 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("請輸入密鑰一鏈結")
         return
 
-    # 若狀態不匹配，直接返回已繫定的鏈結資訊
+    # 若狀態不匹配，直接返回已綁定的鏈結資訊
     async with AsyncSessionLocal() as session:
         rows = await session.execute(
             "SELECT link_type, url FROM admin_links WHERE is_active = TRUE"
@@ -886,7 +883,7 @@ scheduler = AsyncIOScheduler()
 
 def start_scheduler(app: Application):
     """
-    注冊兩個每日任務：
+    註冊兩個每日任務：
       • 0:00（Asia/Shanghai） → 重置視頻計數（0/3）
       • 10:00（Asia/Shanghai） → 重置說明計數並生成新密鑰（並私聊管理員）
     """
@@ -915,17 +912,16 @@ def start_scheduler(app: Application):
 
 # ---------------------------- 12️⃣ 主入口 ----------------------------
 async def main() -> None:
-    """
-    主入口：
+    """程式入口：
       1️⃣ 創建 Telegram Bot 並註冊所有處理器
       2️⃣ 啟動 APScheduler（需要把當前的 telegram_app 傳給它，以便在私聊中使用 bot）
-      3️⃣ 通過 uvicorn 同時運行 FastAPI（埠號 8000）
+      3️⃣ 通過 uvicorn 同時運行 FastAPI（端口 8000）
     """
     # ① Telegram Bot
     telegram_app = Application.builder().token(BOT_TOKEN).build()
     register_handlers(telegram_app)
 
-    # ② 創建 Scheduler（需要把當前的 telegram_app 傳給它，以便在私聊中使用 bot）
+    # ② Scheduler（需要把當前的 telegram_app 傳給它，以便在私聊中使用 bot）
     start_scheduler(telegram_app)
 
     # ③ FastAPI + uvicorn
