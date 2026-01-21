@@ -1,8 +1,8 @@
 # ======================================================================
-#  bot.py – 完整、已修復的 Railway 版（已移除 psycopg2，只用 asyncpg）
+#  bot.py – 完整、已修復的 Railway 版（已移除對 psycopg2 的依賴）
 # ======================================================================
 
-# ---------------------------- 1️⃣ 基础 import ----------------------------
+# ---------------------------- 1️⃣ 基礎 import ----------------------------
 import os
 import logging
 import random
@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import (
-    Boolean,               # 必须的
+    Boolean,               # 必須保留
     Column,
     DateTime,
     Enum,
@@ -28,7 +28,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
-    create_async_engine,   # <-- 只用這個函式
+    create_async_engine,   # 只需要這個函式
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 from telegram import (
@@ -45,11 +45,11 @@ from telegram.ext import (
     filters,
 )
 
-# ---------------------------- 2️⃣ 环境变量 ----------------------------
+# ---------------------------- 2️⃣ 環境變數 ----------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS_RAW = os.getenv("ADMIN_ID", "")
 DATABASE_URL = os.getenv("DATABASE_URL")
-DOMAIN = os.getenv("DOMAIN")               # 必须是完整的 https:// URL
+DOMAIN = os.getenv("DOMAIN")               # 完整 https:// URL
 
 if not (BOT_TOKEN and ADMIN_IDS_RAW and DATABASE_URL and DOMAIN):
     raise RuntimeError(
@@ -57,11 +57,11 @@ if not (BOT_TOKEN and ADMIN_IDS_RAW and DATABASE_URL and DOMAIN):
     )
 ADMIN_IDS = [int(x) for x in ADMIN_IDS_RAW.split(",") if x.strip().isdigit()]
 
-# ---------------------------- 3️⃣ SQLAlchemy 基础 ----------------------------
+# ---------------------------- 3️⃣ SQLAlchemy 基礎 ----------------------------
 Base = declarative_base()
 
 
-# ---------- 3.1 表模型（保持原有结构） ----------
+# ---------- 3.1 表模型（保持原有結構） ----------
 class FileIDRecord(Base):
     __tablename__ = "file_ids"
     id = Column(Integer, primary_key=True)
@@ -137,7 +137,7 @@ class ExplanationViewUsage(Base):
 
 # ---------------------------- 4️⃣ Async Engine ----------------------------
 engine: AsyncEngine = create_async_engine(
-    DATABASE_URL,          # 直接把环境变量交给 create_async_engine
+    DATABASE_URL,          # 直接使用環境變數，SQLAlchemy 會自動偵測已安裝 asyncpg
     echo=False,
     future=True
 )
@@ -145,12 +145,12 @@ AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=F
 
 
 async def get_async_session() -> AsyncSession:
-    """Yield an AsyncSession for convenient `async with` usage."""
+    """提供一個 async session 的生成器，使用 `async with` 即可。"""
     async with AsyncSessionLocal() as session:
         yield session
 
 
-# ---------------------------- 5️⃣ 辅助函数 ----------------------------
+# ---------------------------- 5️⃣ 輔助函式 ----------------------------
 async def store_file_id(session: AsyncSession, fid: str) -> None:
     result = await session.execute(
         "SELECT 1 FROM file_ids WHERE file_id = :fid", {"fid": fid}
@@ -208,7 +208,8 @@ async def upsert_user_usage(
     )
     existing = await session.execute(
         """
-        SELECT * FROM user_ad_usage
+        SELECT *
+        FROM user_ad_usage
         WHERE user_id = :uid AND usage_date::date = :today
         """,
         {"uid": user_id, "today": today_start},
@@ -237,9 +238,9 @@ async def generate_random_string(length: int = 10) -> str:
     return "".join(random.choice(alphabet) for _ in range(length))
 
 
-# ---------------------------- 6️⃣ 生成每日密钥并私聊管理员 ----------------------------
+# ---------------------------- 6️⃣ 今日密鑰生成 & 私聊 ----------------------------
 async def store_today_secrets(session: AsyncSession, bot) -> None:
-    """每天 10:00 生成新的 key1 / key2，標記為 active，並私聊管理員。"""
+    """每天 10:00 生成新 key1 / key2，標記為 active，並私聊管理員。"""
     await session.execute("UPDATE secret_keys SET is_active = FALSE")
     key1 = await generate_random_string()
     key2 = await generate_random_string()
@@ -266,7 +267,7 @@ async def store_today_secrets(session: AsyncSession, bot) -> None:
             logging.warning(f"Failed to PM admin {admin_id}: {e}")
 
 
-# ---------------------------- 7️⃣ 每日计数重置 ----------------------------
+# ---------------------------- 7️⃣ 每日計數重置 ----------------------------
 async def reset_video_counter_daily(session: AsyncSession) -> None:
     await session.execute("DELETE FROM video_view_usage")
     await session.commit()
@@ -279,7 +280,7 @@ async def reset_explanation_counter_daily(session: AsyncSession) -> None:
     logging.info("Daily explanation view counter reset.")
 
 
-# ---------------------------- 8️⃣ FastAPI 应用 ----------------------------
+# ---------------------------- 8️⃣ FastAPI ----------------------------
 fastapi_app = FastAPI()
 fastapi_app.mount(
     "/static",
@@ -290,15 +291,15 @@ fastapi_app.mount(
 )
 
 
-# ---------- 8.1 首页（自动跳转） ----------
+# ---------- 8.1 首頁（自動跳轉） ----------
 @fastapi_app.get("/", response_class=HTMLResponse)
 async def serve_root_page() -> str:
-    """首页直接跳转到奖励视频，3 秒后回到 /hd（活动中心）。"""
+    """首頁直接跳轉到奖勵視頻，3 秒後回到 /hd（活動中心）。"""
     return f"""
     <html lang="zh-CN"><head><meta charset="UTF-8"><title>MoonTag 入口</title></head>
     <body style="text-align:center;margin-top:30px;">
       <div style="margin-bottom:15px;color:#555;">
-        正在跳转至奖励视频页面，请稍候…
+        正在跳轉至奖勵視頻，請稍等…
       </div>
       <script>
         window.location.href = '{AD_AD_URL}';
@@ -308,11 +309,11 @@ async def serve_root_page() -> str:
     """
 
 
-# ---------- 8.2 活动中心页面（/hd） ----------
+# ---------- 8.2 活動中心頁面（/hd） ----------
 @fastapi_app.get("/hd", response_class=HTMLResponse)
 async def serve_hd_page(request: Request) -> str:
-    """活动中心页面，包含按钮一（0/3）和按钮二（0/2）以及计数刷新脚本。"""
-    # ---- 读取当前计数 ----
+    """活動中心頁面，顯示兩個按鈕以及即時計數。"""
+    # ---- 讀取當前計數 ----
     async def _fetch_counters():
         uid = request.headers.get("X-Telegram-User-Id")
         uid = int(uid) if uid else 0
@@ -336,7 +337,7 @@ async def serve_hd_page(request: Request) -> str:
             explain_used = explain_row.scalar() or 0
         return {"video_used": video_used, "explain_used": explain_used}
 
-    # ---- 读取已绑定的 admin 链接 ----
+    # ---- 讀取已綁定的管理员链接 ----
     async def _fetch_links():
         async with AsyncSessionLocal() as session:
             rows = await session.execute(
@@ -344,7 +345,7 @@ async def serve_hd_page(request: Request) -> str:
             )
             return {row[0]: row[1] for row in rows}
 
-    # ---- HTML（全局字符串，使用 .format() 注入 AD_AD_URL） ----
+    # ---- HTML（全局字串，用 .format() 注入 AD_AD_URL） ----
     html = """
     <!DOCTYPE html>
     <html lang="zh-CN">
@@ -384,7 +385,7 @@ async def serve_hd_page(request: Request) -> str:
           return d;
         }
 
-        // 按钮一 – 观看视频（3 秒后打开奖励视频）
+        // 按钮一 – 観看视频（3 秒后打开奖励视频）
         document.getElementById('btn_video').onclick = async () => {{
           const used = await fetch('/current_counters').then(r=>r.json()).then(d=>d.video_used);
           if (used >= 3){
@@ -410,10 +411,10 @@ async def serve_hd_page(request: Request) -> str:
     return html
 
 
-# ---------- 8.3 说明页面（/explanation_page.html） ----------
+# ---------- 8.3 說明頁面（/explanation_page.html） ----------
 @fastapi_app.get("/explanation_page.html", response_class=HTMLResponse)
 async def serve_explanation_page() -> str:
-    """说明页面，展示获取密钥的完整步骤并计数（0/2）。"""
+    """說明頁面，顯示獲取密鑰的完整步驟並顯示計數（0/2）。"""
     return """
     <!DOCTYPE html>
     <html lang="zh-CN">
@@ -446,17 +447,17 @@ async def serve_explanation_page() -> str:
         }
         refreshCounter();
 
-        // 5 秒后自动返回活动中心（可自行修改）
+        // 5 秒后自動返回活動中心（可自行修改）
         setTimeout(()=>{{window.location.href = '/hd';}}, 5000);
       </script>
     </body></html>
     """
 
 
-# ---------- 8.4 当前计数 API ----------
+# ---------- 8.4 即時計數 API ----------
 @fastapi_app.get("/current_counters", response_model=Dict[str, int])
 async def current_counters(request: Request):
-    """前端轮询获取：视频观看次数（0/3）和说明点击次数（0/2）。"""
+    """前端輪詢此介面获取：视频观看次数（0/3）和说明点击次数（0/2）。"""
     uid = request.headers.get("X-Telegram-User-Id")
     uid = int(uid) if uid else 0
     async with AsyncSessionLocal() as session:
@@ -483,7 +484,7 @@ async def current_counters(request: Request):
 # ---------- 8.5 管理员已绑定的链接 ----------
 @fastapi_app.get("/active_admin_links", response_model=Dict[str, str])
 async def active_admin_links():
-    """返回当前活跃的 key1 / key2 URL（若不存在返回空字典）。"""
+    """返回當前活跃的 key1 / key2 URL（若不存在返回空字典）。"""
     async with AsyncSessionLocal() as session:
         rows = await session.execute(
             "SELECT link_type, url FROM admin_links WHERE is_active = TRUE"
@@ -491,10 +492,10 @@ async def active_admin_links():
         return {row[0]: row[1] for row in rows}
 
 
-# ---------- 8.6 说明页面计数 ----------
+# ---------- 8.6 說明頁面計數 ----------
 @fastapi_app.get("/explanation_counter", response_model=Dict[str, int])
 async def explanation_counter(request: Request):
-    """返回当前用户今日对说明页面的点击次数（0、1、2）。"""
+    """返回当前用户今日对說明頁面的點擊次數（0、1、2）。"""
     uid = request.headers.get("X-Telegram-User-Id")
     uid = int(uid) if uid else 0
     async with AsyncSessionLocal() as session:
@@ -508,10 +509,10 @@ async def explanation_counter(request: Request):
         return {"used": row.scalar() or 0}
 
 
-# ---------- 8.7 记录说明页面点击 ----------
+# ---------- 8.7 記錄說明頁面點擊 ----------
 @fastapi_app.post("/record_explanation_click", status_code=status.HTTP_200_OK)
 async def record_explanation_click(request: Request):
-    """用户成功打开说明页面后记录一次点击（用于计数）。"""
+    """在用户成功打开說明頁面后记录一次点击（用于計數）。"""
     uid = request.headers.get("X-Telegram-User-Id")
     uid = int(uid) if uid else 0
     async with AsyncSessionLocal() as session:
@@ -529,7 +530,7 @@ async def record_explanation_click(request: Request):
     return {"status": "recorded"}
 
 
-# ---------- 8.8 奖励视频校验（原 rewarded_ad 逻辑） ----------
+# ---------- 8.8 奖励視頻驗證（原 rewarded_ad 邏輯） ----------
 class RewardRequest(BaseModel):
     secret: str   # 用户粘贴的密钥
 
@@ -537,9 +538,9 @@ class RewardRequest(BaseModel):
 @fastapi_app.post("/validate_key", status_code=status.HTTP_200_OK)
 async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSONResponse:
     """
-    1️⃣ 取出当前活跃的密钥 (key1 / key2)  
-    2️⃣ 與用戶提交的 secret 進行匹配  
-    3️⃣ 若已使用則直接拒絕；否則授予 8（key1）或 6（key2）积分  
+    1️⃣ 取出当前活跃的密钥（key1 / key2）  
+    2️⃣ 與用戶提交的 secret 进行匹配  
+    3️⃣ 若已使用直接拒绝；否則授予 8（key1）或 6（key2）积分  
     """
     user_id = request.headers.get("X-Telegram-User-Id")
     if not user_id:
@@ -547,7 +548,7 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
     user_id = int(user_id)
 
     async with AsyncSessionLocal() as session:
-        # 取出當前活躍的密钥
+        # 取出当前活跃的密钥
         result = await session.execute(
             "SELECT secret_type, secret_value FROM secret_keys WHERE is_active = TRUE"
         )
@@ -585,7 +586,7 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
         )
         if usage_row.scalar():
             return JSONResponse(
-                content={"status": "rejected", "message": "今日已使用過该密钥"},
+                content={"status": "rejected", "message": "今日已使用过该密钥"},
                 status_code=403,
             )
 
@@ -600,7 +601,7 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
         )
         session.add(usage_record)
 
-        # 同时把这筆积分寫入原有的广告奖励表（保持原有计数邏輯）
+        # 同时把这筆积分写入原有的 ad_usage 表（保持原有計數邏輯）
         await upsert_user_usage(session, user_id, points_to_add, reward_source="key_claim")
         await session.commit()
 
@@ -610,13 +611,13 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
         )
 
 
-# ---------------------------- 9️⃣ Telegram Bot 处理 ----------------------------
+# ---------------------------- 9️⃣ Telegram Bot 處理 ----------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/start → 三个按鈕"""
+    """ /start → 三個按鈕 """
     keyboard = [
         [
             InlineKeyboardButton(
@@ -766,7 +767,7 @@ async def confirm_deletion_button(update: Update, context: ContextTypes.DEFAULT_
     )
 
 
-# ---------- 9.3 其他占位按钮 ----------
+# ---------- 9.3 其他占位按鈕 ----------
 async def handle_start_verification_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -787,7 +788,7 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
       • 输入链接 → 保存为 key1（8积分）
       • 再次发送 /my → “请输入密钥二链接”
       • 输入链接 → 保存为 key2（6积分）
-      • 任何時候單独发送 /my（不帶狀態） → 私聊管理員當前 key1、key2 與對應积分
+      • 任何時候單獨发送 /my（不带狀態） → 私聊管理员当前 key1、key2 與對應积分
     """
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
@@ -797,7 +798,7 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     state = context.user_data.get("my_state")
     text = update.message.text.strip()
 
-    # -------- 状态机 ----------
+    # -------- 狀態機 ----------
     if state == "awaiting_key1":
         async with AsyncSessionLocal() as session:
             from urllib.parse import urlparse
@@ -834,13 +835,13 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         context.user_data.pop("my_state")
         return
 
-    # 默认情况（第一次或状态已清除）
+    # 預設情況（第一次或狀態已清除）
     if state is None:
         context.user_data["my_state"] = "awaiting_key1"
         await update.message.reply_text("请输入密钥一链接")
         return
 
-    # 若状态不匹配，直接返回已绑定的链接信息
+    # 若狀態不匹配，直接返回已繫定的鏈接資訊
     async with AsyncSessionLocal() as session:
         rows = await session.execute(
             "SELECT link_type, url FROM admin_links WHERE is_active = TRUE"
@@ -855,7 +856,7 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 # ---------------------------- 10️⃣ 注册所有 Handler ----------------------------
 def register_handlers(app: Application) -> None:
-    # 基础命令
+    # 基础指令
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("my", my_command))
@@ -871,7 +872,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(handle_start_verification_button, pattern="^button_start_verification$"))
     app.add_handler(CallbackQueryHandler(handle_show_points_button, pattern="^button_show_points$"))
 
-    # 兼容旧回调（如果还有）
+    # 兼容旧回调（如果還有）
     app.add_handler(CallbackQueryHandler(handle_start_verification_button, pattern="^menu_start_verification$"))
     app.add_handler(CallbackQueryHandler(handle_show_points_button, pattern="^menu_show_points$"))
 
@@ -916,7 +917,7 @@ def start_scheduler(app: Application):
 async def main() -> None:
     """
     程序入口：
-      1️⃣ 创建 Telegram Application 并注册所有处理器
+      1️⃣ 创建 Telegram Bot 并註冊所有处理器
       2️⃣ 启动 APScheduler（需要把当前的 telegram_app 传进去，以便在私聊里使用 bot）
       3️⃣ 通过 uvicorn 同时运行 FastAPI（端口 8000）
     """
