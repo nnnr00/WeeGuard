@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>观看视频获取积分</title>
+    <style>
+        body{
+            font-family:Arial,Helvetica,sans-serif;
+            text-align:center;
+            margin-top:30px;
+        }
+        .button{
+            background:#4CAF50;
+            color:#ffffff;
+            padding:12px 24px;
+            margin:10px;
+            border:none;
+            border-radius:5px;
+            cursor:pointer;
+            font-size:16px;
+        }
+        .button:disabled{
+            background:#bbbbbb;
+            cursor:not-allowed;
+        }
+        #status{
+            margin-top:15px;
+            font-size:14px;
+            color:#555;
+        }
+    </style>
+</head>
+<body>
+    <h2>🎬 观看视频获取积分</h2>
+    <div id="ad-container">
+        <!-- 这里显示 “观看广告” 按钮 -->
+        <button id="watch-button" class="button">观看广告</button>
+    </div>
+
+    <!-- 用来展示状态信息（播放中、已完成、出错等） -->
+    <div id="status"></div>
+
+    <!-- ==================== SDK 脚本 ==================== -->
+    <!-- 
+        这里使用的 SDK 地址和 data 参数正是你提供的示例
+        <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
+     -->
+    <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
+
+    <!-- ==================== 页面逻辑 ==================== -->
+    <script>
+        // ---------- 取得页面传递的 user_id ----------
+        // 页面的 URL 形如：/webapp?user_id=123456789
+        const urlParams = new URLSearchParams(window.location.search);
+        const userId = urlParams.get('user_id') || '0';
+
+        // ---------- 缓存引用 ----------
+        const btn      = document.getElementById('watch-button');
+        const status   = document.getElementById('status');
+
+        // ---------- 点击按钮观看广告 ----------
+        btn.addEventListener('click', async () => {
+            // 防止重复点击
+            if (btn.classList.contains('disabled')) { return; }
+            btn.classList.add('disabled');
+            btn.disabled = true;
+            status.textContent = '⏳ 正在播放，请观看至结束…';
+
+            // ---------- 调用 SDK 显示奖励广告 ----------
+            // 这里的 show_10489957('pop') 会返回一个 Promise
+            show_10489957('pop')
+                .then(() => {
+                    // ✅ 用户完整观看了视频，向后端报告完成
+                    return fetch('/ad_completed', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: userId })
+                    });
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'ok') {
+                        status.textContent = '✅ 积分已发放，感谢观看！';
+                    } else {
+                        status.textContent = '❌ 获取积分失败，请稍后重试。';
+                    }
+                })
+                .catch(err => {
+                    // ❌ 用户提前关闭或出现错误，状态恢复并提示
+                    console.error('广告播放错误', err);
+                    status.textContent = '🚫 观看已中止，未获取积分。';
+                    // 重新启用按钮，让用户可以再次尝试（次日之后才会重置计数）
+                    btn.classList.remove('disabled');
+                    btn.disabled = false;
+                });
+        });
+    </script>
+</body>
+</html>
