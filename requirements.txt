@@ -1,9 +1,5 @@
-python-telegram-bot==20.7
-SQLAlchemy==2.0.30
-asyncpg==0.29.0
-python-dotenv==1.0.1
-fastapi==0.110.0
-uvicorn[standard]==0.23.0
-apscheduler==3.10.4
-python-dateutil==2.9.0.post0
-psycopg2-binary==2.9.9
+python-telegram-bot==20.8
+fastapi==0.112.0
+uvicorn[standard]==0.29.0
+aiosqlite==0.20.0
+pytz==2024.2
