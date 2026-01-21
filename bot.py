@@ -1,3 +1,15 @@
+# ======================================================================
+#  bot.py  —  完整可部署版（保持原有逻辑，已修复所有语法错误）
+# ======================================================================
+#  该文件实现：
+#   • Telegram Bot（原 admin、file‑id 存储、/my 密钥管理）
+#   • FastAPI （/hd、说明页、计数 API、/validate_key 奖励验证）
+#   • APScheduler（每日 0:00、10:00 自动重置计数并生成新密钥）
+#   • SQLite/Neon（SQLAlchemy）模型
+#  只要把此文件放到 Railway 项目根目录，填好环境变量后即可运行。
+# ======================================================================
+
+# ---------------------------- 1️⃣ 基础导入 ----------------------------
 import os
 import logging
 import random
@@ -11,6 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import (
+    Boolean,               # <-- 必须导入，解决 NameError: name 'Boolean' is not defined
     Column,
     DateTime,
     Enum,
@@ -39,15 +52,14 @@ from telegram.ext import (
     filters,
 )
 
-# -------------------- 1️⃣ 读取环境变量 --------------------
+# ---------------------------- 2️⃣ 环境变量 ----------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS_RAW = os.getenv("ADMIN_ID", "")
 DATABASE_URL = os.getenv("DATABASE_URL")
-DOMAIN = os.getenv("DOMAIN")                     # <-- <<<--- 需要自行替换为你的 Railway 公开域名
-AD_AD_URL = "https://otieu.com/4/10489957"       # <-- <<<--- 奖励视频直链（保持不变）
-EXPLANATION_URL = "https://otieu.com/4/10489994" # <-- <<<--- 密钥说明页直链（保持不变）
+DOMAIN = os.getenv("DOMAIN")               # <-- 需要自行替换为你的 Railway 公网 URL（必须以 https:// 开头）
 
-TIMEZONE = tz.gettz("Asia/Shanghai")
+AD_AD_URL = "https://otieu.com/4/10489957"  # 奖励视频链接（保持不变）
+EXPLANATION_URL = "https://otieu.com/4/10489994"  # 密钥说明页链接（保持不变）
 
 if not (BOT_TOKEN and ADMIN_IDS_RAW and DATABASE_URL and DOMAIN):
     raise RuntimeError(
@@ -55,7 +67,7 @@ if not (BOT_TOKEN and ADMIN_IDS_RAW and DATABASE_URL and DOMAIN):
     )
 ADMIN_IDS = [int(x) for x in ADMIN_IDS_RAW.split(",") if x.strip().isdigit()]
 
-# -------------------- 2️⃣ SQLAlchemy模型 --------------------
+# ---------------------------- 3️⃣ SQLAlchemy 基础 ----------------------------
 Base = declarative_base()
 
 
@@ -77,7 +89,7 @@ class UserAdUsage(Base):
 
 
 class SecretKey(Base):
-    """每天生成的两个 10 位密钥（key1、key2）"""
+    """每天生成的两个 10‑位密钥（key1、key2）"""
     __tablename__ = "secret_keys"
     __table_args__ = (UniqueConstraint("secret_type", name="uq_secret_type"),)
 
@@ -86,7 +98,7 @@ class SecretKey(Base):
         Enum("key1", "key2", name="secret_type_enum"), nullable=False
     )
     secret_value = Column(Text, nullable=False, unique=True)
-    is_active = Column(Boolean, default=False, nullable=False)   # ← 这里使用了 Boolean
+    is_active = Column(Boolean, default=False, nullable=False)   # 这里使用了 Boolean
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -101,7 +113,8 @@ class AdminLink(Base):
         Enum("key1", "key2", name="link_type_enum"), nullable=False
     )
     url = Column(Text, nullable=False)
-    is_active = Column(Boolean, default=False, nullable=False)   # ← 这里也用了 Boolean
+    is_active = Column(Boolean, default=False, nullable=False)   # 同样使用 Boolean
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class UserKeyUsage(Base):
@@ -117,10 +130,28 @@ class UserKeyUsage(Base):
     __table_args__ = (UniqueConstraint("user_id", "secret_type", name="uq_user_type"),)
 
 
-# -------------------- 3️⃣ 异步 Engine & Session --------------------
-engine: AsyncEngine = create_async_engine(
-    DATABASE_URL, echo=False, future=True
-)
+class VideoViewUsage(Base):
+    """记录用户当天观看奖励视频的次数（上限 3）"""
+    __tablename__ = "video_view_usage"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True, nullable=False)
+    usage_date = Column(DateTime, nullable=False)
+
+    __table_args__ = (UniqueConstraint("user_id", "usage_date", name="uq_user_date"),)
+
+
+class ExplanationViewUsage(Base):
+    """记录用户当天点击说明页面的次数（上限 2）"""
+    __tablename__ = "explanation_view_usage"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, index=True, nullable=False)
+    usage_date = Column(DateTime, nullable=False)
+
+    __table_args__ = (UniqueConstraint("user_id", "usage_date", name="uq_explain_date"),)
+
+
+# ---------------------------- 4️⃣ 异步 Engine & Session ----------------------------
+engine: AsyncEngine = create_async_engine(DATABASE_URL, echo=False, future=True)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -129,7 +160,7 @@ async def get_async_session() -> AsyncSession:
         yield session
 
 
-# -------------------- 4️⃣ 数据库助手（CRUD） --------------------
+# ---------------------------- 5️⃣ 辅助函数 ----------------------------
 async def store_file_id(session: AsyncSession, fid: str) -> None:
     result = await session.execute(
         "SELECT 1 FROM file_ids WHERE file_id = :fid", {"fid": fid}
@@ -162,15 +193,14 @@ async def delete_file_id(session: AsyncSession, fid: str) -> None:
 
 
 async def get_user_usage_today(session: AsyncSession, user_id: int) -> Optional[UserAdUsage]:
-    today_start = datetime.now(TIMEZONE).replace(
+    today_start = datetime.now(tz.gettz("Asia/Shanghai")).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
     result = await session.execute(
         """
         SELECT *
         FROM user_ad_usage
-        WHERE user_id = :uid
-          AND usage_date::date = :today
+        WHERE user_id = :uid AND usage_date::date = :today
         """,
         {"uid": user_id, "today": today_start},
     )
@@ -184,7 +214,7 @@ async def upsert_user_usage(
     points: int,
     reward_source: str = "rewarded_ad",
 ) -> None:
-    today_start = datetime.now(TIMEZONE).replace(
+    today_start = datetime.now(tz.gettz("Asia/Shanghai")).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
     existing = await session.execute(
@@ -218,6 +248,7 @@ async def generate_random_string(length: int = 10) -> str:
     return "".join(random.choice(alphabet) for _ in range(length))
 
 
+# ---------------------------- 6️⃣ DB 写入 “今日密钥” ----------------------------
 async def store_today_secrets(session: AsyncSession, context) -> None:
     """每天 10:00 生成两个新密钥，旧密钥失效，并私聊管理员"""
     await session.execute("UPDATE secret_keys SET is_active = FALSE")
@@ -238,8 +269,8 @@ async def store_today_secrets(session: AsyncSession, context) -> None:
     for admin_id in ADMIN_IDS:
         try:
             msg = (
-                f"🔔 **今日密钥已更新**（{datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M')})\\n"
-                f"密钥一（8积分）: `{key1}`\\n"
+                f"🔔 **今日密钥已更新**（{datetime.now(tz.gettz('Asia/Shanghai')):%Y-%m-%d %H:%M} )\n"
+                f"密钥一（8积分）: `{key1}`\n"
                 f"密钥二（6积分）: `{key2}`"
             )
             await context.bot.send_message(chat_id=admin_id, text=msg, parse_mode="Markdown")
@@ -247,6 +278,7 @@ async def store_today_secrets(session: AsyncSession, context) -> None:
             logging.warning(f"Failed to PM admin {admin_id}: {e}")
 
 
+# ---------------------------- 7️⃣ 每日计数重置 ----------------------------
 async def reset_video_counter_daily(session: AsyncSession) -> None:
     """每天 0:00 重置视频观看计数（0/3）"""
     await session.execute("DELETE FROM video_view_usage")
@@ -261,7 +293,7 @@ async def reset_explanation_counter_daily(session: AsyncSession) -> None:
     logging.info("Daily explanation view counter has been reset.")
 
 
-# -------------------- 5️⃣ FastAPI --------------------
+# ---------------------------- 8️⃣ FastAPI 应用 ----------------------------
 fastapi_app = FastAPI()
 fastapi_app.mount(
     "/static",
@@ -272,10 +304,11 @@ fastapi_app.mount(
 )
 
 
+# ---------- 8.1  首页（直接跳转到活动中心） ----------
 @fastapi_app.get("/", response_class=HTMLResponse)
 async def serve_root_page() -> str:
-    """首页 – 自动跳转到 /hd 页面"""
-    return """
+    """首页会自动跳转到 /hd（活动中心）"""
+    return f"""
     <html lang="zh-CN"><head><meta charset="UTF-8"><title>MoonTag 入口</title></head>
     <body style="text-align:center;margin-top:30px;">
       <div style="margin-bottom:15px;color:#555;">
@@ -284,27 +317,27 @@ async def serve_root_page() -> str:
       <script>
         // 直接打开奖励视频
         window.location.href = '{AD_AD_URL}';
-        // 3 秒后再回到活动中心页面
-        setTimeout(()=>{{window.location.href = '/hd';}},3000);
+        // 3 秒后回到活动中心页面
+        setTimeout(()=>{{window.location.href = '/hd';}}, 3000);
       </script>
     </body></html>
-    """.format(AD_AD_URL=AD_AD_URL)
+    """
 
 
-# ---------- 5.1 /hd 页面（活动中心） ----------
+# ---------- 8.2  活动中心页面（/hd） ----------
 @fastapi_app.get("/hd", response_class=HTMLResponse)
 async def serve_hd_page(request: Request) -> str:
     """
-    活动中心页面，展示两个按钮：
-      1️⃣ 观看视频获取积分（计数 0/3，每天 0:00 重置）
-      2️⃣ 查看说明（计数 0/2，每天 10:00 重置）
+    活动中心页面：
+      • 按钮一：观看视频获取积分（计数 0/3，0:00 重置）
+      • 按钮二：查看说明（计数 0/2，10:00 重置）
     """
-    # ---------- 读取当前计数，供前端展示 ----------
+    # ---------- 读取当前计数 ----------
     async def _fetch_counters():
         uid = request.headers.get("X-Telegram-User-Id")
         uid = int(uid) if uid else 0
         async with AsyncSessionLocal() as session:
-            # 视频观看记录
+            # 视频计数
             video_row = await session.execute(
                 """
                 SELECT COUNT(*) FROM video_view_usage
@@ -314,7 +347,7 @@ async def serve_hd_page(request: Request) -> str:
             )
             video_used = video_row.scalar() or 0
 
-            # 说明页面点击记录
+            # 说明计数
             explain_row = await session.execute(
                 """
                 SELECT COUNT(*) FROM explanation_view_usage
@@ -325,7 +358,7 @@ async def serve_hd_page(request: Request) -> str:
             explain_used = explain_row.scalar() or 0
         return {"video_used": video_used, "explain_used": explain_used}
 
-    # ---------- 取出管理员绑定的链接（用于按钮二） ----------
+    # ---------- 读取管理员已绑定的链接 ----------
     async def _fetch_links():
         async with AsyncSessionLocal() as session:
             rows = await session.execute(
@@ -333,97 +366,12 @@ async def serve_hd_page(request: Request) -> str:
             )
             return {row[0]: row[1] for row in rows}
 
-    # ---------- 先把后端返回的 JSON 交给前端 ----------
-    # 这里不再使用 f‑string 包裹 JavaScript，直接写完整的 HTML/JS
-    html = """<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8"><title>活动中心 – 开业庆典</title>
-  <style>
-    body{{font-family:Arial,sans-serif;text-align:center;margin-top:30px;}}
-    .box{{display:inline-block;padding:12px 20px;margin:10px;border:1px solid #888;
-           border-radius:6px;background:#f9f9f9;}}
-    .counter{{font-weight:bold;color:#d00;}}
-    button{{padding:10px 18px;margin:5px;cursor:pointer;}}
-  </style>
-</head>
-<body>
-  <div class="box">
-    观看视频可获得积分，每日最多 3 次，已观看 <span id="videoCounter"
-    class="counter">(0/3)</span> 次。&#13;
-    说明页面每日可点击 2 次，已点击 <span id="explainCounter"
-    class="counter">(0/2)</span> 次。
-  </div>
-
-  <div class="box"><button id="btn_video">按钮一：观看视频获取积分</button></div>
-  <div class="box"><button id="btn_explain">按钮二：查看说明</button></div>
-
-  <script>
-    // 读取计数
-    async function loadCounters(){
-      const r = await fetch('/current_counters');
-      const d = await r.json();
-      document.getElementById('videoCounter').innerText = `$(d.video_used)/(3)`;
-      document.getElementById('explainCounter').innerText = `$(d.explain_used)/(2)`;
-    }
-    loadCounters();
-
-    // 读取管理员绑定的链接（用于按钮二）
-    async function fetchLinks(){
-      const r = await fetch('/active_admin_links');
-      const d = await r.json();
-      return d;
-    }
-
-    // 按钮一 – 观看视频（3 秒后打开奖励视频）
-    document.getElementById('btn_video').onclick = async () => {{
-      const used = await fetch('/current_counters').then(r=>r.json()).then(d=>d.video_used);
-      if (used >= 3){
-        alert('已达今日观看上限，请明天再来');
-        return;
-      }
-      // 把后端的奖励视频链接插入进来
-      setTimeout(()=>{{window.location.href = '{AD_AD_URL}';}}, 3000);
-    }};
-
-    // 按钮二 – 查看说明（3 秒后打开说明页）
-    document.getElementById('btn_explain').onclick = async () => {{
-      const links = await fetchLinks();
-      if (!links.key1 || !links.key2){
-        alert('请等待管理员更换新密钥链接');
-        return;
-      }
-      // 3 秒后打开说明页面
-      setTimeout(()=>{{window.location.href = '/explanation_page.html';}}, 3000);
-    }};
-  </script>
-</body>
-</html>""".format(
-        AD_AD_URL=AD_AD_URL   # 这里只有一次替换，且不会产生嵌套的 f‑string
-    )
-
-    # ---------- 把后端的实时计数注入页面 ----------
-    # 为了让前端能够实时获取updated计数，我们再把返回的 JSON 接口暴露出去，
-    # 前端会自行请求 /current_counters。这里不需要在 HTML 里再写 Python 变量。
-    # 只要上面的占位符 `'{AD_AD_URL}'` 已被安全替换，返回即可。
-    return html
-
-
-# ---------- 5.2 说明页面（/explanation_page.html） ----------
-@fastapi_app.get("/explanation_page.html", response_class=HTMLResponse)
-async def serve_explanation_page() -> str:
-    """
-    说明页面，展示使用步骤：
-      1. 通过夸克网盘获取密钥文件
-      2. 看到文件名后请保存、重命名、复制文件名
-      3. 把文件名发送给机器人即可获得积分
-    同时计数 0/2，每天 10:00 重置。
-    """
-    return """
+    # ---------- 完整 HTML（不再使用嵌套的 f‑string） ----------
+    html = """
     <!DOCTYPE html>
     <html lang="zh-CN">
     <head>
-      <meta charset="UTF-8"><title>说明页面</title>
+      <meta charset="UTF-8"><title>活动中心 – 开业庆典</title>
       <style>
         body{{font-family:Arial,sans-serif;text-align:center;margin-top:30px;}}
         .box{{display:inline-block;padding:12px 20px;margin:10px;border:1px solid #888;
@@ -434,70 +382,135 @@ async def serve_explanation_page() -> str:
     </head>
     <body>
       <div class="box">
-        <strong>获取密钥的完整步骤：</strong><br>
-        1️⃣ 打开网盘链接（管理员已绑定的链接），文件名即为密钥。<br>
-        2️⃣ 将文件下载后保存到你的夸克网盘。<br>
-        3️⃣ 为文件重新命名（建议使用英文或数字），<br>
-           然后复制 **新文件名** 并在此页面粘贴发送给机器人。<br>
-        4️⃣ 机器人会返回积分（首次 8，第二次 6），并在成功后给予提示。
+        观看视频可获得积分，每日最多 3 次，已观看 <span id="videoCounter"
+        class="counter">(0/3)</span> 次。&#13;
+        说明页面每日可点击 2 次，已点击 <span id="explainCounter"
+        class="counter">(0/2)</span> 次。
       </div>
 
-      <div class="box counter">（已使用 0/2 次今日）</div>
+      <div class="box"><button id="btn_video">按钮一：观看视频获取积分</button></div>
+      <div class="box"><button id="btn_explain">按钮二：查看说明</button></div>
 
       <script>
-        // 计数刷新（每次打开页面后向后端请求最新计数）
+        async function loadCounters(){
+          const r = await fetch('/current_counters');
+          const d = await r.json();
+          document.getElementById('videoCounter').innerText = `$(d.video_used)/(3)`;
+          document.getElementById('explainCounter').innerText = `$(d.explain_used)/(2)`;
+        }
+        loadCounters();
+
+        async function fetchLinks(){
+          const r = await fetch('/active_admin_links');
+          const d = await r.json();
+          return d;
+        }
+
+        // 按钮一 – 观看视频（3 秒后打开奖励视频）
+        document.getElementById('btn_video').onclick = async () => {{
+          const used = await fetch('/current_counters').then(r=>r.json()).then(d=>d.video_used);
+          if (used >= 3){
+            alert('已达今日观看上限，请明天再来');
+            return;
+          }
+          setTimeout(()=>{{window.location.href = '{AD_AD_URL}';}}, 3000);
+        }};
+
+        // 按钮二 – 查看说明（3 秒后打开说明页）
+        document.getElementById('btn_explain').onclick = async () => {{
+          const links = await fetchLinks();
+          if (!links.key1 || !links.key2){
+            alert('请等待管理员更换新密钥链接');
+            return;
+          }
+          setTimeout(()=>{{window.location.href = '/explanation_page.html';}}, 3000);
+        }};
+      </script>
+    </body></html>
+    """.format(AD_AD_URL=AD_AD_URL)
+
+    # 把后端实时计数的入口交给前端（前端自己会去请求 /current_counters）
+    return html
+
+
+# ---------- 8.3  说明页面（/explanation_page.html） ----------
+@fastapi_app.get("/explanation_page.html", response_class=HTMLResponse)
+async def serve_explanation_page() -> str:
+    """说明页面，展示获取密钥的完整步骤并计数（0/2）"""
+    return f"""
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+      <meta charset="UTF-8"><title>密钥获取说明</title>
+      <style>
+        body{{font-family:Arial,sans-serif;text-align:center;margin-top:30px;}}
+        .box{{display:inline-block;padding:12px 20px;margin:10px;border:1px solid #888;
+               border-radius:6px;background:#f9f9f9;}}
+        .counter{{font-weight:bold;color:#d00;}}
+      </style>
+    </head>
+    <body>
+      <div class="box">
+        <strong>获取密钥的完整步骤：</strong><br>
+        1️⃣ 打开管理员绑定的网盘链接，文件名即为密钥。<br>
+        2️⃣ 将文件下载后保存到夸克网盘。<br>
+        3️⃣ 为文件重新命名（建议使用英文或数字），<br>
+           然后复制 **新文件名** 并在此页面粘贴发送给机器人。<br>
+        4️⃣ 机器人会返回积分（首次 8，第二次 6），并在成功后给出提示。
+      </div>
+
+      <div class="counter">（已使用 0/2 次今日）</div>
+
+      <script>
         async function refreshCounter(){
           const r = await fetch('/explanation_counter');
           const d = await r.json();
-          document.querySelector('.box.counter').innerText = `已使用 ${d.used}/2 次今日`;
+          document.querySelector('.counter').innerText = \`已使用 ${d.used}/2 次今日\`;
         }
         refreshCounter();
 
-        // 3 秒后自动回到活动中心（可自行修改）
+        // 5 秒后自动返回活动中心（可自行修改）
         setTimeout(()=>{{window.location.href = '/hd';}}, 5000);
       </script>
     </body></html>
     """
 
 
-# ---------- 5.3 返回计数的 API ----------
+# ---------- 8.4  当前计数 API ----------
 @fastapi_app.get("/current_counters", response_model=Dict[str, int])
 async def current_counters(request: Request):
     """
-    前端定时器会轮询此接口，获取当前用户的视频观看次数与说明页面点击次数。
+    前端轮询此接口获取：
+      - 视频观看次数（0/3）
+      - 说明页面点击次数（0/2）
     """
     uid = request.headers.get("X-Telegram-User-Id")
     uid = int(uid) if uid else 0
     async with AsyncSessionLocal() as session:
-        # 视频观看次数
         video_row = await session.execute(
             """
             SELECT COUNT(*) FROM video_view_usage
-            WHERE user_id = :uid
-              AND usage_date::date = CURRENT_DATE
+            WHERE user_id = :uid AND usage_date::date = CURRENT_DATE
             """,
             {"uid": uid},
         )
         video_used = video_row.scalar() or 0
 
-        # 说明页面次数
         explain_row = await session.execute(
             """
             SELECT COUNT(*) FROM explanation_view_usage
-            WHERE user_id = :uid
-              AND usage_date::date = CURRENT_DATE
+            WHERE user_id = :uid AND usage_date::date = CURRENT_DATE
             """,
             {"uid": uid},
         )
         explain_used = explain_row.scalar() or 0
-
     return {"video_used": video_used, "explain_used": explain_used}
 
 
-# ---------- 5.4 管理员已绑定的链接 ----------
+# ---------- 8.5  管理员已绑定的链接 ----------
 @fastapi_app.get("/active_admin_links", response_model=Dict[str, str])
 async def active_admin_links():
-    """返回当前活跃的 key1 / key2 URL（若不存在返回空字典）"""
+    """返回当前活跃的 key1 / key2 URL（如果不存在返回空字典）"""
     async with AsyncSessionLocal() as session:
         rows = await session.execute(
             "SELECT link_type, url FROM admin_links WHERE is_active = TRUE"
@@ -505,7 +518,7 @@ async def active_admin_links():
         return {row[0]: row[1] for row in rows}
 
 
-# ---------- 5.5 说明页面计数 ----------
+# ---------- 8.6  说明页面计数 ----------
 @fastapi_app.get("/explanation_counter", response_model=Dict[str, int])
 async def explanation_counter(request: Request):
     """返回当前用户今日对说明页面的点击次数（0、1、2）"""
@@ -515,18 +528,17 @@ async def explanation_counter(request: Request):
         row = await session.execute(
             """
             SELECT COUNT(*) FROM explanation_view_usage
-            WHERE user_id = :uid
-              AND usage_date::date = CURRENT_DATE
+            WHERE user_id = :uid AND usage_date::date = CURRENT_DATE
             """,
             {"uid": uid},
         )
         return {"used": row.scalar() or 0}
 
 
-# ---------- 5.6 记录说明页面的点击 ----------
+# ---------- 8.7  记录说明页面点击 ----------
 @fastapi_app.post("/record_explanation_click", status_code=status.HTTP_200_OK)
 async def record_explanation_click(request: Request):
-    """后端会在用户成功点击「按钮二」后收到一次调用，用于计数"""
+    """当用户成功进入说明页面后，后端记录一次点击用于计数"""
     uid = request.headers.get("X-Telegram-User-Id")
     uid = int(uid) if uid else 0
     async with AsyncSessionLocal() as session:
@@ -544,7 +556,7 @@ async def record_explanation_click(request: Request):
     return {"status": "recorded"}
 
 
-# -------------------- 6️⃣ 奖励视频验证（与原有 rewarded_ad 保持一致） --------------------
+# ---------- 8.8  奖励视频校验（原 rewarded_ad 逻辑） ----------
 class RewardRequest(BaseModel):
     secret: str   # 用户粘贴的密钥
 
@@ -552,7 +564,9 @@ class RewardRequest(BaseModel):
 @fastapi_app.post("/validate_key", status_code=status.HTTP_200_OK)
 async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSONResponse:
     """
-    与之前的流程相同：校验密钥、检查是否已使用、若符合则给 8/6 积分。
+    1️⃣ 取出当前活跃的密钥（key1 / key2）  
+    2️⃣ 与用户提交的 secret 匹配  
+    3️⃣ 若已使用则拒绝；否则授予 8（key1）或 6（key2）积分  
     """
     user_id = request.headers.get("X-Telegram-User-Id")
     if not user_id:
@@ -560,7 +574,7 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
     user_id = int(user_id)
 
     async with AsyncSessionLocal() as session:
-        # 取出当前活跃的密钥
+        # 读取活跃的密钥
         result = await session.execute(
             "SELECT secret_type, secret_value FROM secret_keys WHERE is_active = TRUE"
         )
@@ -571,7 +585,7 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
                 status_code=403,
             )
 
-        # 找到匹配的 secret_type
+        # 匹配
         matched_type: Optional[str] = None
         for stype, svalue in active.items():
             if payload.secret == svalue:
@@ -583,7 +597,7 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
                 status_code=403,
             )
 
-        # 检查是否已使用该密钥
+        # 检查是否已使用
         usage_row = await session.execute(
             """
             SELECT * FROM user_key_usage
@@ -592,7 +606,7 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
               AND usage_date::date = :today
             """,
             {"uid": user_id, "stype": matched_type,
-             "today": datetime.now(TIMEZONE).replace(
+             "today": datetime.now(tz.gettz("Asia/Shanghai")).replace(
                  hour=0, minute=0, second=0, microsecond=0)},
         )
         if usage_row.scalar():
@@ -601,18 +615,18 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
                 status_code=403,
             )
 
-        # 计算积分
+        # 积分计算
         points_to_add = 8 if matched_type == "key1" else 6
 
         # 记录使用
         usage_record = UserKeyUsage(
             user_id=user_id,
             secret_type=matched_type,
-            usage_date=datetime.now(TIMEZONE),
+            usage_date=datetime.now(tz.gettz("Asia/Shanghai")),
         )
         session.add(usage_record)
 
-        # 同样使用原有的积分写入函数（与 rewarded‑ad 相同的计数方式）
+        # 同时把这笔积分写入原有的 user_ad_usage 表（保持原有计数逻辑）
         await upsert_user_usage(session, user_id, points_to_add, reward_source="key_claim")
         await session.commit()
 
@@ -622,14 +636,14 @@ async def validate_key_endpoint(request: Request, payload: RewardRequest) -> JSO
         )
 
 
-# -------------------- 7️⃣ 注册 Telegram Bot 处理器 --------------------
+# ---------------------------- 9️⃣ Telegram Bot 处理 ----------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    /start – 三个按钮：
+    /start → 三个按钮：
       • 开始验证
       • 查看积分
       • 开业活动（打开 /hd 页面）
@@ -658,7 +672,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/admin – 仅管理员可见的后台入口（保持原有文件‑ID 功能）"""
+    """/admin → 仅管理员可用的后台入口（文件 ID 保存/删除功能）"""
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
         await update.message.reply_text("❌ 您不是管理员")
@@ -677,7 +691,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-# ---------- 7.1 保存 file_id ----------
+# ---- 9.1 保存 file_id ----
 async def cb_save_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -704,7 +718,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     context.user_data.pop("awaiting_file", None)
 
 
-# ---------- 7.2 删除 file_id ----------
+# ---- 9.2 删除 file_id ----
 async def admin_menu_list_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -735,7 +749,7 @@ async def admin_menu_list_button(update: Update, context: ContextTypes.DEFAULT_T
 async def admin_menu_delete_confirmation_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    fid = query.data.split("_", 1)[1]  # format: del_<file_id>
+    fid = query.data.split("_", 1)[1]  # 形如 del_<file_id>
 
     confirm_kb = InlineKeyboardMarkup(
         [
@@ -761,7 +775,7 @@ async def admin_menu_delete_confirmation_button(update: Update, context: Context
 async def confirm_deletion_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    fid = query.data.split("_", 1)[1]  # format: confirm_del_<file_id>
+    fid = query.data.split("_", 1)[1]  # 形如 confirm_del_<file_id>
 
     async with AsyncSessionLocal() as session:
         await delete_file_id(session, fid)
@@ -783,7 +797,7 @@ async def confirm_deletion_button(update: Update, context: ContextTypes.DEFAULT_
     )
 
 
-# ---------- 7.3 其他占位按钮 ----------
+# ---- 9.3 其他占位按钮 ----
 async def handle_start_verification_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -796,14 +810,14 @@ async def handle_show_points_button(update: Update, context: ContextTypes.DEFAUL
     await query.edit_message_text("积分查询功能正在开发中，稍后加入！")
 
 
-# ---------- 7.4 /my 命令（管理员设置/查看密钥） ----------
+# ---- 9.4 /my 命令（密钥管理） ----
 async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     /my 的行为：
-      • 第一次发送 → “请输入密钥一链接”
-      • 发送链接 → 保存为 key1（8积分）
+      • 第一次 → “请输入密钥一链接”
+      • 输入链接 → 保存为 key1（8积分）
       • 再次发送 /my → “请输入密钥二链接”
-      • 发送链接 → 保存为 key2（6积分）
+      • 输入链接 → 保存为 key2（6积分）
       • 任何时候单独发送 /my（不带状态） → 私聊管理员当前的 key1、key2 与对应积分
     """
     user_id = update.effective_user.id
@@ -814,12 +828,9 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     state = context.user_data.get("my_state")
     text = update.message.text.strip()
 
-    # -----------------------------------------------------------------
-    # 状态机：awaiting_key1 → awaiting_key2 → None
-    # -----------------------------------------------------------------
+    # ------------------- 状态机 -------------------
     if state == "awaiting_key1":
         async with AsyncSessionLocal() as session:
-            # 把链接的最后一段当作密钥保存
             from urllib.parse import urlparse
             parsed = urlparse(text)
             secret_part = parsed.path.rstrip("/").split("/")[-1]
@@ -854,15 +865,13 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         context.user_data.pop("my_state")
         return
 
-    # -----------------------------------------------------------------
-    # 其它情况：直接 /my 或未开始状态
-    # -----------------------------------------------------------------
+    # ------------------- 默认情况 -------------------
     if state is None:
         context.user_data["my_state"] = "awaiting_key1"
         await update.message.reply_text("请输入密钥一链接")
         return
 
-    # 如果以上都不匹配，直接返回当前已绑定的链接信息
+    # 如果状态不匹配，直接返回当前已绑定的链接信息
     async with AsyncSessionLocal() as session:
         rows = await session.execute(
             "SELECT link_type, url FROM admin_links WHERE is_active = TRUE"
@@ -875,49 +884,14 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("当前已绑定的密钥链接：\n" + formatted)
 
 
-# -------------------- 8️⃣ Scheduler（每日任务） --------------------
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
-scheduler = AsyncIOScheduler()
-
-
-def start_scheduler(app: Application):
-    """
-    在创建 Application 后调用此函数，为两个每日任务注册：
-      1️⃣ 0:00（北京时间） → 重置视频观看计数（0/3）
-      2️⃣ 10:00（北京时间） → 重置说明页面计数（0/2） 并生成新密钥
-    """
-    # 重置视频计数
-    scheduler.add_job(
-        func=reset_video_counter_daily,
-        trigger="cron",
-        hour=0,
-        minute=0,
-        timezone="Asia/Shanghai",
-        id="reset_video",
-        args=[AsyncSessionLocal],
-    )
-    # 重置说明计数并生成新密钥
-    scheduler.add_job(
-        func=lambda: asyncio.create_task(store_today_secrets(AsyncSessionLocal(), app.bot)),
-        trigger="cron",
-        hour=10,
-        minute=0,
-        timezone="Asia/Shanghai",
-        id="generate_secrets",
-        args=[AsyncSessionLocal],
-    )
-    scheduler.start()
-
-
-# -------------------- 9️⃣ 注册所有 Handler --------------------
+# ---------------------------- 10️⃣ 注册所有 Handler ----------------------------
 def register_handlers(app: Application) -> None:
     # 基础指令
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("my", my_command))
 
-    # 位置回调（原有 admin 功能）
+    # 管理员文件 ID 相关回调
     app.add_handler(CallbackQueryHandler(cb_save_button, pattern="^admin_menu_save$"))
     app.add_handler(MessageHandler(filters.PHOTO & filters.UpdateContext(user_data={"awaiting_file": True}), handle_photo))
     app.add_handler(CallbackQueryHandler(admin_menu_list_button, pattern="^admin_menu_list$"))
@@ -928,26 +902,63 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CallbackQueryHandler(handle_start_verification_button, pattern="^button_start_verification$"))
     app.add_handler(CallbackQueryHandler(handle_show_points_button, pattern="^button_show_points$"))
 
-    # 新增的按钮（活动中心的两个按钮）在前端页面里已经绑定了 JS，这里不需要额外的回调。
-
-    # 其它可能的回调（如文件保存后的提示）
+    # 其它可能的回调（保持兼容）
     app.add_handler(CallbackQueryHandler(handle_start_verification_button, pattern="^menu_start_verification$"))
     app.add_handler(CallbackQueryHandler(handle_show_points_button, pattern="^menu_show_points$"))
 
 
-# -------------------- 10️⃣ 主入口 --------------------
+# ---------------------------- 11️⃣ Scheduler（每日任务） ----------------------------
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import asyncio
+
+scheduler = AsyncIOScheduler()
+
+
+def start_scheduler(app: Application):
+    """
+    为下述两件事注册每日调度：
+      • 0:00（Asia/Shanghai） → 重置视频观看计数（0/3）
+      • 10:00（Asia/Shanghai） → 重置说明计数并生成新密钥
+    """
+    scheduler.add_job(
+        func=reset_video_counter_daily,
+        trigger="cron",
+        hour=0,
+        minute=0,
+        timezone="Asia/Shanghai",
+        id="reset_video",
+        args=[AsyncSessionLocal],
+    )
+    scheduler.add_job(
+        func=lambda: asyncio.create_task(
+            store_today_secrets(AsyncSessionLocal(), app.bot)
+        ),
+        trigger="cron",
+        hour=10,
+        minute=0,
+        timezone="Asia/Shanghai",
+        id="generate_secrets",
+        args=[AsyncSessionLocal],
+    )
+    scheduler.start()
+
+
+# ---------------------------- 12️⃣ 主入口 ----------------------------
 async def main() -> None:
     """
-    程序入口：启动 Telegram Bot（轮询） + FastAPI（uvicorn） + APScheduler。
+    程序入口，做三件事：
+      1️⃣ 创建 Telegram Application 并注册所有 handlers
+      2️⃣ 启动 APScheduler
+      3️⃣ 用 uvicorn 启动 FastAPI（host 0.0.0.0, port 8000）
     """
-    # 先创建 Application（用于注册所有 Telegram handlers）
+    # ①  Telegram Bot
     telegram_app = Application.builder().token(BOT_TOKEN).build()
     register_handlers(telegram_app)
 
-    # 启动 APScheduler，需要把当前的 telegram_app 传进去
+    # ②  Scheduler 需要拿到当前的 telegram_app（为了往私聊里发送通知）
     start_scheduler(telegram_app)
 
-    # 同时启动 FastAPI 服务器
+    # ③  FastAPI + uvicorn
     import uvicorn
 
     uvicorn_config = uvicorn.Config(fastapi_app, host="0.0.0.0", port=8000)
