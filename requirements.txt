@@ -1,8 +1,9 @@
 python-telegram-bot==20.7
 SQLAlchemy==2.0.30
-asyncpg==0.29.0          # <-- 必須的 async PostgreSQL driver
+asyncpg==0.29.0          # 真正的 async driver
 python-dotenv==1.0.1
 fastapi==0.110.0
 uvicorn[standard]==0.23.0
 apscheduler==3.10.4
 python-dateutil==2.9.0.post0
+psycopg2-binary==2.9.9   # <-- 這行一定要保留
