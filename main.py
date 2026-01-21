@@ -552,17 +552,15 @@ async def build_telegram_application() -> Application:
             )
             return
 
-        reply = (
-            "🗝️ 今日密钥列表（北京时间十点已更新）：
-
-"
-        )
-        reply += "\n".join(
-            f"【密钥 {idx}】{item.get('key', '')} —— "
-            f"{'已使用' if item.get('used') else '未使用'}"
-            for idx, item in enumerate(keys_info, start=1)
-        )
-        await update.message.reply_text(reply)
+reply = (
+    "🗝️ 今日密钥列表（北京时间十点已更新）：\n\n"
+)
+reply += "\n".join(
+    f"【密钥 {idx}】{item.get('key', '')} —— "
+    f"{'已使用' if item.get('used') else '未使用'}"
+    for idx, item in enumerate(keys_info, start=1)
+)
+await update.message.reply_text(reply)
 
     async def cmd_set_new_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
