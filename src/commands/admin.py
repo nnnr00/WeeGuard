@@ -1,13 +1,10 @@
 # src/commands/admin.py
 # ------------------------------------------------------------
-# 管理員後台 (admin) 相關功能
+# 管理员后台（/admin）完整实现
 # ------------------------------------------------------------
-# 包含：
-#   • /admin 按鈕 UI (管理員專用)
-#   • file‑id 相關的 Wizard (新增、查看、刪除)
-#   • 只允許設定過的 Telegram user_id 為管理員
+# 只负责 UI 与状态机，不涉及任何数据库读写（这些交给
+# `src/models/file.py` 与 `src/models/point.py`）。
 # ------------------------------------------------------------
-
 
 from telegram import (
     InlineKeyboardButton,
@@ -15,282 +12,404 @@ from telegram import (
     Update,
 )
 from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
     CommandHandler,
+    CallbackQueryHandler,
     ContextTypes,
     Scenes,
     filters,
 )
 
-# ------------------------------------------------------------
-# 1️⃣ 取得管理員 ID 列表 (從環境變數 ADMIN_IDS 讀取)
-# ------------------------------------------------------------
 import os
+from typing import List
 
+# ------------------- 管理员 ID 列表 -------------------
 def get_admin_ids() -> List[int]:
-    """
-    從環境變數 ADMIN_IDS 讀取管理員 Telegram user_id。
-    如果變數未設定或為空字串，則返回空列表。
-    """
+    """从环境变量 ADMIN_IDS 读取管理员 Telegram user_id 列表。"""
     raw = os.getenv("ADMIN_IDS", "")
     return [int(x) for x in raw.split(",") if x.strip() != ""]
-
 
 ADMIN_IDS = get_admin_ids()
 
 
-# ------------------------------------------------------------
-# 2️⃣ 判斷當前使用者是否為管理員的 Helper
-# ------------------------------------------------------------
 def is_admin(user_id: int) -> bool:
-    """返回 True 表示此 user_id 列在 ADMIN_IDS 之中。"""
+    """若 user_id 在 ADMIN_IDS 中则返回 True，否则 False。"""
     return user_id in ADMIN_IDS
 
 
-# ------------------------------------------------------------
-# 3️⃣ 文字Wizard – 用於「新增 / 查看 / 刪除」File‑ID
-# ------------------------------------------------------------
-async def admin_scene() -> Scenes.WizardScene:
-    """
-    這個 Wizard 包含 4 個步驟：
-      1. 顯示主選單（只會出現一次）
-      2. 「新增」按鈕 → 輸入文字 → 輸入圖片 → 保存到 DB
-      3. 「查看」按鈕 → 顯示列表 → 點擊 ID → 可再次取得或刪除
-      4. 「刪除」按鈕 → 確認刪除 → 從 DB 移除
-    Wizard 只能由管理員進入（在 /admin 命令中檢查 is_admin）。
-    """
-    wizard = Scenes.Wizard()
+# ------------------- 统一的权限检查 -------------------
+async def admin_permission_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """所有 admin 相关的回调都必须先检查是否是管理员。"""
+    if not is_admin(update.effective_user.id):
+        await update.callback_query.answer(
+            text="❌ 您不是管理员，无权访问此功能。", show_alert=True
+        )
+        return
 
-    # ------------------- Step 0 : 進入 admin 主選單 -------------------
-    wizard.states["admin_main"] = [
-        CommandHandler("admin", lambda u, c: u.scene.start("admin_main")),
-        CallbackQueryHandler(
-            # 這裡的回調只處理「管理文件 ID」這個按鈕
-            lambda u, c: u.scene.start("admin_fileid") if u.data == "admin_fileid" else None,
-            pattern="^admin_",
+
+# ------------------- Admin 场景（Wizard） -------------------
+admin_scene = Scenes.Wizard()
+
+
+# ---------- Step 0: 进入管理员主菜单 ----------
+async def admin_main_enter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    text="📁 管理文件 ID", callback_data="admin_fileid"
+                )
+            ],
+            [
+                InlineKeyboardButton(text="🔎 查看所有记录", callback_data="admin_view"),
+                InlineKeyboardButton(text="❌ 重置权限设置", callback_data="admin_reset"),
+            ],
+        ]
+    )
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "🛠️ 管理员后台已打开，请选择操作：", reply_markup=keyboard
+    )
+    return "admin_main"
+
+
+# ---------- Step 1: 管理文件 ID ----------
+async def admin_fileid_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    keyboard = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(text="📥 新增 File‑ID", callback_data="admin_fileid_add")]
+        ]
+    )
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "📁 请选择要执行的操作：", reply_markup=keyboard
+    )
+    return "admin_fileid_add"
+
+
+# ---------- Step 2: 输入要保存的文字 ----------
+async def admin_fileid_add_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "📝 请在此输入要与 file_id 同时保存的文字（可以是描述性文字）：",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton(text="🚫 取消", callback_data="admin_cancel")]]
+        )
+    )
+    # 保存文字到 user_data 以备后续使用
+    context.user_data["admin_fileid_await_text"] = True
+    return "admin_fileid_add_text"
+
+
+async def admin_fileid_text_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not update.message.photo:
+        await update.message.reply_text(
+            "❗️ 必须发送一张照片以获取 file_id。", reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton(text="🚫 取消", callback_data="admin_cancel")]]
+            )
+        )
+        return "admin_fileid_add_text"
+
+    # 取得图片的最清晰文件 (Telegram 会把图片按分辨率排序)
+    file_id = update.message.photo[-1].file_id
+
+    saved_text = context.user_data.get("admin_fileid_saved_text", "")
+    from src.models.file import insert_file
+
+    record = await insert_file(
+        user_id=update.effective_user.id,
+        file_id=file_id,
+        text=saved_text,
+    )
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(text="🔎 查看所有记录", callback_data="admin_fileid_view"),
+                InlineKeyboardButton(text="🚫 取消", callback_data="admin_cancel"),
+            ]
+        )
+    await update.message.reply_text(
+        f"✅ 保存成功！\n🆔 记录 ID：{record['id']}\n📎 File‑ID：`{file_id}`\n🗒️ 文字：{saved_text}",
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+    # 清理临时数据并返回主菜单
+    context.user_data.pop("admin_fileid_await_text", None)
+    context.user_data.pop("admin_fileid_saved_text", None)
+    return "admin_main"
+
+
+# ---------- Step 3: 查看所有记录 ----------
+async def admin_fileid_view_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    from src.models.file import list_files
+
+    rows = await list_files(limit=10)
+    if not rows:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(
+            "📂 当前没有任何记录，请先使用「新增 File‑ID」创建。"
+        )
+        return "admin_main"
+
+    # 为每条记录生成「查看」和「删除」按钮
+    inline_keyboard = []
+    for row in rows:
+        inline_keyboard.append(
+            [
+                InlineKeyboardButton(
+                    text="👀 查看", callback_data=f"view_{row['id']}"
+                ),
+                InlineKeyboardButton(text="🗑️ 删除", callback_data=f"del_{row['id']}"),
+            ]
+        )
+    inline_keyboard.append(
+        [InlineKeyboardButton(text="🔙 返回上一级", callback_data="admin_main")]
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard)
+
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_text(
+        "📚 以下是最近的记录（最多显示 10 条），请选择「查看」或「删除」：\n\n"
+        + "\n".join(
+            f"{idx}. ID={row['id']} 文字={row['text'][:20]}…"
+            for idx, row in enumerate(rows, start=1)
         ),
-    ]
+        reply_markup=keyboard,
+    )
+    return "admin_fileid_view"
 
-    # ------------------- Step 1 : 顯示主選單 -------------------
-    async def admin_main_enter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """進入 admin 主選單，顯示三個功能按鈕"""
-        query = update.callback_query
-        if query:
-            await query.answer()  # 把「loading」狀態消失
 
+async def admin_fileid_view_process(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if data.startswith("view_"):
+        record_id = int(data.split("_")[1])
+        from src.models.file import get_file_by_id
+
+        rec = await get_file_by_id(record_id)
+        if not rec:
+            await query.edit_message_text(
+                "❗️ 该记录已不存在或已被删除。", reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton(text="🔙 返回上一级", callback_data="admin_main")]]
+                )
+            )
+            return "admin_main"
+
+        text = (
+            f"🆔 记录 ID：{rec['id']}\n"
+            f"👤 用户 ID：{rec['user_id']}\n"
+            f"🗒️ 文字：{rec['text']}\n"
+            f"📎 File‑ID：`{rec['file_id']}`\n"
+            f"🕒 创建时间：{rec['created_at']}"
+        )
         keyboard = InlineKeyboardMarkup(
             [
                 [
                     InlineKeyboardButton(
-                        text="📁 管理文件 ID", callback_data="admin_fileid"
-                    )
+                        text="🔁 重新获取 File‑ID", callback_data=f"reget_{record_id}"
+                    ),
+                    InlineKeyboardButton(text="🗑️ 删除此记录", callback_data=f"del_{record_id}"),
                 ],
-                [
-                    InlineKeyboardButton(text="🔎 查看所有紀錄", callback_data="admin_view"),
-                ],
-                [
-                    InlineKeyboardButton(text="❌ 重置權限設定", callback_data="admin_reset")
-                ],
+                [InlineKeyboardButton(text="🔙 返回上一级", callback_data="admin_main")]
             ]
         )
         await query.edit_message_text(
-            "🛠️ 管理員後台已開啟，請選擇操作：", reply_markup=keyboard
-        )
-        return "admin_main"
-
-    # ------------------- Step 2 : 新增 File‑ID -------------------
-    async def admin_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """開始新增流程：要求使用者輸入文字說明"""
-        await update.message.reply_text(
-            "📝 請輸入要保存的文字（例如「活動宣傳文案」）"
-        )
-        return "admin_add_text"
-
-    async def admin_add_text_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """收到使用者文字後，進入「請發送圖片」 단계"""
-        text = update.message.text
-        # 把文字暫存在 user_data 中
-        context.user_data["admin_add_text"] = text
-        await update.message.reply_text(
-            "🖼️ 現在請發送一張圖片（單張或多張均可）以取得其 file_id",
-            reply_markup=InlineKeyboardMarkup([[{text: "🚫 取消", callback_data="admin_cancel"}]]),
-        )
-        return "admin_add_image"
-
-    async def admin_add_image_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """取得圖片的 file_id，並呼叫 insert_file 存入 DB"""
-        if not update.message.photo:
-            await update.message.reply_text("❗️ 我們需要一張圖片才能繼續")
-            return "admin_add_image"
-
-        # Telegram 會把所有照片大小依代號給出，我們只取最小的 (at 0)
-        file_id = update.message.photo[-1].file_id
-
-        # 從 user_data 取出先前保存的文字
-        saved_text = context.user_data.get("admin_add_text", "")
-        # 假設已在 src/models/file.py 中寫好 insert_file 函式
-        from ..models.file import insert_file
-
-        record = await insert_file(
-            user_id=update.effective_user.id,
-            file_id=file_id,
-            text=saved_text,
-        )
-        # 把新建立的紀錄 ID 再回傳給使用者
-        await update.message.reply_text(
-            f"✅ 保存成功！\n🆔 紀錄 ID：{record['id']}\n📎 File‑ID：`{file_id}`\n🗒️ 文字：{saved_text}",
+            text=text,
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[{text: "🔙 返回主選單", callback_data="admin_main"}]]),
-        )
-        # 清理暫存資料，結束此 Wizard
-        context.user_data.pop("admin_add_text", None)
-        return "admin_main"
-
-    # ------------------- Step 3 : 查看紀錄（列表） -------------------
-    async def admin_view_enter(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """列出所有 File‑ID 紀錄（最多顯示 10 條）"""
-        from ..models.file import list_files
-
-        rows = await list_files(limit=10)
-        if not rows:
-            await update.message.reply_text("📂 暫無任何紀錄。")
-            return "admin_main"
-
-        lines = []
-        for idx, rec in enumerate(rows, start=1):
-            lines.append(f"{idx}. ID={rec['id']} 文字={rec['text'][:15]}…")
-        keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton(text="🔙 返回主選單", callback_data="admin_main")]]
-        )
-        await update.message.reply_text(
-            "📚 以下是當前存檔的最高 10 筆紀錄：\n\n" + "\n".join(lines),
             reply_markup=keyboard,
         )
-        return "admin_main"
+        return "admin_fileid_view"
 
-    # ------------------- Step 4 : 刪除確認與執行 -------------------
-    async def admin_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """顯示要刪除的紀錄 ID，讓管理員確認"""
-        # 直接從 DB 取出所有 ID（使用 list_files 只取 id 欄位）
-        from ..models.file import list_files
 
-        rows = await list_files(limit=100)  # 取全部
-        if not rows:
-            await update.message.reply_text("📂 沒有可刪除的紀錄。")
-            return "admin_main"
+async def admin_fileid_confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith("del_"):
+        record_id = int(data.split("_")[1])
 
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        text="🗑️ 刪除全部", callback_data="admin_delete_all"
-                    )
-                ]
-            ]
-        )
-        await update.message.reply_text(
-            "⚠️ 以下是目前所有紀錄的 ID（點擊「刪除全部」將會一次清空所有紀錄）：",
-            reply_markup=keyboard,
-        )
-        return "admin_main"
+        from src.models.file import delete_file
+        await delete_file(record_id)
 
-    async def admin_delete_all_process(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """真正執行刪除全部紀錄的動作"""
-        from ..models.file import delete_all_records  # 需要自行在 models/file.py 裡實作
-
-        await delete_all_records()
-        await update.message.reply_text(
-            "🗑️ 所有紀錄已全部刪除！", reply_markup=InlineKeyboardMarkup([[{text: "🔙 返回主選單", callback_data="admin_main"}]]))
-        return "admin_main"
-
-    # ------------------- Step 5 : 取消 -------------------
-    async def admin_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """使用者按下「取消」時返回主選單"""
-        await update.message.reply_text(
-            "🔙 已返回主選單", reply_markup=InlineKeyboardMarkup([[{text: "🔧 主選單", callback_data="admin_main"}]]))
-        return "admin_main"
-
-    # ------------------------------------------------------------
-    # 6️⃣ 把所有 step 加入Wizard的狀態機
-    # ------------------------------------------------------------
-    wizard.states["admin_main"] = [
-        CommandHandler("admin", lambda u, c: u.scene.start("admin_main")),
-        CallbackQueryHandler(
-            lambda u, c: u.scene.start("admin_main") if u.data == "admin_main" else None,
-            pattern="^admin_main$",
-        ),
-    ]
-
-    wizard.states["admin_add_text"] = [
-        CommandHandler("admin", lambda u, c: u.scene.start("admin_main")),
-        CallbackQueryHandler(
-            lambda u, c: u.scene.start("admin_add_image") if u.data == "admin_add_image" else None,
-            pattern="^admin_add_image$",
-        ),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, admin_add_text_received),
-    ]
-
-    wizard.states["admin_add_image"] = [
-        CommandHandler("admin", lambda u, c: u.scene.start("admin_main")),
-        CallbackQueryHandler(
-            lambda u, c: u.scene.start("admin_main") if u.data == "admin_cancel" else None,
-            pattern="^admin_cancel$",
-        ),
-        MessageHandler(filters.PHOTO, admin_add_image_received),
-    ]
-
-    wizard.states["admin_view"] = [
-        CommandHandler("admin", lambda u, c: u.scene.start("admin_main")),
-        CallbackQueryHandler(
-            lambda u, c: u.scene.start("admin_main") if u.data == "admin_main" else None,
-            pattern="^admin_main$",
-        ),
-    ]
-
-    wizard.states["admin_delete"] = [
-        CommandHandler("admin", lambda u, c: u.scene.start("admin_main")),
-        CallbackQueryHandler(
-            lambda u, c: u.scene.start("admin_delete_confirm") if u.data == "admin_delete_confirm" else None,
-            pattern="^admin_delete_confirm$",
-        ),
-        CallbackQueryHandler(
-            lambda u, c: admin_delete_all_process(u, c) if u.data == "admin_delete_all" else None,
-            pattern="^admin_delete_all$",
-        ),
-        CallbackQueryHandler(
-            lambda u, c: u.scene.start("admin_main") if u.data == "admin_main" else None,
-            pattern="^admin_main$",
-        ),
-    ]
-
-    wizard.states["admin_cancel"] = [
-        CommandHandler("admin", lambda u, c: u.scene.start("admin_main")),
-        CallbackQueryHandler(
-            lambda u, c: u.scene.start("admin_main") if u.data == "admin_main" else None,
-            pattern="^admin_main$",
-        ),
-    ]
-
-    # ------------------------------------------------------------
-    # 7️⃣ 進入檢查是否為管理員的 Middleware
-    # ------------------------------------------------------------
-    async def admin_permission_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """所有 admin 相關的回調與指令，必須先檢查使用者是否為 admin。"""
-        if not is_admin(update.effective_user.id):
-            await update.callback_query.answer(
-                text="❌ 您不是管理員，沒有此功能的存取權限。", show_alert=True
+        await query.edit_message_text(
+            f"🗑️ 记录 ID {record_id} 已成功删除！",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton(text="🔙 返回上一级", callback_data="admin_main")]]
             )
-            # 防止繼續進入 Wizard，直接返回
-            return
+        )
+        return "admin_main"
 
-    # 把 middleware掛到整個 Wizard 上
-    wizard.middleware = admin_permission_middleware
+    if data == "admin_main":
+        return "admin_main"
 
-    return wizard
+    return "admin_main"
 
 
-# ------------------------------------------------------------
-# 8️⃣ 匯出供 main.py 使用的物件
-# ------------------------------------------------------------
-adminWizard = admin_scene()  # 這是一個已經完成配置的 Scenes.Wizard 實例
+async def admin_fileid_delete_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """在「查看所有记录」页面点击「删除全部」时调用。"""
+    from src.models.file import delete_all_records
+
+    await delete_all_records()
+    await update.callback_query.edit_message_text(
+        "🗑️ 所有 File‑ID 记录已全部删除！",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton(text="🔙 返回上一级", callback_data="admin_main")]]
+        )
+    )
+    return "admin_main"
+
+
+# ------------------- 中间件：统一权限检查 -------------------
+async def admin_permission_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """所有 admin 相关的回调都必须先通过权限检查。"""
+    if not is_admin(update.effective_user.id):
+        await update.callback_query.answer(
+            text="❌ 您不是管理员，无权访问此功能。", show_alert=True
+        )
+        return
+
+
+# ------------------- 把所有 Step 加入 Wizard 状态机 -------------------
+admin_scene = Scenes.Wizard()
+
+# 主菜单
+admin_scene.states["admin_main"] = [
+    CallbackQueryHandler(
+        lambda u, c: u.scene.start("admin_main")
+        if u.data == "admin_main"
+        else None,
+        pattern="^admin_main$",
+    ),
+    CallbackQueryHandler(
+        lambda u, c: u.scene.start("admin_fileid_add")
+        if u.data == "admin_fileid_add"
+        else u.scene.start("admin_fileid_view")
+        if u.data == "admin_fileid_view"
+        else u.scene.start("admin_main")
+        if u.data == "admin_cancel"
+        else None,
+        pattern="^admin_(fileid_add|view|cancel|reset)$",
+    ),
+]
+
+# 新增 File‑ID 文本输入
+admin_scene.states["admin_fileid_add_text"] = [
+    CallbackQueryHandler(
+        lambda u, c: u.scene.start("admin_fileid_get_text")
+        if u.data == "admin_fileid_get_text"
+        else u.scene.start("admin_fileid_add")
+        if u.data == "admin_fileid_add"
+        else u.scene.start("admin_main")
+        if u.data == "admin_cancel"
+        else None,
+        pattern="^admin_(fileid_add|cancel)$",
+    ),
+    MessageHandler(filters.TEXT & ~filters.COMMAND, admin_fileid_text_received),
+]
+
+# 获取图片并保存
+admin_scene.states["admin_fileid_get_text"] = [
+    CallbackQueryHandler(
+        lambda u, c: u.scene.start("admin_fileid_get_text")
+        if u.data == "admin_fileid_get_text"
+        else u.scene.start("admin_main")
+        if u.data == "admin_cancel"
+        else None,
+        pattern="^admin_fileid_get_text$",
+    ),
+    MessageHandler(filters.PHOTO, admin_fileid_text_received),
+]
+
+# 查看记录页面
+admin_scene.states["admin_fileid_view"] = [
+    CallbackQueryHandler(
+        lambda u, c: u.scene.start("admin_fileid_process")
+        if u.data.startswith("view_")
+        else u.scene.start("admin_fileid_confirm_delete")
+        if u.data.startswith("del_")
+        else u.scene.start("admin_fileid_view")
+        if u.data == "admin_fileid_view"
+        else u.scene.start("admin_main")
+        if u.data == "admin_main"
+        else None,
+        pattern="^(view_|del_|admin_fileid_view|admin_main)$",
+    ),
+]
+
+# 处理「查看」后的细节页面
+admin_scene.states["admin_fileid_process"] = [
+    CallbackQueryHandler(
+        lambda u, c: u.scene.start("admin_fileid_process")
+        if u.data.startswith("view_")
+        else u.scene.start("admin_fileid_confirm_delete")
+        if u.data.startswith("del_")
+        else u.scene.start("admin_fileid_view")
+        if u.data == "admin_fileid_view"
+        else u.scene.start("admin_main")
+        if u.data == "admin_main"
+        else None,
+        pattern="^(view_|del_|admin_fileid_view|admin_main)$",
+    ),
+]
+
+# 删除确认页面
+admin_scene.states["admin_fileid_confirm_delete"] = [
+    CallbackQueryHandler(
+        lambda u, c: u.scene.start("admin_fileid_confirm_delete_process")
+        if u.data.startswith("delete_confirm_")
+        else u.scene.start("admin_fileid_confirm_delete")
+        if u.data == "admin_fileid_confirm_delete"
+        else u.scene.start("admin_fileid_confirm_delete")
+        if u.data == "admin_fileid_confirm_delete"
+        else u.scene.start("admin_main")
+        if u.data == "admin_main"
+        else None,
+        pattern="^delete_confirm_",
+    ),
+]
+
+# 删除实际执行
+admin_scene.states["admin_fileid_delete_confirm_process"] = [
+    CallbackQueryHandler(
+        lambda u, c: u.scene.start("admin_fileid_confirm_delete_process")
+        if u.data.startswith("delete_confirm_")
+        else u.scene.start("admin_fileid_process")
+        if u.data.startswith("view_")
+        else u.scene.start("admin_fileid_view")
+        if u.data == "admin_fileid_process"
+        else u.scene.start("admin_main")
+        if u.data == "admin_main"
+        else None,
+        pattern="^delete_confirm_",
+    ),
+]
+
+# 删除全部
+admin_scene.states["admin_fileid_delete_all"] = [
+    CallbackQueryHandler(
+        lambda u, c: u.scene.start("admin_fileid_delete_all")
+        if u.data == "admin_fileid_delete_all"
+        else u.scene.start("admin_main")
+        if u.data == "admin_main"
+        else None,
+        pattern="^admin_fileid_delete_all$",
+    ),
+]
+
+# 取消
+admin_scene.states["admin_cancel"] = [
+    CallbackQueryHandler(
+        lambda u, c: u.scene.start("admin_main")
+        if u.data == "admin_main"
+        else None,
+        pattern="^admin_main$",
+    ),
+]
+
+# 将中间件挂到整个 Wizard
+admin_scene.middleware = admin_permission_middleware
+
+
+# ------------------- 导出供 main.py 调用的对象 -------------------
+adminWizard = admin_scene  # 这一行让 main.py 能 `from src.commands.admin import adminWizard`
