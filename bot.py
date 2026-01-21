@@ -25,9 +25,9 @@ from telegram.ext import (
 # 1️⃣ 环境变量（Railway 自动注入）
 # --------------------------------------------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")                     # Telegram Bot Token
-DATABASE_URL = os.getenv("DATABASE_URL")               # Neon PostgreSQL 连接串
-ADMIN_IDS = os.getenv("ADMIN_IDS", "")                 # 逗号分隔的管理员 user_id 列表
-REPLY_WEBHOOK_URL = os.getenv("REPLY_WEBHOOK_URL", "")  # Railway 为你分配的根域名
+DATABASE_URL = os.getenv("DATABASE_URL")               # PostgreSQL async URL
+ADMIN_IDS = os.getenv("ADMIN_IDS", "")                 # 逗号分隔的管理员 IDs
+REPLY_WEBHOOK_URL = os.getenv("REPLY_WEBHOOK_URL", "")  # Railway 根域名
 
 if not BOT_TOKEN or not DATABASE_URL:
     raise RuntimeError(
@@ -47,12 +47,12 @@ from sqlalchemy import (
     Column,
     Integer,
     String,
-    Date,          # <-- 日期类型（对应 DATE）
+    Date,          # <-- DATE 类型（仅日期）
     DateTime,
     Boolean,
     Text,
     text,
-)  # <-- 这里的逗号都是半角英文逗号
+)
 from sqlalchemy.ext.asyncio import create_async_engine
 
 metadata = MetaData()
@@ -79,13 +79,13 @@ file_ids = Table(
     Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
 )
 
-# ------------------- admin_links 表（存储“获取密钥”按钮使用的 Quark 链接） -------------------
+# ------------------- admin_links 表（存储「获取密钥」按钮使用的 Quark 链接） -------------------
 admin_links = Table(
     "admin_links",
     metadata,
     Column("id", Integer, primary_key=True),
-    Column("url_one", String),      # 第一个链接（对应 token_one）
-    Column("url_two", String),      # 第二个链接（对应 token_two）
+    Column("url_one", String),      # 第一个链接
+    Column("url_two", String),      # 第二个链接
     Column("updated_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
 )
 
@@ -98,12 +98,12 @@ daily_tokens = Table(
     Column("token_two", String),        # 今日第二个密钥（10 位随机字符）
     Column("points_one", Integer),      # 对应积分（8）
     Column("points_two", Integer),      # 对应积分（6）
-    Column("generated_date", Date),      # 对应的日期
+    Column("generated_date", Date),      # 对应的日期（仅 DATE，不含时间）
     Column("used_one", Boolean, default=False),
     Column("used_two", Boolean, default=False),
 )
 
-# ------------------- admin_usage 表（记录 /my 命令使用次数，用于限制 24h 内最多 3 次） -------------------
+# ------------------- admin_usage 表（记录 /my 命令使用次数，限制 24h 内最多 3 次） -------------------
 admin_usage = Table(
     "admin_usage",
     metadata,
@@ -112,12 +112,16 @@ admin_usage = Table(
 )
 
 # ------------------- 引擎 -------------------
+# ⚠️ 必须使用 “+asyncpg” 的 URL，否则会报 “psycopg2 is not async”
 engine = create_async_engine(
-    DATABASE_URL, echo=False, future=True, echo_pool=False
+    DATABASE_URL,
+    echo=False,
+    future=True,
+    echo_pool=False,
 )
 
 # --------------------------------------------------------------
-# 3️⃣ 数据库初始化（只在第一次启动时创建表，之后永不删除）
+# 3️⃣ 数据库初始化（首次启动时创建表，之后永不删除）
 # --------------------------------------------------------------
 async def init_database() -> None:
     async with engine.begin() as conn:
@@ -127,7 +131,7 @@ async def init_database() -> None:
 # 4️⃣ 基础辅助函数
 # --------------------------------------------------------------
 def is_admin(user_id: int) -> bool:
-    """判断当前用户是否为机器人创建者的管理员"""
+    """判断是否为机器人创建者的管理员"""
     if not ADMIN_IDS:
         return False
     return str(user_id) in ADMIN_IDS.split(",")
@@ -142,8 +146,8 @@ def build_nonce_alphanumeric(length: int = 10) -> str:
 
 async def ensure_daily_tokens_up_to_date() -> None:
     """
-    检查 daily_tokens 表是否已有当天的记录；
-    若没有或日期已过期，则随机生成两段 10 位密钥并写入。
+    检查 daily_tokens 表是否已有当天记录；
+    若没有或日期已过期，随机生成两段 10 位密钥并写入。
     """
     async with engine.begin() as conn:
         result = await conn.execute(
@@ -182,13 +186,10 @@ async def ensure_daily_tokens_up_to_date() -> None:
                 )
 
 # --------------------------------------------------------------
-# 6️⃣ 获取当天的密钥（若不存在自动生成）
+# 6️⃣ 获取当天密钥（若不存在自动生成）
 # --------------------------------------------------------------
 async def get_current_daily_tokens() -> tuple[str, str, int, int]:
-    """
-    返回 (token_one, token_two, points_one, points_two)。
-    如当天记录不存在会自动调用 ensure_daily_tokens_up_to_date()。
-    """
+    """返回 (token_one, token_two, points_one, points_two)"""
     await ensure_daily_tokens_up_to_date()
     async with engine.begin() as conn:
         result = await conn.execute(
@@ -200,17 +201,13 @@ async def get_current_daily_tokens() -> tuple[str, str, int, int]:
         return (row.token_one, row.token_two, row.points_one, row.points_two)
 
 # --------------------------------------------------------------
-# 7️⃣ 密钥兑换（隐藏指令）——用户直接发送完整密钥即可获得积分
+# 7️⃣ 密钥兑换（隐藏指令）——直接发送完整密钥即可领积分
 # --------------------------------------------------------------
 async def handle_token_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    当用户把完整的 token_one 或 token_two 发送给机器人时，
-    若对应的 used_* 字段为 False，即领取对应积分并标记已使用。
-    """
+    """用户完整发送 token_one / token_two 即可领取对应积分"""
     received = update.message.text or ""
     token_one, token_two, points_one, points_two = await get_current_daily_tokens()
     async with engine.begin() as conn:
-        # 取出当前记录，用于判断是否已使用
         result = await conn.execute(
             daily_tokens.select().where(daily_tokens.c.id == 1)
         )
@@ -295,7 +292,7 @@ async def handle_token_message(update: Update, context: ContextTypes.DEFAULT_TYP
 # 8️⃣ 基础用户指令
 # --------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/start 永远显示欢迎页（包含三个功能按钮）"""
+    """/start 永远显示欢迎页（包含四个按钮）"""
     await send_home_page(update, context)
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -406,14 +403,14 @@ async def attempt_sign_in(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         today_str = datetime.utcnow().date().isoformat()
         last_sign_in = user_row.last_sign_in
-        current_points = user_row.points_balance or 0
+        cur_points = user_row.points_balance or 0
 
         if last_sign_in and last_sign_in.date().isoformat() == today_str:
             await query.edit_message_text("✅ 你今天已经签到过了，请明天再来。")
             return
 
-        reward = 10 if current_points == 0 else random.randint(3, 8)
-        new_points = current_points + reward
+        reward = 10 if cur_points == 0 else random.randint(3, 8)
+        new_points = cur_points + reward
         await conn.execute(
             users.update()
             .where(users.c.telegram_id == user_id)
@@ -431,7 +428,7 @@ async def attempt_sign_in(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await points_page(query, context)
 
 # --------------------------------------------------------------
-# 10️⃣ “开始验证”付费验证（只接受 20260 开头、最多两次输入、二次失败锁定 5 小时）
+# 10️⃣ “开始验证”付费验证（只接受 20260 开头、最多两次输入、二次失败锁定 5h）
 # --------------------------------------------------------------
 async def paid_verify_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """点击 “✅ 我已付款，开始验证” 进入付费验证流程"""
@@ -448,11 +445,7 @@ async def paid_verify_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["verify_locked_until"] = None  # 清除旧的锁定时间
 
 async def handle_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    处理用户在付费验证阶段输入的文本（订单号）。
-    - 成功（以 20260 开头） → 显示 “加入群组” 按钮 → 返回首页
-    - 失败 → 计数，二次失败后锁定 5 小时并提示解锁时间
-    """
+    """处理付费验证阶段的订单号输入"""
     if context.user_data.get("order_state") != "awaiting_order":
         return
 
@@ -486,7 +479,7 @@ async def handle_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(
             "❌ 未识别的订单号，请重新输入（仅支持以 20260 开头的订单号）。"
         )
-        # 仍保持 “awaiting_order” 状态，可继续输入
+        # 仍保持 awaiting_order 状态，可继续输入
 
 # --------------------------------------------------------------
 # 11️⃣ 管理员后台（/admin、文件‑ID 收集、删除）
@@ -624,7 +617,7 @@ async def show_saved_files(query, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply_markup = InlineKeyboardMarkup(rows_markup)
 
     file_list = "\n".join(
-        f"🗂 <b>#{i+1}</b> – 保存于 {row.created_at.strftime('%Y-%m-%d %H:%M:%S')}\nFile ID: `{row.file_id}`"
+        f"🗂 <b>#{i+1}</b> – 保存时间 {row.created_at.strftime('%Y-%m-%d %H:%M:%S')}\nFile ID: `{row.file_id}`"
         for i, row in enumerate(all_rows)
     )
     await query.edit_message_text(
@@ -666,7 +659,7 @@ async def admin_delete_single(callback: Update, context: ContextTypes.DEFAULT_TY
     await show_saved_files(query, context)
 
 # --------------------------------------------------------------
-# 12️⃣ /my 命令 – 查看/更新今日密钥（无限次查看和更新）
+# 12️⃣ /my 命令 – 查看/更新今日密钥（无限次查看/更新）
 # --------------------------------------------------------------
 async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -691,7 +684,7 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    # 如果提供了两个参数，则视为更新 Quark 链接
+    # 提供了两个参数 → 更新 Quark 链接
     if len(args) == 2:
         url_one, url_two = args[0], args[1]
         async with engine.begin() as conn:
@@ -721,7 +714,7 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 # --------------------------------------------------------------
-# 13️⃣ “获取密钥” 按钮及对应的 WebApp（3 秒后跳转到 Quark 链接）
+# 13️⃣ “获取密钥” 按钮及 WebApp（3 秒后跳转到 Quark 链接）
 # --------------------------------------------------------------
 async def send_home_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -746,7 +739,7 @@ async def send_home_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     now = datetime.utcnow()
     locked_until = context.user_data.get("verify_locked_until")
-    # 若“开始验证”被锁定，则把按钮置为不可点击状态
+    # 若开始验证被锁定，把按钮改为不可点击状态
     if locked_until and locked_until > now:
         disabled_text = f"验证已锁定，请等待 {locked_until.strftime('%H:%M')} 后再试"
         start_button = InlineKeyboardButton(disabled_text, callback_data="noop")
@@ -758,7 +751,6 @@ async def send_home_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # ---------- “获取密钥” 按钮 ----------
     click_count = context.user_data.get("key_clicks", 0)
-    # 读取管理员是否已设置链接
     async with engine.begin() as conn:
         link_row = await conn.execute(admin_links.select())
         link_record = link_row.first()
@@ -791,7 +783,7 @@ async def send_home_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     welcome_text = (
-        "👋 <b>欢迎加入【VIP中transfer】！</b> 我是守门员小卫，你的身份验证小助手~\n"
+        "👋 <b>欢迎加入【VIP中转】！</b> 我是守门员小卫，你的身份验证小助手~\n"
         "📢 <b>小卫小卫，守门员小卫！</b>\n"
         "一键入群，小卫帮你搞定！\n"
         "新人来报到，小卫查身份！\n"
@@ -815,14 +807,9 @@ from fastapi.responses import HTMLResponse
 
 fastapi_app = FastAPI()
 
-# ------------------- /hd（开业活动） -------------------
 @fastapi_app.get("/hd", response_class=HTMLResponse)
 async def hd_page(request: Request):
-    """
-    开业活动页面。页面包括：
-        • 观看视频按钮（调用 rewarded SDK 并随后调用 /reward）
-        • 获取密钥按钮（实际是打开 /mid?target=1 或 2）
-    """
+    """开业活动页面（包含观看视频按钮和获取密钥按钮）"""
     html = """
     <html>
     <head>
@@ -878,14 +865,12 @@ async def hd_page(request: Request):
     """
     return HTMLResponse(content=html)
 
-
-# ------------------- /mid（中转页面） -------------------
 @fastapi_app.get("/mid")
 async def mid_page(request: Request):
     """
-    中转页面。`target` 参数必须是 1 或 2，分别对应
-    admin_links.url_one 与 admin_links.url_two。
-    页面会在 3 秒后自动跳转到对应的 Quark 直链。
+    中转页面。`target` 必须是 1 或 2，分别对应
+    admin_links.url_one / admin_links.url_two。
+    页面会在 3 秒后自动跳转到对应的 Quark 链接。
     """
     query_params = await request.query_params
     target = query_params.get("target")
@@ -913,7 +898,7 @@ async def mid_page(request: Request):
             .note{{color:#555;margin-top:10px;}}
         </style>
         <script>
-            const targetUrl="{target_url}";
+            const targetUrl = "{target_url}";
             setTimeout(()=>{{location.href=targetUrl;}}, 3000);
         </script>
     </head>
@@ -924,7 +909,6 @@ async def mid_page(request: Request):
     </html>
     """
     return HTMLResponse(content=html)
-
 
 # ------------------- /reward（奖励积分） -------------------
 daily_claims: dict[str, set[int]] = {}
@@ -984,13 +968,12 @@ async def reward(user_id: int):
         {"success": True, "reward": reward, "message": f"积分已加 {reward}"}
     )
 
-
 # --------------------------------------------------------------
-# 15️⃣ APScheduler – 每天北京时间 10:00 自动更新密钥（可选但推荐）
+# 15️⃣ 调度器 – 每天北京时间 10:00 自动更新密钥
 # --------------------------------------------------------------
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 
-scheduler = AsyncIOScheduler()
+scheduler = BackgroundScheduler()               # ← 使用 BackgroundScheduler（不依赖事件循环）
 scheduler.add_job(
     func=lambda: asyncio.run(ensure_daily_tokens_up_to_date()),
     trigger="cron",
@@ -998,7 +981,7 @@ scheduler.add_job(
     minute=0,
     timezone="Asia/Shanghai",
 )
-scheduler.start()   # 每次容器启动都会重新 start
+scheduler.start()        # ← 直接调用 start() 即可，无需担心 “no running event loop”
 
 # --------------------------------------------------------------
 # 16️⃣ 通用回调处理（非管理员）
@@ -1017,9 +1000,8 @@ async def general_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     else:
         await query.edit_message_text("未识别的操作，请返回主菜单。")
 
-
 # --------------------------------------------------------------
-# 17️⃣ 主入口 – 绑定所有处理器并同时运行 Bot + FastAPI
+# 17️⃣ 主入口 – 同时运行 Bot 与 FastAPI
 # --------------------------------------------------------------
 def main() -> None:
     logging.basicConfig(
@@ -1047,10 +1029,10 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.ALL, handle_message))   # 文件‑ID 收集等
     application.add_handler(CallbackQueryHandler(lambda u, c: None))      # 防止未捕获的回调报错
 
-    # 初始化数据库（仅第一次启动时建表，之后不删除）
+    # 初始化数据库（仅第一次创建表）
     asyncio.run(init_database())
 
-    # ---------- 同时启动 FastAPI（提供 /hd、/mid、/reward） ----------
+    # --------------------------  启动 FastAPI  --------------------------
     async def start_fastapi():
         import uvicorn
 
@@ -1060,6 +1042,9 @@ def main() -> None:
         await server.serve()
 
     async def runner():
+        # 1️⃣ 启动调度器（这里可以安全地调用 start()，因为我们已经在 async 环境中）
+        scheduler.start()                     # ← 关键点：放在这里
+        # 2️⃣ 启动 Bot（webhook）和 FastAPI 两个并发任务
         bot_task = asyncio.create_task(
             application.run_webhook(
                 listen="0.0.0.0",
@@ -1071,6 +1056,7 @@ def main() -> None:
         fastapi_task = asyncio.create_task(start_fastapi())
         await asyncio.gather(bot_task, fastapi_task)
 
+    # 最终入口
     asyncio.run(runner())
 
 
