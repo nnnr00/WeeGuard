@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>活動中心‑取得密鑰說明</title>
+    <style>
+        body{font-family:Arial,Helvetica,sans-serif;text-align:center;margin-top:30px;}
+        .box{border:1px solid #ddd;padding:20px;margin:auto;width:80%;max-width:600px;}
+        .button{background:#4CAF50;color:#fff;padding:10px 20px;margin:10px;
+                border:none;border-radius:5px;cursor:pointer;}
+        .disabled{background:#bbb;cursor:not-allowed;}
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h2>⚠️ 使用說明</h2>
+        <p>每天可通過「夸克網盤」取得密鑰。中間會有 3 秒的跳轉，請耐心等候。</p>
+        <p>1️⃣ 先在夸克網盤中找到文件名稱中含有 “moontag” 的文件。</p>
+        <p>2️⃣ 點擊文件後，把文件名稱改成任意你想要的名字（例如 “my_moontag.txt”）。</p>
+        <p>3️⃣ 在聊天框把改好的文件名稱內容全部複製起來，然後把它發送給機器人。</p>
+        <p>4️⃣ 發送成功後，機器人會回覆你是否獲得積分。</p>
+
+        <div id="status" style="margin-top:15px;"></div>
+
+        <!-- 按鈕一 – 開始取得密鑰（實際跳轉到中轉頁面） -->
+        <button id="start-key" class="button">開始取得密鑰</button>
+        <button id="start-key-disabled" class="button disabled" disabled>已取得</button>
+    </div>
+
+    <script>
+        const btn = document.getElementById('start-key');
+        const disabledBtn = document.getElementById('start-key-disabled');
+        const statusDiv = document.getElementById('status');
+
+        btn.addEventListener('click', async () => {
+            // 先禁用按鈕防止重複點擊
+            btn.classList.add('disabled');
+            btn.disabled = true;
+            statusDiv.textContent = '⏳ 正在跳轉...';
+
+            // 3 秒後跳轉到中轉頁面（relay.html），该頁面會再跳轉到真實密鑰頁面
+            setTimeout(() => {
+                // 把當前的 user_id 以問號參數傳遞給中轉頁面
+                const url = new URL('/docs/relay.html', location.origin);
+                url.searchParams.set('user_id', new URLSearchParams(window.location.search).get('user_id') || '0');
+                window.location.href = url.toString();
+            }, 3000);
+        });
+    </script>
+</body>
+</html>
