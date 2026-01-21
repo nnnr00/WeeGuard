@@ -1,5 +1,8 @@
-python-telegram-bot==20.3
-asyncpg==0.27.0
-apscheduler==3.10.1
-fastapi==0.95.2
-uvicorn==0.22.0
+python-telegram-bot==20.*
+SQLAlchemy>=2.0
+asyncpg
+psycopg2-binary
+python-dotenv          # 本地调试可用，部署时 Railway 会自动忽略
+uvicorn[standard]      # 用于运行 FastAPI
+fastapi
+apscheduler
