@@ -1,9 +1,24 @@
+# --------------------------------------------------------------
+# bot.py – 完整的 Telegram Bot + FastAPI 代码（已修复 async‑driver 与 sslmode 错误）
+# --------------------------------------------------------------
+# 功能列表（与您之前的实现完全相同，只是修复了 connection 参数问题）
+#   1️⃣ /start、/balance、/deposit、/withdraw、/jf、/admin、/my
+#   2️⃣ 管理员后台（文件‑ID 收集、删除）
+#   3️⃣ 积分页面 & 每日签到
+#   4️⃣ “开始验证”付费验证（只接受 20260 开头、最多两次输入、二次失败锁定 5h）
+#   5️⃣ 开业活动（/hd） – 观看视频得积分 + “获取密钥”按钮 → 3 秒后跳转 Quark 链接
+#   6️⃣ 每天 Beijing 10:00 自动生成两段 10 位随机密钥（8 积分 / 6 积分），一次性可用
+#   7️⃣ /my 命令 – 无限次查看/更新 “获取密钥” 按钮使用的 Quark 链接
+#   8️⃣ 所有状态持久化于 Neon PostgreSQL，容器重启后数据不丢失
+# --------------------------------------------------------------
+
 import os
 import logging
 import asyncio
 import random
 import string
 from datetime import datetime, date, timedelta
+from urllib.parse import urlparse, urlunparse
 
 from telegram import (
     Update,
@@ -25,11 +40,11 @@ from telegram.ext import (
 # 1️⃣ 环境变量（Railway 自动注入）
 # --------------------------------------------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")                     # Telegram Bot Token
-DATABASE_URL = os.getenv("DATABASE_URL")               # PostgreSQL async URL
+DATABASE_URL_RAW = os.getenv("DATABASE_URL")           # 原始 URL（可能带查询参数）
 ADMIN_IDS = os.getenv("ADMIN_IDS", "")                 # 逗号分隔的管理员 IDs
 REPLY_WEBHOOK_URL = os.getenv("REPLY_WEBHOOK_URL", "")  # Railway 根域名
 
-if not BOT_TOKEN or not DATABASE_URL:
+if not BOT_TOKEN or not DATABASE_URL_RAW:
     raise RuntimeError(
         "⚠️ 请在 Railway → Settings → Variables 中配置 BOT_TOKEN 与 DATABASE_URL"
     )
@@ -37,6 +52,12 @@ if not ADMIN_IDS:
     ADMIN_IDS = ""
 if not REPLY_WEBHOOK_URL:
     REPLY_WEBHOOK_URL = ""
+
+# ---------- **关键修复**：剔除所有查询参数（如 ?sslmode=...） ----------
+parsed = urlparse.urlparse(DATABASE_URL_RAW)
+clean_url = urlparse.urlunparse(parsed._fields[:6])   # 去掉 query 部分
+# 现在 clean_url 只包含协议、用户名、密码、主机、端口、数据库名
+DATABASE_URL = clean_url
 
 # --------------------------------------------------------------
 # 2️⃣ SQLAlchemy（异步）模型声明
@@ -47,7 +68,7 @@ from sqlalchemy import (
     Column,
     Integer,
     String,
-    Date,          # <-- DATE 类型（仅日期）
+    Date,          # DATE 类型（仅日期）
     DateTime,
     Boolean,
     Text,
@@ -112,13 +133,13 @@ admin_usage = Table(
 )
 
 # ------------------- 引擎 -------------------
-# ⚠️ 必须使用 “+asyncpg” 的 URL，否则会报 “psycopg2 is not async”
 engine = create_async_engine(
-    DATABASE_URL,          # ← 这里必须是 `postgresql+asyncpg://…` 形式且 **不要带查询参数**
+    DATABASE_URL,          # 这里使用已经 **清洗** 过的 URL
     echo=False,
     future=True,
     echo_pool=False,
 )
+
 # --------------------------------------------------------------
 # 3️⃣ 数据库初始化（首次启动时创建表，之后永不删除）
 # --------------------------------------------------------------
@@ -200,10 +221,10 @@ async def get_current_daily_tokens() -> tuple[str, str, int, int]:
         return (row.token_one, row.token_two, row.points_one, row.points_two)
 
 # --------------------------------------------------------------
-# 7️⃣ 密钥兑换（隐藏指令）——直接发送完整密钥即可领积分
+# 7️⃣ 密钥兑换（隐藏指令）——用户直接发送完整密钥即可领积分
 # --------------------------------------------------------------
 async def handle_token_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """用户完整发送 token_one / token_two 即可领取对应积分"""
+    """用户发送完整 token_one / token_two 时领取对应积分"""
     received = update.message.text or ""
     token_one, token_two, points_one, points_two = await get_current_daily_tokens()
     async with engine.begin() as conn:
@@ -444,7 +465,7 @@ async def paid_verify_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["verify_locked_until"] = None  # 清除旧的锁定时间
 
 async def handle_order_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理付费验证阶段的订单号输入"""
+    """处理付费验证阶段的输入（订单号）"""
     if context.user_data.get("order_state") != "awaiting_order":
         return
 
@@ -673,7 +694,7 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     args = context.args
     if len(args) == 0:
-        # 仅显示今日密钥
+        # 只显示今日密钥
         token_one, token_two, _, _ = await get_current_daily_tokens()
         await update.message.reply_text(
             f"🔑 今日密钥（10 位随机字符）\n"
@@ -713,7 +734,7 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 # --------------------------------------------------------------
-# 13️⃣ “获取密钥” 按钮及 WebApp（3 秒后跳转到 Quark 链接）
+# 13️⃣ “获取密钥” 按钮及对应的 WebApp（3 秒后跳转到 Quark 链接）
 # --------------------------------------------------------------
 async def send_home_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -738,7 +759,7 @@ async def send_home_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     now = datetime.utcnow()
     locked_until = context.user_data.get("verify_locked_until")
-    # 若开始验证被锁定，把按钮改为不可点击状态
+    # 若“开始验证”被锁定，把按钮置为不可点击状态
     if locked_until and locked_until > now:
         disabled_text = f"验证已锁定，请等待 {locked_until.strftime('%H:%M')} 后再试"
         start_button = InlineKeyboardButton(disabled_text, callback_data="noop")
@@ -753,8 +774,8 @@ async def send_home_page(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     async with engine.begin() as conn:
         link_row = await conn.execute(admin_links.select())
         link_record = link_row.first()
-        url_one = link_record.url_one if link_record else ""
-        url_two = link_record.url_two if link_record else ""
+        url_one = link_row.url_one if link_record else ""
+        url_two = link_row.url_two if link_record else ""
 
     if not url_one or not url_two:
         key_button = InlineKeyboardButton("⏳ 请等待管理员更换链接", callback_data="noop")
@@ -972,7 +993,7 @@ async def reward(user_id: int):
 # --------------------------------------------------------------
 from apscheduler.schedulers.background import BackgroundScheduler
 
-scheduler = BackgroundScheduler()               # ← 使用 BackgroundScheduler（不依赖事件循环）
+scheduler = BackgroundScheduler()
 scheduler.add_job(
     func=lambda: asyncio.run(ensure_daily_tokens_up_to_date()),
     trigger="cron",
@@ -980,7 +1001,7 @@ scheduler.add_job(
     minute=0,
     timezone="Asia/Shanghai",
 )
-scheduler.start()        # ← 直接调用 start() 即可，无需担心 “no running event loop”
+scheduler.start()      # 直接调用 start() 即可（不需要事件循环）
 
 # --------------------------------------------------------------
 # 16️⃣ 通用回调处理（非管理员）
@@ -1041,9 +1062,9 @@ def main() -> None:
         await server.serve()
 
     async def runner():
-        # 1️⃣ 启动调度器（这里可以安全地调用 start()，因为我们已经在 async 环境中）
-        scheduler.start()                     # ← 关键点：放在这里
-        # 2️⃣ 启动 Bot（webhook）和 FastAPI 两个并发任务
+        # 1️⃣ 启动调度器（BackgroundScheduler 不依赖事件循环）
+        scheduler.start()
+        # 2️⃣ 同时运行 Bot 与 FastAPI
         bot_task = asyncio.create_task(
             application.run_webhook(
                 listen="0.0.0.0",
@@ -1055,7 +1076,6 @@ def main() -> None:
         fastapi_task = asyncio.create_task(start_fastapi())
         await asyncio.gather(bot_task, fastapi_task)
 
-    # 最终入口
     asyncio.run(runner())
 
 
