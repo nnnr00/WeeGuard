@@ -1,16 +1,13 @@
 # ------------------------------------------------------------
 # main.py
 # ------------------------------------------------------------
-# 功能：
+# 该文件同时实现：
 #   1️⃣ Telegram Bot（/start、/admin、File‑ID、积分、moontag 等）
-#   2️⃣ FastAPI 伺服器（提供 HTML、廣告回調、密鑰驗證等）
-#   3️⃣ 每天自動生成兩個 10 位隨機密鑰、使用計數與重置
-#   4️⃣ 完備的防作弊、計數、通知與积分奖励
-#   5️⃣ 所有 `await` 都在 `async def` 內部，避免
+#   2️⃣ FastAPI 服务器（提供 HTML、廣告回調、密鑰驗證等）
+#   3️⃣ 每日自动生成两个 10 位随机密钥、使用计数与重置
+#   4️⃣ 完整的防作弊、计数、通知与积分奖励
+#   5️⃣ 所有 `await` 都在 `async def` 内部，避免
 #      "SyntaxError: 'await' outside function"
-# ------------------------------------------------------------
-# 记得把 *所有* 代码一次性复制到项目根目录的 `main.py`
-# 运行方式（在容器里或本地） →  `python main.py`
 # ------------------------------------------------------------
 
 from __future__ import annotations
@@ -42,8 +39,8 @@ from telegram.ext import (
 )
 
 # ------------------- 常量 -------------------
-# 必须在平台的环境变量里提供这两个
-TELEGRAM_BOT_TOKEN: str = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")   # 替换为真实的 Bot Token
+# 必须在平台环境变量中提供这些
+TELEGRAM_BOT_TOKEN: str = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")   # ← 替换为真实的 Bot Token
 BEAJING_TIMEZONE = pytz.timezone("Asia/Shanghai")
 DB_FILE = "data.sqlite"
 
@@ -55,23 +52,23 @@ TABLE_KEYS = "daily_keys"
 TABLE_KEY_USAGE = "key_usage"
 
 # 奖励数值
-REWARD_FIRST_TIME = 10            # 第一次观看视频获得的积分
-REWARD_SECOND_TIME = 6            # 第二次观看视频获得的积分
-REWARD_THIRD_MIN = 3              # 第三次及以后随机下限
-REWARD_THIRD_MAX = 10             # 第三次及以后随机上限
+REWARD_FIRST_TIME = 10           # 第一次观看视频获得的积分
+REWARD_SECOND_TIME = 6           # 第二次观看视频获得的积分
+REWARD_THIRD_MIN = 3             # 第三次及以后随机下限
+REWARD_THIRD_MAX = 10            # 第三次及以后随机上限
 
 # 密钥相关常量
-KEY_POINT_1 = 8                   # 使用密钥 1 获得的积分
-KEY_POINT_2 = 6                   # 使用密钥 2 获得的积分
-MAX_DAILY_AD_WATCHES = 3         # 每位用户每天最多观看 rewarded ad 的次数
-MAX_KEY_CLICKS_PER_DAY = 2        # 每位用户每天最多使用密钥的次数
-KEY_RESET_HOUR = 10               # 北京时间 10:00 自动重置密钥与计数
+KEY_POINT_1 = 8                  # 使用密钥 1 获得的积分
+KEY_POINT_2 = 6                  # 使用密钥 2 获得的积分
+MAX_DAILY_AD_WATCHES = 3        # 每位用户每天最多观看 rewarded ad 的次数
+MAX_KEY_CLICKS_PER_DAY = 2       # 每位用户每天最多使用密钥的次数
+KEY_RESET_HOUR = 10              # 北京时间 10:00 自动重置密钥与计数
 
-# ------------------- SQLite 辅助（每次调用均新建连接） -------------------
+# ------------------- SQLite 辅助（每次调用都新建连接） -------------------
 async def get_db_connection() -> aiosqlite.Connection:
     """
-    返回一个已经设置好 `row_factory` 的 SQLite 连接。
-    每次调用都会新建一个连接，避免在多线程/多任务环境下出现
+    返回一个新建立的 SQLite 连接，并把 `row_factory` 设为 `aiosqlite.Row`。
+    每次调用都会新创建连接，这样可以彻底避免
     “threads can only be started once” 的错误。
     """
     conn = await aiosqlite.connect(DB_FILE)
@@ -84,7 +81,7 @@ async def ensure_schema() -> None:
     如果表不存在则创建全部表。整个函数只会在程序启动时执行一次。
     """
     async with await get_db_connection() as conn:
-        # points 表（保存积分余额）
+        # points 表（存储积分余额）
         await conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {TABLE_POINTS} (
@@ -125,7 +122,7 @@ async def ensure_schema() -> None:
             );
             """
         )
-        # key_usage 表（标记密钥是否已经被使用）
+        # key_usage 表（标记密钥是否已被使用）
         await conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {TABLE_KEY_USAGE} (
@@ -153,7 +150,7 @@ async def get_user_balance(user_id: int) -> int:
 async def add_points(user_id: int, points: int) -> None:
     """
     在积分表中为 `user_id` 加上 `points` 分。
-    如果该用户记录不存在，会自动创建一条新记录。
+    若该用户记录不存在会自动创建新记录。
     """
     async with await get_db_connection() as conn:
         current_balance = await get_user_balance(user_id)
@@ -320,7 +317,7 @@ async def ad_completed(request: Request) -> JSONResponse:
     当用户成功观看完奖励视频后，前端会向此端点 POST
     `{"user_id":"123456789"}`。
 
-    这里的职责是：
+    这里负责：
       1）检查每日观看上限
       2）计算奖励（第 1 次 10、第 2 次 6、之后随机 3~10）
       3）更新积分
@@ -345,47 +342,47 @@ async def ad_completed(request: Request) -> JSONResponse:
     if not await increment_daily_ad_count(user_id):
         return {"status": "daily_limit_reached"}
 
-    # ---------- 记录观看次数并决定奖励 ----------
-    async with await get_db_connection() as conn:
-        async with conn.execute(
-            f"SELECT attempt_cnt FROM {TABLE_REWARD_ATTEMPTS} WHERE user_id = ?;", (user_id,)
-        ) as cur:
-            row = await cur.fetchone()
-            attempt_number = (row["attempt_cnt"] or 0) + 1
+        # ---------- 记录观看次数并决定奖励 ----------
+        async with await get_db_connection() as conn:
+            async with conn.execute(
+                f"SELECT attempt_cnt FROM {TABLE_REWARD_ATTEMPTS} WHERE user_id = ?;", (user_id,)
+            ) as cur:
+                row = await cur.fetchone()
+                attempt_number = (row["attempt_cnt"] or 0) + 1
 
-        await conn.execute(
-            f"""
-            INSERT OR REPLACE INTO {TABLE_REWARD_ATTEMPTS} (user_id, attempt_cnt)
-            VALUES (?, ?);
-            """,
-            (user_id, attempt_number),
-        )
-        await conn.commit()
+            await conn.execute(
+                f"""
+                INSERT OR REPLACE INTO {TABLE_REWARD_ATTEMPTS} (user_id, attempt_cnt)
+                VALUES (?, ?);
+                """,
+                (user_id, attempt_number),
+            )
+            await conn.commit()
 
-        if attempt_number == 1:
-            reward = REWARD_FIRST_TIME
-        elif attempt_number == 2:
-            reward = REWARD_SECOND_TIME
-        else:
-            reward = random.randint(REWARD_THIRD_MIN, REWARD_THIRD_MAX)
+            if attempt_number == 1:
+                reward = REWARD_FIRST_TIME
+            elif attempt_number == 2:
+                reward = REWARD_SECOND_TIME
+            else:
+                reward = random.randint(REWARD_THIRD_MIN, REWARD_THIRD_MAX)
 
-    # ---------- 写入积分 ----------
-    await add_points(user_id, reward)
+        # ---------- 写入积分 ----------
+        await add_points(user_id, reward)
 
-    # ---------- 给 Telegram 用户发送积分提示 ----------
-    if hasattr(ad_completed, "telegram_app"):
-        tg_app: Application = ad_completed.telegram_app   # type: ignore
-        await tg_app.bot.send_message(
-            chat_id=user_id,
-            text=(
-                f"✅ 恭喜您完成观看视频并获得 <b>{reward}</b> 积分！\n"
-                f"您的积分已更新。"
-            ),
-            parse_mode="HTML",
-        )
+        # ---------- 给 Telegram 用户发送积分提示 ----------
+        if hasattr(ad_completed, "telegram_app"):
+            tg_app: Application = ad_completed.telegram_app   # type: ignore
+            await tg_app.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    f"✅ 恭喜您完成观看视频并获得 <b>{reward}</b> 积分！\n"
+                    f"您的积分已更新。"
+                ),
+                parse_mode="HTML",
+            )
 
-    # ---------- 返回前端状态 ----------
-    return {"status": "ok"}
+        # ---------- 返回前端状态 ----------
+        return {"status": "ok"}
 
 
 @app.post("/api/submit_key")
@@ -460,7 +457,7 @@ async def submit_key(request: Request) -> JSONResponse:
 async def build_telegram_application() -> Application:
     """
     创建 Telegram Bot 并挂载所有指令和回调。
-    返回的是已经完成配置的 `Application` 实例。
+    返回已经完成配置的 `Application` 实例。
     """
     app_tg = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
@@ -595,7 +592,7 @@ async def build_telegram_application() -> Application:
         await update.message.reply_text(
             "密钥一绑定完成，请继续提供 **密钥二** 的链接："
         )
-        # 实际项目里这里可以继续等待第二个链接的消息，这里仅示例。
+        # 实际项目里可以继续等待第二个链接的消息，这里仅作示例。
 
     app_tg.add_handler(CommandHandler("my", cmd_my))
     app_tg.add_handler(CommandHandler("my无限次", cmd_set_new_keys))
@@ -658,12 +655,12 @@ async def main() -> None:
 
 
 # ------------------------------------------------------------
-# 直接執行 main.py 用於本地調試
+# 直接執行 main.py 用於本地測試
 # ------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
 
-    # asyncio.run() 會在最外層執行 `main()`，
+    # `asyncio.run(main())` 會在最外層執行 `main()`，
     # 所有 `await` 都在 `async def` 內部，不会再出现
     # "await outside function" 的錯誤。
     asyncio.run(main())
