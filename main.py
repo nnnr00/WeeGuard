@@ -1,11 +1,11 @@
 # ------------------------------------------------------------
 # main.py
 # ------------------------------------------------------------
-# 该文件同时完成以下功能：
-#   1️⃣ Telegram Bot（/start、/admin、File‑ID、积分、moontag 等）
+# 這個檔案同時完成：
+#   1️⃣  Telegram Bot（/start、/admin、File‑ID、积分、moontag 等）
 #   2️⃣ FastAPI 伺服器（提供 HTML、廣告回調、密鑰驗證等）
-#   3️⃣ 每日自動生成兩個 10 位隨機密鑰
-#   4️⃣ 完整的防作弊、日誌、計數與重置機制
+#   3️⃣ 每日自動生成兩個 10 位隨機密鑰、使用計數與重置
+#   4️⃣ 完整的防作弊、計數、通知與积分獎勵
 # ------------------------------------------------------------
 
 import asyncio
@@ -34,44 +34,44 @@ from telegram.ext import (
     filters,
 )
 
-# ==================== 常量 ====================
-# 环境变量里必须提供的值
-TELEGRAM_BOT_TOKEN: str = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")  # 替换成你的 Bot Token
+# ------------------- 常量 -------------------
+# 必須在平台的環境變數中提供這兩個
+TELEGRAM_BOT_TOKEN: str = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")  # ← 替換為你的 Bot Token
 BEAJING_TIMEZONE = pytz.timezone("Asia/Shanghai")
 DB_FILE = "data.sqlite"
 
-# 积分表、廣告統計表、密鑰表的名稱
+# 积分、广告计数、密钥表的名稱
 TABLE_POINTS = "points"
 TABLE_AD_COUNTS = "daily_ad_counts"
 TABLE_REWARD_ATTEMPTS = "reward_attempts"
 TABLE_KEYS = "daily_keys"
 TABLE_KEY_USAGE = "key_usage"
 
-# 獎勵值
-REWARD_FIRST_TIME = 10           # 第一次觀看廣告獲得的积分
-REWARD_SECOND_TIME = 6           # 第二次觀看廣告獲得的积分
-REWARD_THIRD_MIN = 3             # 第三次及以後隨機下限
-REWARD_THIRD_MAX = 10            # 第三次及以後隨機上限
+# 奖励值
+REWARD_FIRST_TIME = 10           # 第一次观看视频获得的积分
+REWARD_SECOND_TIME = 6           # 第二次观看视频获得的积分
+REWARD_THIRD_MIN = 3             # 第三次及以后随机下限
+REWARD_THIRD_MAX = 10            # 第三次及以后随机上限
 
-# 密鑰相關常量
-KEY_POINT_1 = 8                  # 輸入密鑰 1 時獲得的积分
-KEY_POINT_2 = 6                  # 輸入密鑰 2 時獲得的积分
-MAX_DAILY_AD_WATCHES = 3         # 每位使用者每天最多觀看 rewarded ad 的次數
-MAX_KEY_CLICKS_PER_DAY = 2       # 每位使用者每天最多使用密鑰的次數
-KEY_RESET_HOUR = 10              # 北京時間 10:00 自動重置密鑰與計數
+# 密钥相关常量
+KEY_POINT_1 = 8                  # 使用密钥 1 获得的积分
+KEY_POINT_2 = 6                  # 使用密钥 2 获得的积分
+MAX_DAILY_AD_WATCHES = 3        # 每位用户每天最多观看 rewarded ad 的次数
+MAX_KEY_CLICKS_PER_DAY = 2       # 每位用户每天最多使用密钥的次数
+KEY_RESET_HOUR = 10              # 北京时间 10:00 自动重置密钥与计数
 
-# ==================== SQLite 輔助函數 ====================
+# ------------------- SQLite 輔助 -------------------
 async def get_db_connection() -> aiosqlite.Connection:
-    """返回一個已設定 row_factory 的 SQLite 連線。"""
+    """返回已设置 row_factory 的 SQLite 连接。"""
     conn = await aiosqlite.connect(DB_FILE)
     conn.row_factory = aiosqlite.Row
     return conn
 
 
 async def ensure_schema() -> None:
-    """如果表不存在則建立所有表格。"""
+    """若表不存在则创建全部表格。"""
     async with await get_db_connection() as conn:
-        # points 表（儲存积分餘額）
+        # points 表（存储积分余额）
         await conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {TABLE_POINTS} (
@@ -82,7 +82,7 @@ async def ensure_schema() -> None:
             );
             """
         )
-        # daily_ad_counts 表（統計每日看完廣告的次數）
+        # daily_ad_counts 表（统计每日观看完广告的次数）
         await conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {TABLE_AD_COUNTS} (
@@ -92,7 +92,7 @@ async def ensure_schema() -> None:
             );
             """
         )
-        # reward_attempts 表（累計看完廣告的次數，用於決定獎勵等級）
+        # reward_attempts 表（累计观看广告次数，用于决定奖励等级）
         await conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {TABLE_REWARD_ATTEMPTS} (
@@ -101,7 +101,7 @@ async def ensure_schema() -> None:
             );
             """
         )
-        # daily_keys 表（儲存今天產生的兩個密鑰）
+        # daily_keys 表（存储当天生成的两个密钥）
         await conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {TABLE_KEYS} (
@@ -112,21 +112,21 @@ async def ensure_schema() -> None:
             );
             """
         )
-        # key_usage 表（記錄密鑰是否已被使用）
+        # key_usage 表（标记密钥是否已使用）
         await conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {TABLE_KEY_USAGE} (
                 key_id   INTEGER PRIMARY KEY,
-                used     INTEGER NOT NULL DEFAULT 0   -- 0 表示未使用，1 表示已使用
+                used     INTEGER NOT NULL DEFAULT 0   -- 0：未使用，1：已使用
             );
             """
         )
         await conn.commit()
 
 
-# ------------------- 基本的資料庫操作 -------------------
+# ------------------- 基础数据库操作 -------------------
 async def get_user_balance(user_id: int) -> int:
-    """返回用戶當前的积分餘額。"""
+    """返回用户当前的积分餘额。"""
     async with await get_db_connection() as conn:
         async with conn.execute(
             f"SELECT balance FROM {TABLE_POINTS} WHERE user_id = ?", (user_id,)
@@ -136,7 +136,7 @@ async def get_user_balance(user_id: int) -> int:
 
 
 async def add_points(user_id: int, points: int) -> None:
-    """向用戶的积分表中加入 points 點數。"""
+    """向用户积分表中加入 points 分。"""
     async with await get_db_connection() as conn:
         async with conn.execute(
             f"""
@@ -150,12 +150,12 @@ async def add_points(user_id: int, points: int) -> None:
 
 async def increment_daily_ad_count(user_id: int) -> bool:
     """
-    增加用戶當天已觀看完廣告的次數。
-    如果已達 MAX_DAILY_AD_WATCHES 返回 False，否則返回 True。
+    增加用户当天观看完广告的次数。
+    若已达 MAX_DAILY_AD_WATCHES 则返回 False，否则返回 True。
     """
     today_str = datetime.datetime.now(BEAJING_TIMEZONE).strftime("%Y-%m-%d")
     async with await get_db_connection() as conn:
-        # 檢查上一次記錄的日期是否是今天
+        # 检查上一次记录的日期是否是今天
         async with conn.execute(
             f"SELECT last_reset FROM {TABLE_AD_COUNTS} WHERE user_id = ?", (user_id,)
         ) as cur:
@@ -163,7 +163,7 @@ async def increment_daily_ad_count(user_id: int) -> bool:
             stored_date = row["last_reset"] if row else None
 
         if stored_date != today_str:
-            # 不是今天，重新計數
+            # 不是今天，重置计数
             await conn.execute(
                 f"""
                 INSERT OR REPLACE INTO {TABLE_AD_COUNTS}
@@ -175,7 +175,7 @@ async def increment_daily_ad_count(user_id: int) -> bool:
             await conn.commit()
             return True
 
-        # 已是今天，檢查上限
+        # 已是今天，检查上限
         async with conn.execute(
             f"SELECT count_today FROM {TABLE_AD_COUNTS} WHERE user_id = ?", (user_id,)
         ) as cur:
@@ -197,16 +197,16 @@ async def increment_daily_ad_count(user_id: int) -> bool:
 
 async def reset_daily_key_records() -> None:
     """
-    每天北京時間 10:00自動執行：
-      1) 生成兩個 10 位隨機密鑰（大小寫字母+數字）
-      2) 把舊的使用狀態全部標記為未使用
-      3) 把新密鑰寫入 daily_keys 表
+    每天北京时间 10:00 自动执行：
+      1) 生成两个 10 位随机密钥（大小写字母 + 数字）
+      2) 把 key_usage 表中两条记录的 used 标记为 0（未使用）
+      3) 把新密钥写入 daily_keys 表
     """
     async with await get_db_connection() as conn:
-        # 刪除舊的唯一一筆記錄（只保留最新的一筆）
+        # 删除旧的唯一一条记录（只保留最新的那条）
         await conn.execute(f"DELETE FROM {TABLE_KEYS} WHERE id = 1")
 
-        # 生成 10 位隨機字符的函數
+        # 生成 10 位随机字符串的函数
         def random_key() -> str:
             chars = (
                 "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -227,7 +227,7 @@ async def reset_daily_key_records() -> None:
             (key1, key2, now_str),
         )
 
-        # 把 key_usage 表中的兩筆記錄的 used 欄位都設為 0（未使用）
+        # 把 key_usage 表中两条记录的 used 设为 0（未使用）
         await conn.execute(f"INSERT OR REPLACE INTO {TABLE_KEY_USAGE} (key_id, used) VALUES (1, 0);")
         await conn.execute(f"INSERT OR REPLACE INTO {TABLE_KEY_USAGE} (key_id, used) VALUES (2, 0);")
         await conn.commit()
@@ -235,8 +235,8 @@ async def reset_daily_key_records() -> None:
 
 async def get_today_keys() -> List[Dict]:
     """
-    返回今天產生的兩個密鑰以及它們的使用狀態。
-    若尚未生成過則返回空列表。
+    返回今天生成的两个密钥及其使用状态。
+    若尚未生成则返回空列表。
     """
     async with await get_db_connection() as conn:
         async with conn.execute(
@@ -246,7 +246,7 @@ async def get_today_keys() -> List[Dict]:
             if row is None:
                 return []
 
-        # 取出 key_usage 表中兩個 key_id 的 used 欄位
+        # 读取 key_usage 表中两个 key_id 的 used 状态
         usage_info = []
         for i in range(1, 3):
             async with conn.execute(
@@ -269,16 +269,25 @@ async def get_today_keys() -> List[Dict]:
         ]
 
 
-# ==================== FastAPI 設定 ====================
-app = FastAPI()   # ← uvicorn 會根據 "main:app" 來載入這個變數
+async def _mark_key_as_used(key_id: int) -> None:
+    """把指定的 key_id 标记为已使用（used = 1）。"""
+    async with await get_db_connection() as conn:
+        await conn.execute(
+            f"UPDATE {TABLE_KEY_USAGE} SET used = 1 WHERE key_id = ?", (key_id,)
+        )
+        await conn.commit()
 
-# 把 doc/ 目錄掛載為靜態網站
+
+# ------------------- FastAPI 设置 -------------------
+app = FastAPI()   # ← uvicorn 通过 "main:app" 来加载这个变量
+
+# 把 doc/ 目录挂载为静态文件，供前端使用
 app.mount("/docs", StaticFiles(directory="doc"), name="static")
 
 
 @app.get("/webapp")
 async def serve_webapp(request: Request) -> HTMLResponse:
-    """提供 webapp.html 給前端使用（觀看廣告用）。"""
+    """提供 webapp.html（观看奖励视频的页面）。"""
     with open("doc/webapp.html", "r", encoding="utf-8") as f:
         return HTMLResponse(content=f.read())
 
@@ -286,15 +295,15 @@ async def serve_webapp(request: Request) -> HTMLResponse:
 @app.post("/ad_completed")
 async def ad_completed(request: Request) -> JSONResponse:
     """
-    當用戶成功觀看完 Awarded Video 後，前端會 POST
-    {"user_id":"123456789"} 到此端點。
-    此端點負責：
-      1) 檢查每日觀看上限
-      2) 計算獎勵（第一次 10、第二次 6、之後隨機 3~10）
+    当用户成功观看完奖励视频后，前端会 POST
+    {"user_id":"123456789"} 到此端点。
+    这里负责：
+      1) 检查每日观看上限
+      2) 计算奖励（第 1 次 10、第 2 次 6、之后随机 3~10）
       3) 更新积分
-      4) 把成功訊息回覆給前端，同時給 Telegram 用戶發送积分提示
+      4) 把成功状态返回给前端，并给 Telegram 用户发送积分提示
     """
-    # 1️⃣ 解析 JSON
+    # 1) 读取 JSON
     try:
         payload = await request.json()
     except Exception as exc:
@@ -308,11 +317,11 @@ async def ad_completed(request: Request) -> JSONResponse:
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id must be integer")
 
-    # 2️⃣ 檢查每日觀看次數上限
+    # 2) 检查每日观看次数上限
     if not await increment_daily_ad_count(user_id):
         return {"status": "daily_limit_reached"}
 
-    # 3️⃣ 記錄這是第幾次觀看（1、2、3…），用來決定獎勵
+    # 3) 记录当前是第几次观看（1、2、3…），用于决定奖励
     async with await get_db_connection() as conn:
         async with conn.execute(
             f"SELECT attempt_cnt FROM {TABLE_REWARD_ATTEMPTS} WHERE user_id = ?", (user_id,)
@@ -329,19 +338,18 @@ async def ad_completed(request: Request) -> JSONResponse:
         )
         await conn.commit()
 
-        # 依次決定獎勵值
+        # 根据次数决定奖励值
         if attempt_number == 1:
             reward = REWARD_FIRST_TIME
         elif attempt_number == 2:
             reward = REWARD_SECOND_TIME
-        else:   # 第三次起開始隨機
+        else:   # 第三次以后使用随机
             reward = random.randint(REWARD_THIRD_MIN, REWARD_THIRD_MAX)
 
-    # 4️⃣ 把獎勵加到积分表
+    # 4) 写入积分
     await add_points(user_id, reward)
 
-    # 5️⃣ 如果前端需要回傳成功訊息，同時給 Telegram 用戶發送通知
-    #    這裡使用一個自訂屬性把 telegram_app 交給函式
+    # 5) 如果前端需要回显成功，同时把通知发给 Telegram 用户
     if hasattr(ad_completed, "telegram_app"):
         tg_app: Application = ad_completed.telegram_app   # type: ignore
         await tg_app.bot.send_message(
@@ -353,20 +361,20 @@ async def ad_completed(request: Request) -> JSONResponse:
             parse_mode="HTML",
         )
 
-    # 6️⃣ 返回前端狀態
+    # 6) 返回前端状态
     return {"status": "ok"}
 
 
 @app.post("/api/submit_key")
 async def submit_key(request: Request) -> JSONResponse:
     """
-    前端（key_link.html）的「提交密鑰」按鈕會 POST
+    前端（key_link.html）的「提交密钥」按钮会 POST
     {"user_id":"123456789","key1":"xxxx","key2":"yyyy"}。
-    此端點會：
-      1) 檢查 key1 / key2 是否匹配今天的密鑰
-      2) 若匹配且尚未使用，給予相應的积分（8 或 6）
-      3) 標記該密鑰已使用
-      4) 回傳提示訊息
+    这里会：
+      1) 检查提交的 key 是否匹配今天的密钥
+      2) 若匹配且未使用，给予相应积分（8 或 6）
+      3) 标记该密钥已使用
+      4) 返回提示信息
     """
     try:
         data = await request.json()
@@ -383,7 +391,7 @@ async def submit_key(request: Request) -> JSONResponse:
     except ValueError:
         raise HTTPException(status_code=400, detail="user_id must be integer")
 
-    # 取得今天的兩個密鑰
+    # 取得今天的两个密钥
     today_keys = await get_today_keys()
     if not today_keys:
         return {"status": "error", "message": "今日密钥尚未生成，请稍后再试。"}
@@ -394,11 +402,11 @@ async def submit_key(request: Request) -> JSONResponse:
     message = ""
     status = "error"
 
-    # ------------- 驗證 key1 -------------
+    # ---------- 验证 key1 ----------
     if key1 and not k1.get("used"):
         if key1 == k1.get("key", ""):
             await add_points(user_id, KEY_POINT_1)   # 8 分
-            await _mark_key_as_used(1)               # 標記為已使用
+            await _mark_key_as_used(1)               # 标记为已使用
             message = "✅ 首次密钥（密钥 1）领取成功，已发放 8 积分！"
             status = "ok"
         else:
@@ -406,15 +414,15 @@ async def submit_key(request: Request) -> JSONResponse:
     else:
         message = "⚠️ 首次密钥已使用或未填写。"
 
-    # ------------- 驗證 key2 -------------
+    # ---------- 验证 key2 ----------
     if status == "error" and key2 and not k2.get("used"):
         if key2 == k2.get("key", ""):
             await add_points(user_id, KEY_POINT_2)   # 6 分
-            await _mark_key_as_used(2)               # 標記為已使用
+            await _mark_key_as_used(2)               # 标记为已使用
             message = "✅ 次次密钥（密钥 2）领取成功，已发放 6 积分！"
             status = "ok"
         else:
-            message = "❌ 次次密钥不正确，请检查后重新输入。"
+            message = "❌ 次次密钥不正确，请重新检查后重新输入。"
     else:
         if not key2:
             message = "⚠️ 未输入第二个密钥。"
@@ -424,23 +432,14 @@ async def submit_key(request: Request) -> JSONResponse:
     return {"status": status, "message": message}
 
 
-async def _mark_key_as_used(key_id: int) -> None:
-    """把指定的 key_id 標記為已使用（used = 1）。"""
-    async with await get_db_connection() as conn:
-        await conn.execute(
-            f"UPDATE {TABLE_KEY_USAGE} SET used = 1 WHERE key_id = ?", (key_id,)
-        )
-        await conn.commit()
-
-
-# ==================== Telegram Bot 相關 ====================
+# ------------------- Telegram Bot 相关 -------------------
 async def build_telegram_application() -> Application:
-    """創建 Telegram Bot、掛載所有指令與回調處理函數。"""
+    """创建 Telegram Bot 并挂载所有指令与回调处理函数。"""
     app_tg = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # -------- /start 菜單（三個大按鈕） --------
+    # ---------- /start 菜单（三个大按钮） ----------
     async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """顯示首頁的三個按鈕：開始驗證、积分、開業活動"""
+        """显示首页的三个按钮：開始驗證、积分、開業活動"""
         keyboard = InlineKeyboardMarkup(
             [
                 [
@@ -462,13 +461,13 @@ async def build_telegram_application() -> Application:
                 "👋 欢迎使用本机器人！请选择下方功能：", reply_markup=keyboard
             )
 
-    # -------- 所有 InlineButton 的統一分配 --------
+    # ---------- 所有 InlineButton 的统一分配 ----------
     async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """所有 inline 按鈕的統一入口"""
+        """所有 inline 按钮的统一入口"""
         query = update.callback_query
         if not query:
             return
-        await query.answer()          # 必須先回覆，否則前端會卡住
+        await query.answer()      # 必须先回复，否则前端会卡住
 
         data = query.data
         if data == "menu_verify":
@@ -483,8 +482,7 @@ async def build_telegram_application() -> Application:
                 reply_markup=InlineKeyboardMarkup([[]]),
             )
         elif data == "menu_campaign":
-            # 您需要把這個 HTML 頁面部署到 GitHub Pages 或其他可訪問的 URL
-            # 這裡以 GitHub Pages 為例，請自行替換成自己的 URL
+            # 这里假设你把页面部署在 GitHub Pages，替换为你自己的 URL
             github_page = "https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPO_NAME/docs/webapp.html"
             encoded_user_id = "?user_id=" + str(query.from_user.id)
             full_url = github_page + encoded_user_id
@@ -498,15 +496,15 @@ async def build_telegram_application() -> Application:
         else:
             await query.edit_message_text("未知的按钮操作，请重新选择。")
 
-    # -------- /admin（保留原有管理员功能） --------
-    # 這裡直接匯入您先前寫好的 adminWizard（它已經包含 /admin、/id 等指令）
-    from src.commands.admin import adminWizard   # ← 您的原始管理員後台程式
+    # ---------- 保留原有的 admin 后台（不改动） ----------
+    # 这里直接导入你原来的 admin 逻辑，保持不变
+    from src.commands.admin import adminWizard   # ← 你的原始管理员后台
     app_tg.add_handler(CommandHandler("admin", adminWizard))
     app_tg.add_handler(CallbackQueryHandler(callback_handler))
 
-    # -------- 旧的积分指令（保持不變） --------
+    # ---------- /points、/jf 等旧功能（保持不变） ----------
     async def points_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """使用者直接輸入 /points 時顯示自己的积分"""
+        """使用者直接输入 /points 时显示自己的积分"""
         balance = await get_user_balance(update.effective_user.id)
         await update.message.reply_text(
             f"🧮 您的当前积分为 <b>{balance}</b>，感谢您的使用！",
@@ -514,21 +512,23 @@ async def build_telegram_application() -> Application:
         )
 
     async def jf_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """舊的 /jf 指令（保持原有功能）"""
+        """旧的 /jf 命令（保持原有功能）"""
         await update.message.reply_text("此功能仍保留，未作变更。")
 
     app_tg.add_handler(CommandHandler("points", points_command))
     app_tg.add_handler(CommandHandler("jf", jf_handler))
 
-    # -------- /my（管理员專用）相關指令 --------
+    # ---------- 管理员专用指令 /my 与 /my无限次 ----------
     async def cmd_my(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """管理員使用 /my 查看當天產生的兩個密鑰及其使用狀態"""
+        """管理员使用 /my 查看当天生成的两个密钥及其使用状态"""
         keys_info = await get_today_keys()
         if not keys_info:
             await update.message.reply_text("尚未生成今日密钥，请稍等至 10:00。")
             return
 
-        reply = "🗝️ 今日密钥列表（北京时间十点已更新）：\n\n"
+        reply = "🗝️ 今日密钥列表（北京时间十点已更新）：
+
+"
         for idx, item in enumerate(keys_info, start=1):
             usage = "已使用" if item.get("used") else "未使用"
             reply += f"【密钥 {idx}】{item.get('key', '')} —— {usage}\n"
@@ -536,10 +536,10 @@ async def build_telegram_application() -> Application:
 
     async def cmd_set_new_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
-        管理員可以手動傳入兩個字串作為當天的密鑰入口。
+        管理员可以手动传入两段字符串作为当天的密钥入口。
         用法示例：
             /my无限次 <密钥一链接> <密钥二链接>
-        此函式會把兩個字串寫入 daily_keys 表，並標記未使用。
+        本函数会把这两串字符写入 daily_keys 表，并标记为未使用。
         """
         args = context.args
         if len(args) < 2:
@@ -557,34 +557,34 @@ async def build_telegram_application() -> Application:
                 """,
                 (link1, link2, datetime.datetime.now(BEAJING_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")),
             )
-            # 確保 key_usage 表中有兩筆記錄且狀態為「未使用」
+            # 确保 key_usage 表中有两条记录且状态为“未使用”
             await conn.execute(f"INSERT OR REPLACE INTO {TABLE_KEY_USAGE} (key_id, used) VALUES (1, 0);")
             await conn.execute(f"INSERT OR REPLACE INTO {TABLE_KEY_USAGE} (key_id, used) VALUES (2, 0);")
             await conn.commit()
 
         await update.message.reply_text("密钥一绑定完成，请继续提供 **密钥二** 的链接：" )
-        # 為了簡化演示，這裡不再實作第二次輸入的對話，
-        # 實際項目中可使用 ConversationHandler 完整收集兩個鏈接。
+        # 为简化演示，这里不再实现第二次输入的对话，
+        # 如需完整流程，可自行加入 ConversationHandler。
 
-    # -------- 把上述兩個指令掛載到 Bot --------
+    # 把这两个指令挂载到 Bot
     app_tg.add_handler(CommandHandler("my", cmd_my))
     app_tg.add_handler(CommandHandler("my无限次", cmd_set_new_keys))
 
     return app_tg
 
 
-# ==================== 背景任務：每日自動生成密鑰 ====================
+# ------------------- 背景任务：每日自动生成密钥 -------------------
 async def daily_key_task() -> None:
     """
-    每天北京時間 10:00 觸發一次，自動生成兩個隨機密鑰，
-    並把使用狀態歸零。若已經過 10:00，則等到明天再執行。
+    每天北京时间 10:00 触发一次，自动生成两个随机密钥
+    并把使用状态归零。若已经过去 10:00，则等到第二天再执行。
     """
     while True:
         now = datetime.datetime.now(BEAJING_TIMEZONE)
-        # 計算距離今天 10:00 的秒數
+        # 计算距离今天 10:00 的秒数
         target = datetime.datetime.combine(now.date(), time(hour=KEY_RESET_HOUR, minute=0, second=0))
         if now >= target:
-            target += datetime.timedelta(days=1)   # 已經超過 10:00，等到明天
+            target += datetime.timedelta(days=1)   # 已经超过去，等到明天
         delay = (target - now).total_seconds()
         await asyncio.sleep(delay)
 
@@ -592,36 +592,38 @@ async def daily_key_task() -> None:
         print("✅ 每日密钥已更新。")
 
 
-# ==================== 主入口 ====================
+# ------------------- 主入口 -------------------
 async def main() -> None:
     """
-    程式的總啟動流程：
-      1️⃣ 確保 DB schema 已建立
+    程序的总启动流程：
+      1️⃣ 確保資料庫表格已建立
       2️⃣ 創建 Telegram Bot 並掛載所有指令和回調
       3️⃣ 把 Telegram Application 交給 ad_completed 端點（用於回傳訊息）
-      4️⃣ 開啟每日自動生成密鑰的背景任務
-      5️⃣ 以 uvicorn 啟動 FastAPI，監聽 $PORT（Railway 會自動注入）\
+      4️⃣ 啟動每日自動生成密鑰的背景工作
+      5️⃣ 以 uvicorn 啟動 FastAPI，使用環境變數 $PORT
     """
-    # Step 1 – 建立所有表格
+    # Step 1 – 建立所有資料庫表格
     await ensure_schema()
 
     # Step 2 – 建立 Telegram Bot
     telegram_app = await build_telegram_application()
 
-    # Step 3 – 把 telegram_app 安裝到 ad_completed，以便它能發送訊息
+    # Step 3 – 把 telegram_app 交給 ad_completed，以便它能發送訊息
     ad_completed.telegram_app = telegram_app   # type: ignore
 
     # Step 4 – 啟動每日自動生成密鑰的背景工作
     asyncio.create_task(daily_key_task())
 
-    # Step 5 – 以 uvicorn 啟動 FastAPI，使用環境變數 $PORT
-    # 注意：這裡的字串 "bot:app" 必須與檔案名稱保持一致（main.py 內部的變數名稱是 app）
-    uvicorn.run("main:app", host="0.0.0.0", port=8000)   # ← 這行會被 Railway / Docker 認識
+    # Step 5 – 以 uvicorn 啟動 FastAPI，使用 Railway 提供的 $PORT
+    # 注意：這裡的字串 "main:app" 必須與檔案名稱保持一致（本檔案就是 main.py）
+    uvicorn.run(host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
 
 
-# ==================== 直接執行 main() 以便本地測試 ====================
+# ------------------------------------------------------------
+# 直接執行 main() 以便本地測試
+# ------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
 
-    # 這段代碼讓本地可以直接使用 `python main.py` 來測試
+    # 本地測試時直接執行 main()
     asyncio.run(main())
