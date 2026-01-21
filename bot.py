@@ -1,14 +1,8 @@
 import os
 import logging
 import random
-import string
 import re
 from datetime import datetime, date, timedelta, timezone
-import threading
-import asyncio
-
-from fastapi import FastAPI, Request
-import uvicorn
 
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
@@ -18,16 +12,14 @@ from telegram.ext import (
     MessageHandler, filters, ConversationHandler
 )
 import asyncpg
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ========== 配置区（请替换以下内容） ==========
+# ========== 配置区（请替换） ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 DATABASE_URL = os.getenv("DATABASE_URL")
-PORT = int(os.getenv("PORT", "8000"))  # Railway自动设置
 
 VIP_GROUP_LINK = "https://t.me/your_vip_group_link"
 
@@ -39,33 +31,20 @@ START_VERIFY_FILE_IDS = [
 VIP_EXPLAIN_FILE_ID = "file_id_for_vip_explain"
 ORDER_INPUT_FILE_ID = "file_id_for_order_input"
 
-MOONTAG_AD_URL_BASE = "https://你的github用户名.github.io/你的仓库名/moontag.html"
-
-MOONTAG_LINK_1 = "https://otieu.com/4/10489994"
-MOONTAG_LINK_2 = "https://otieu.com/4/10489998"
-
-SECRET_LINK_1 = "https://pan.quark.cn/s/c0cac0ff25a5"
-SECRET_LINK_2 = "https://pan.quark.cn/s/b1dd3806ff25a5"
-
 BUTTON_TWO_NAME = "🔑 密钥领取"
-MAX_SECRET_REDEEM = 2
 
 BJ_TZ = timezone(timedelta(hours=8))
 
 WAITING_IMAGE = 1
-CONFIRM_DELETE = 2
 VERIFY_START, VERIFY_WAIT_ORDER = range(2)
 
 db_pool = None
-app = FastAPI()
-application = None  # Telegram Application实例
 
 # ========== 数据库初始化 ==========
 async def init_db_pool():
     global db_pool
     db_pool = await asyncpg.create_pool(dsn=DATABASE_URL)
     async with db_pool.acquire() as conn:
-        # 保留原有file_ids表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS file_ids (
             id SERIAL PRIMARY KEY,
@@ -74,7 +53,6 @@ async def init_db_pool():
             added_at TIMESTAMP DEFAULT NOW()
         )
         """)
-        # 积分表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS user_points (
             user_id BIGINT PRIMARY KEY,
@@ -82,15 +60,6 @@ async def init_db_pool():
             last_sign_date DATE
         )
         """)
-        # moontag广告观看次数表
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS moontag_ad (
-            user_id BIGINT PRIMARY KEY,
-            ad_date DATE,
-            watch_count INTEGER NOT NULL DEFAULT 0
-        )
-        """)
-        # 验证失败次数和禁用时间表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS verification_status (
             user_id BIGINT PRIMARY KEY,
@@ -98,31 +67,43 @@ async def init_db_pool():
             disabled_until TIMESTAMP
         )
         """)
-        # 中转站密钥表
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS daily_secrets (
-            id SERIAL PRIMARY KEY,
-            secret1 TEXT,
-            secret2 TEXT,
-            secret1_link TEXT,
-            secret2_link TEXT,
-            created_at TIMESTAMP DEFAULT NOW()
-        )
-        """)
-        # 用户密钥领取记录表
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS user_secret_redeem (
-            user_id BIGINT PRIMARY KEY,
-            redeem1 BOOLEAN DEFAULT FALSE,
-            redeem2 BOOLEAN DEFAULT FALSE,
-            last_redeem_date DATE
-        )
-        """)
 
+# ========== 工具函数 ==========
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
-# 首页 /start 命令
+async def is_verification_disabled(user_id):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT fail_count, disabled_until FROM verification_status WHERE user_id=$1", user_id)
+        if not row:
+            return False, None
+        disabled_until = row['disabled_until']
+        if disabled_until and disabled_until > datetime.utcnow():
+            return True, disabled_until
+        return False, None
+
+async def reset_verification_status(user_id):
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM verification_status WHERE user_id=$1", user_id)
+
+async def add_verification_fail(user_id):
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT fail_count FROM verification_status WHERE user_id=$1", user_id)
+        if not row:
+            fail_count = 1
+            disabled_until = None
+            await conn.execute("INSERT INTO verification_status (user_id, fail_count) VALUES ($1, $2)", user_id, fail_count)
+        else:
+            fail_count = row['fail_count'] + 1
+            disabled_until = None
+            if fail_count >= 2:
+                disabled_until = datetime.utcnow() + timedelta(hours=5)
+                await conn.execute("UPDATE verification_status SET fail_count=$1, disabled_until=$2 WHERE user_id=$3", fail_count, disabled_until, user_id)
+            else:
+                await conn.execute("UPDATE verification_status SET fail_count=$1 WHERE user_id=$2", fail_count, user_id)
+        return fail_count, disabled_until
+
+# ========== 首页 /start 命令 ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     disabled, disabled_until = await is_verification_disabled(user_id)
@@ -153,49 +134,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_media_group(media_group)
 
-# 拦截所有消息，非验证流程时显示首页
-async def echo_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    state = context.user_data.get("verify_state")
-    if state in [VERIFY_START, VERIFY_WAIT_ORDER]:
-        return
-    await start(update, context)
-
-# 判断验证是否禁用
-async def is_verification_disabled(user_id):
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT fail_count, disabled_until FROM verification_status WHERE user_id=$1", user_id)
-        if not row:
-            return False, None
-        disabled_until = row['disabled_until']
-        if disabled_until and disabled_until > datetime.utcnow():
-            return True, disabled_until
-        return False, None
-
-# 重置验证状态
-async def reset_verification_status(user_id):
-    async with db_pool.acquire() as conn:
-        await conn.execute("DELETE FROM verification_status WHERE user_id=$1", user_id)
-
-# 增加失败次数，禁用5小时
-async def add_verification_fail(user_id):
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT fail_count FROM verification_status WHERE user_id=$1", user_id)
-        if not row:
-            fail_count = 1
-            disabled_until = None
-            await conn.execute("INSERT INTO verification_status (user_id, fail_count) VALUES ($1, $2)", user_id, fail_count)
-        else:
-            fail_count = row['fail_count'] + 1
-            disabled_until = None
-            if fail_count >= 2:
-                disabled_until = datetime.utcnow() + timedelta(hours=5)
-                await conn.execute("UPDATE verification_status SET fail_count=$1, disabled_until=$2 WHERE user_id=$3", fail_count, disabled_until, user_id)
-            else:
-                await conn.execute("UPDATE verification_status SET fail_count=$1 WHERE user_id=$2", fail_count, user_id)
-        return fail_count, disabled_until
-
-# 点击开始验证按钮，显示VIP说明页
+# ========== 验证流程 ==========
 async def start_verification_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -223,7 +162,6 @@ async def start_verification_callback(update: Update, context: ContextTypes.DEFA
     await query.message.reply_photo(VIP_EXPLAIN_FILE_ID)
     context.user_data["verify_state"] = VERIFY_START
 
-# 点击“我已付款，开始验证”，进入订单号输入页
 async def paid_start_verify_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -247,7 +185,6 @@ async def paid_start_verify_callback(update: Update, context: ContextTypes.DEFAU
     await query.edit_message_text(text)
     await query.message.reply_photo(ORDER_INPUT_FILE_ID)
 
-# 订单号输入处理
 async def verify_order_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     state = context.user_data.get("verify_state")
@@ -286,7 +223,7 @@ async def verify_order_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("验证成功！欢迎加入VIP群。", reply_markup=InlineKeyboardMarkup(keyboard))
     await start(update, context)
 
-# 积分签到功能
+# ========== 积分签到 ==========
 async def get_user_points(user_id: int):
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow("SELECT points, last_sign_date FROM user_points WHERE user_id=$1", user_id)
@@ -342,7 +279,192 @@ async def sign_in_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ 返回首页", callback_data="back_start")]
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    from fastapi import FastAPI, Request
+
+# ========== 管理后台 File ID 管理 ==========
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("你不是管理员，无权限访问。")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("📁 File ID 功能", callback_data="file_id_main")]
+    ]
+    await update.message.reply_text("管理员后台", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def file_id_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    keyboard = [
+        [InlineKeyboardButton("➕ 添加图片获取File ID", callback_data="add_file_id")],
+        [InlineKeyboardButton("📜 查看已存File ID", callback_data="list_file_ids")],
+        [InlineKeyboardButton("⬅️ 返回后台", callback_data="back_admin")]
+    ]
+    await query.edit_message_text("File ID 管理", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def add_file_id_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("请发送图片以获取File ID，发送 /cancel 取消。")
+    return WAITING_IMAGE
+
+async def receive_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("你不是管理员，无权限操作。")
+        return ConversationHandler.END
+
+    photo = update.message.photo
+    if not photo:
+        await update.message.reply_text("请发送图片。")
+        return WAITING_IMAGE
+
+    file_id = photo[-1].file_id
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO file_ids (file_id, added_by) VALUES ($1, $2)",
+            file_id, user_id
+        )
+
+    await update.message.reply_text(f"图片File ID已保存：\n`{file_id}`", parse_mode="Markdown")
+    keyboard = [
+        [InlineKeyboardButton("⬅️ 返回后台", callback_data="back_admin")]
+    ]
+    await update.message.reply_text("操作完成", reply_markup=InlineKeyboardMarkup(keyboard))
+    return ConversationHandler.END
+
+async def list_file_ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, file_id FROM file_ids ORDER BY added_at DESC")
+
+    if not rows:
+        await query.edit_message_text("暂无已保存的File ID。", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ 返回后台", callback_data="back_admin")]]
+        ))
+        return
+
+    keyboard = []
+    for row in rows:
+        text = f"ID {row['id']}"
+        keyboard.append([InlineKeyboardButton(text, callback_data=f"del_confirm_{row['id']}")])
+    keyboard.append([InlineKeyboardButton("⬅️ 返回后台", callback_data="back_admin")])
+
+    await query.edit_message_text("已保存的File ID列表，点击可删除：", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def del_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    file_id_db_id = int(data.split("_")[-1])
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT file_id FROM file_ids WHERE id=$1", file_id_db_id)
+    if not row:
+        await query.edit_message_text("该File ID不存在或已删除。", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ 返回后台", callback_data="back_admin")]]
+        ))
+        return
+
+    file_id = row['file_id']
+
+    keyboard = [
+        [InlineKeyboardButton("✅ 确认删除", callback_data=f"del_{file_id_db_id}")],
+        [InlineKeyboardButton("❌ 取消", callback_data="list_file_ids")]
+    ]
+
+    try:
+        await query.edit_message_media(
+            media=InputMediaPhoto(media=file_id, caption=f"确认删除ID {file_id_db_id} 的图片？"),
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception:
+        await query.edit_message_text(
+            f"确认删除ID {file_id_db_id} 的图片？\nFile ID:\n`{file_id}`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+async def del_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    file_id_db_id = int(query.data.split("_")[-1])
+
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM file_ids WHERE id=$1", file_id_db_id)
+
+    await query.edit_message_text("删除成功。", reply_markup=InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅️ 返回后台", callback_data="back_admin")]]
+    ))
+
+async def back_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    keyboard = [
+        [InlineKeyboardButton("📁 File ID 功能", callback_data="file_id_main")]
+    ]
+    await query.edit_message_text("管理员后台", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("已取消操作。")
+    return ConversationHandler.END
+
+async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("你不是管理员，无权限操作。")
+        return
+
+    await update.message.reply_text("请发送图片以获取File ID，发送 /cancel 取消。")
+    return WAITING_IMAGE
+
+# ========== Telegram Handler 注册 ==========
+def register_handlers(application):
+    conv_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(add_file_id_start, pattern="^add_file_id$"),
+            CommandHandler("id", id_command)
+        ],
+        states={
+            WAITING_IMAGE: [MessageHandler(filters.PHOTO & filters.User(ADMIN_ID), receive_image)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True,
+    )
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("jf", jf_command))
+    application.add_handler(CommandHandler("admin", admin))
+
+    application.add_handler(conv_handler)
+
+    application.add_handler(CallbackQueryHandler(file_id_main, pattern="^file_id_main$"))
+    application.add_handler(CallbackQueryHandler(list_file_ids, pattern="^list_file_ids$"))
+    application.add_handler(CallbackQueryHandler(del_confirm, pattern="^del_confirm_"))
+    application.add_handler(CallbackQueryHandler(del_file_id, pattern="^del_"))
+    application.add_handler(CallbackQueryHandler(back_admin, pattern="^back_admin$"))
+
+    # 这里后续会补充更多handler注册
+
+# ========== main函数 ==========
+def main():
+    global application
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    register_handlers(application)
+
+    # 这里后续会补充更多handler注册和定时任务启动
+
+    application.run_polling()
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(init_db_pool())
+    main()
+from fastapi import FastAPI, Request
 from telegram.ext import Application
 
 app = FastAPI()
