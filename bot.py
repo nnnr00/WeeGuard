@@ -720,6 +720,10 @@ def main():
     global application
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # 创建并设置事件循环（解决 apscheduler 报错）
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     # 注册Telegram所有handler（请补充之前代码中的handler）
 
     application.add_handler(CommandHandler("my", my_command))
@@ -733,10 +737,15 @@ def main():
     scheduler.add_job(scheduled_secret_generation, "cron", hour=10, minute=0, args=[application])
     scheduler.start()
 
-    # 启动FastAPI服务线程
+    # 创建调度器，传入事件循环
+    scheduler = AsyncIOScheduler(timezone="Asia/Shanghai", event_loop=loop)
+    scheduler.add_job(scheduled_secret_generation, "cron", hour=10, minute=0, args=[application])
+    scheduler.start()
+
+    # 启动FastAPI服务线程（如果有）
     threading.Thread(target=run_fastapi, daemon=True).start()
 
-    # 启动Telegram机器人轮询
+    # 启动机器人轮询
     application.run_polling()
 
 if __name__ == "__main__":
