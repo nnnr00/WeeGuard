@@ -1,82 +1,17 @@
-"""
-================= 配置区（请替换以下内容） =================
-
-1. 环境变量（Railway上设置）：
-   - BOT_TOKEN：你的Telegram机器人Token
-   - ADMIN_ID：管理员Telegram用户ID（数字）
-   - DATABASE_URL：Neon PostgreSQL数据库连接字符串
-
-2. 需要替换的内容：
-
-   - VIP群邀请链接（加群按钮链接）：
-     VIP_GROUP_LINK = "https://t.me/your_vip_group_link"
-
-   - 首页“开始验证”显示的两张File ID图片File ID（字符串列表）：
-     START_VERIFY_FILE_IDS = [
-         "file_id_1_for_homepage",  # 第一张图片File ID
-         "file_id_2_for_homepage"   # 第二张图片File ID
-     ]
-
-   - VIP说明页显示的File ID图片File ID（字符串）：
-     VIP_EXPLAIN_FILE_ID = "file_id_for_vip_explain"
-
-   - 订单号输入页显示的File ID图片File ID（字符串）：
-     ORDER_INPUT_FILE_ID = "file_id_for_order_input"
-
-   - moontag广告观看网页地址（GitHub Pages或你部署的网页地址）：
-     MOONTAG_AD_URL_BASE = "https://你的github用户名.github.io/你的仓库名/moontag.html"
-
-   - moontag按钮一直链：
-     MOONTAG_LINK_1 = "https://otieu.com/4/10489994"
-
-   - moontag按钮二直链（中转站）：
-     MOONTAG_LINK_2 = "https://otieu.com/4/10489998"
-
-   - 中转站密钥链接（用户打开获取密钥）：
-     SECRET_LINK_1 = "https://pan.quark.cn/s/c0cac0ff25a5"
-     SECRET_LINK_2 = "https://pan.quark.cn/s/b1dd3806ff65"
-
-   - 中转站按钮名称：
-     BUTTON_TWO_NAME = "🔑 密钥领取"
-
-   - 中转站每天最多领取次数：
-     MAX_SECRET_REDEEM = 2
-
-============================================================
-"""
-
-VIP_GROUP_LINK = "https://t.me/your_vip_group_link"
-
-START_VERIFY_FILE_IDS = [
-    "file_id_1_for_homepage",
-    "file_id_2_for_homepage"
-]
-
-VIP_EXPLAIN_FILE_ID = "file_id_for_vip_explain"
-
-ORDER_INPUT_FILE_ID = "file_id_for_order_input"
-
-MOONTAG_AD_URL_BASE = "https://你的github用户名.github.io/你的仓库名/moontag.html"
-
-MOONTAG_LINK_1 = "https://otieu.com/4/10489994"
-MOONTAG_LINK_2 = "https://otieu.com/4/10489998"
-
-SECRET_LINK_1 = "https://pan.quark.cn/s/c0cac0ff25a5"
-SECRET_LINK_2 = "https://pan.quark.cn/s/b1dd3806ff65"
-
-BUTTON_TWO_NAME = "🔑 密钥领取"
-
-MAX_SECRET_REDEEM = 2
-
 import os
 import logging
 import random
-import re
 import string
+import re
 from datetime import datetime, date, timedelta, timezone
+import threading
+import asyncio
+
+from fastapi import FastAPI, Request
+import uvicorn
 
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMedia
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 )
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler,
@@ -88,24 +23,48 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ========== 配置区（请替换） ==========
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 DATABASE_URL = os.getenv("DATABASE_URL")
+PORT = int(os.getenv("PORT", "8000"))  # Railway自动设置
 
-WAITING_IMAGE = 1
-CONFIRM_DELETE = 2
+VIP_GROUP_LINK = "https://t.me/your_vip_group_link"
 
-VERIFY_START, VERIFY_WAIT_ORDER = range(2)
+START_VERIFY_FILE_IDS = [
+    "file_id_1_for_homepage",
+    "file_id_2_for_homepage"
+]
+
+VIP_EXPLAIN_FILE_ID = "file_id_for_vip_explain"
+ORDER_INPUT_FILE_ID = "file_id_for_order_input"
+
+MOONTAG_AD_URL_BASE = "https://你的github用户名.github.io/你的仓库名/moontag.html"
+
+MOONTAG_LINK_1 = "https://otieu.com/4/10489994"
+MOONTAG_LINK_2 = "https://otieu.com/4/10489998"
+
+SECRET_LINK_1 = "https://pan.quark.cn/s/c0cac0ff25a5"
+SECRET_LINK_2 = "https://pan.quark.cn/s/b1dd3806ff25a5"
+
+BUTTON_TWO_NAME = "🔑 密钥领取"
+MAX_SECRET_REDEEM = 2
 
 BJ_TZ = timezone(timedelta(hours=8))
 
-db_pool = None
+WAITING_IMAGE = 1
+CONFIRM_DELETE = 2
+VERIFY_START, VERIFY_WAIT_ORDER = range(2)
 
+db_pool = None
+app = FastAPI()
+application = None  # Telegram Application实例
+
+# ========== 数据库初始化 ==========
 async def init_db_pool():
     global db_pool
     db_pool = await asyncpg.create_pool(dsn=DATABASE_URL)
     async with db_pool.acquire() as conn:
-        # 保留原有file_ids表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS file_ids (
             id SERIAL PRIMARY KEY,
@@ -114,7 +73,6 @@ async def init_db_pool():
             added_at TIMESTAMP DEFAULT NOW()
         )
         """)
-        # 积分表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS user_points (
             user_id BIGINT PRIMARY KEY,
@@ -122,7 +80,6 @@ async def init_db_pool():
             last_sign_date DATE
         )
         """)
-        # moontag广告观看次数表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS moontag_ad (
             user_id BIGINT PRIMARY KEY,
@@ -130,7 +87,6 @@ async def init_db_pool():
             watch_count INTEGER NOT NULL DEFAULT 0
         )
         """)
-        # 验证失败次数和禁用时间表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS verification_status (
             user_id BIGINT PRIMARY KEY,
@@ -138,7 +94,6 @@ async def init_db_pool():
             disabled_until TIMESTAMP
         )
         """)
-        # 中转站密钥表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS daily_secrets (
             id SERIAL PRIMARY KEY,
@@ -149,7 +104,6 @@ async def init_db_pool():
             created_at TIMESTAMP DEFAULT NOW()
         )
         """)
-        # 用户密钥领取记录表
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS user_secret_redeem (
             user_id BIGINT PRIMARY KEY,
@@ -382,6 +336,10 @@ async def sign_in_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ 返回首页", callback_data="back_start")]
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+from fastapi import FastAPI, Request
+from telegram.ext import Application
+
+app = FastAPI()
 
 # moontag活动按钮一：看视频广告积分
 async def moontag_watch_ad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -419,13 +377,11 @@ async def moontag_secret_start(update: Update, context: ContextTypes.DEFAULT_TYP
 
     today = datetime.now(BJ_TZ).date()
     async with db_pool.acquire() as conn:
-        # 查询用户当天领取次数
         row = await conn.fetchrow("SELECT redeem1, redeem2, last_redeem_date FROM user_secret_redeem WHERE user_id=$1", user_id)
         redeem_count = 0
         if row and row['last_redeem_date'] == today:
             redeem_count = (1 if row['redeem1'] else 0) + (1 if row['redeem2'] else 0)
 
-        # 查询当天管理员绑定的密钥链接
         secret_row = await conn.fetchrow("SELECT secret1_link, secret2_link FROM daily_secrets ORDER BY created_at DESC LIMIT 1")
 
     if redeem_count >= MAX_SECRET_REDEEM:
@@ -512,21 +468,6 @@ async def secret_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             await update.message.reply_text("密钥错误，请确认后重新输入。")
 
-async def add_points(user_id: int, points_to_add: int):
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT points FROM user_points WHERE user_id=$1", user_id)
-        if row:
-            points = row['points'] + points_to_add
-            await conn.execute("UPDATE user_points SET points=$1 WHERE user_id=$2", points, user_id)
-        else:
-            await conn.execute("INSERT INTO user_points (user_id, points) VALUES ($1, $2)", user_id, points_to_add)
-
-async def back_to_hd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("⬅️ 返回活动中心", callback_data="moontag_hd")]
-    ]
-    await update.message.reply_text("点击下面按钮返回活动中心。", reply_markup=InlineKeyboardMarkup(keyboard))
-
 # 管理员 /my 命令绑定密钥链接逻辑
 async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -591,6 +532,28 @@ async def my_link_input_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("密钥二链接绑定完成。绑定流程结束。")
         context.user_data["my_bind_count"] = 0
 
+# FastAPI接口，网页调用广告观看成功回调
+@app.post("/api/mark_ad_watched")
+async def mark_ad_watched(request: Request):
+    data = await request.json()
+    user_id = data.get("user_id")
+    if not user_id:
+        return {"success": False, "message": "缺少user_id"}
+
+    async with db_pool.acquire() as conn:
+        today = date.today()
+        row = await conn.fetchrow("SELECT ad_date, watch_count FROM moontag_ad WHERE user_id=$1", int(user_id))
+        if row and row['ad_date'] == today:
+            watch_count = row['watch_count']
+            if watch_count >= 3:
+                return {"success": False, "message": "今日观看次数已达上限"}
+            watch_count += 1
+            await conn.execute("UPDATE moontag_ad SET watch_count=$1 WHERE user_id=$2", watch_count, int(user_id))
+        else:
+            await conn.execute("INSERT INTO moontag_ad (user_id, ad_date, watch_count) VALUES ($1, $2, 1)", int(user_id), today)
+
+    return {"success": True, "message": "广告观看成功，积分已更新"}
+
 # 定时任务，每天北京时间10点自动生成密钥并私信管理员
 async def scheduled_secret_generation(application):
     now = datetime.now(BJ_TZ)
@@ -621,25 +584,31 @@ async def scheduled_secret_generation(application):
     except Exception as e:
         logger.error(f"发送管理员消息失败: {e}")
 
-# main函数中添加定时任务
+# 主函数启动
+def run_fastapi():
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
+
 def main():
+    global application
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # 之前所有handler注册...
+    # 注册Telegram所有handler（请补充之前代码中的handler）
 
     application.add_handler(CommandHandler("my", my_command))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), my_link_input_handler))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), secret_code_handler))
 
+    # APScheduler定时任务
     scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
     scheduler.add_job(scheduled_secret_generation, "cron", hour=10, minute=0, args=[application])
     scheduler.start()
 
-    # 其他handler注册...
+    # 启动FastAPI服务线程
+    threading.Thread(target=run_fastapi, daemon=True).start()
 
+    # 启动Telegram机器人轮询
     application.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(init_db_pool())
     main()
