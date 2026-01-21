@@ -528,7 +528,6 @@ async def build_telegram_application() -> Application:
 
         reply = ( "🗝️ 今日密钥列表（北京时间十点已更新）：\n\n" )
 
-"
         for idx, item in enumerate(keys_info, start=1):
             usage = "已使用" if item.get("used") else "未使用"
             reply += f"【密钥 {idx}】{item.get('key', '')} —— {usage}\n"
