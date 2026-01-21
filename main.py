@@ -1,9 +1,9 @@
 # ------------------------------------------------------------
 # main.py
 # ------------------------------------------------------------
-# 功能：
+# 该文件实现：
 #   1️⃣ Telegram Bot（/start、/admin、File‑ID、积分、moontag 等）
-#   2️⃣ FastAPI 服务（提供 HTML、广告回调、密钥验证等）
+#   2️⃣ FastAPI 服务器（提供 HTML、广告回调、密钥验证等）
 #   3️⃣ 每日自动生成两个 10 位随机密钥、使用计数与重置
 #   4️⃣ 完整的防作弊、计数、通知与积分奖励
 #   5️⃣ 所有 `await` 都在 `async def` 内部，避免
@@ -38,7 +38,7 @@ from telegram.ext import (
 )
 
 # ------------------- 常量 -------------------
-# 必须在平台的环境变量中提供以下两个
+# 必须在平台环境变量中提供以下两个
 TELEGRAM_BOT_TOKEN: str = os.getenv("BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")   # ← 替换为真实的 Bot Token
 BEAJING_TIMEZONE = pytz.timezone("Asia/Shanghai")
 DB_FILE = "data.sqlite"
@@ -79,7 +79,7 @@ async def ensure_schema() -> None:
     """
     如果表不存在则创建全部表。整个函数只会在程序启动时执行一次。
     """
-    async with await get_db_connection() as conn:          # 只需要一次 await
+    async with await get_db_connection() as conn:          # 只需一次 await
         # points 表（存储积分余额）
         await conn.execute(
             f"""
@@ -542,7 +542,7 @@ async def build_telegram_application() -> Application:
     # ------------------- 管理员专用指令 /my 与 /my无限次 -------------------
     async def cmd_my(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """
-        管理员使用 `/my` 查看当天生成的两个密钥及其使用状态。
+        管理员使用 /my 查看当天生成的两个密钥及其使用状态。
         """
         keys_info = await get_today_keys()
         if not keys_info:
@@ -552,7 +552,9 @@ async def build_telegram_application() -> Application:
             return
 
         reply = (
-            "🗝️ 今日密钥列表（北京时间十点已更新）：\n\n"
+            "🗝️ 今日密钥列表（北京时间十点已更新）：
+
+"
         )
         reply += "\n".join(
             f"【密钥 {idx}】{item.get('key', '')} —— "
@@ -565,7 +567,7 @@ async def build_telegram_application() -> Application:
         """
         管理员可以手动传入两段字符串作为当天的密钥入口。
         用法示例： `/my无限次 <密钥一链接> <密钥二链接>`
-        该函数会把这两段字符串写入 `daily_keys` 表，并标记为未使用。
+        此函数会把这两段字符串写入 `daily_keys` 表，并标记为未使用。
         """
         args = context.args
         if len(args) < 2:
@@ -583,7 +585,7 @@ async def build_telegram_application() -> Application:
                 """,
                 (link1, link2, datetime.datetime.now(BEAJING_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")),
             )
-            # 确保 key_usage 表中有两笔记录且状态为「未使用」
+            # 确保 key_usage 表中有两筆記錄且狀態為「未使用」
             await conn.execute(f"INSERT OR REPLACE INTO {TABLE_KEY_USAGE} (key_id, used) VALUES (1, 0);")
             await conn.execute(f"INSERT OR REPLACE INTO {TABLE_KEY_USAGE} (key_id, used) VALUES (2, 0);")
             await conn.commit()
@@ -591,7 +593,7 @@ async def build_telegram_application() -> Application:
         await update.message.reply_text(
             "密钥一绑定完成，请继续提供 **密钥二** 的链接："
         )
-        # 实际项目里可以继续等待第二个链接的消息，这里仅作示例。
+        # 实际项目里可以继续等待第二个链接的消息，这里只作示例。
 
     app_tg.add_handler(CommandHandler("my", cmd_my))
     app_tg.add_handler(CommandHandler("my无限次", cmd_set_new_keys))
