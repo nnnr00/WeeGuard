@@ -31,10 +31,13 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
-# 请确保在 Railway 环境变量设置了 RAILWAY_PUBLIC_DOMAIN (不带 https://)
-RAILWAY_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", "your-app.up.railway.app")
 
-# 直链 (备用/初始值)
+# 处理 Railway 域名，防止用户填错导致 404
+raw_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+# 自动去除 https://, http:// 和末尾的 /
+RAILWAY_DOMAIN = raw_domain.replace("https://", "").replace("http://", "").strip("/")
+
+# Moontag 直链配置 (用于隐形加载)
 DIRECT_LINK_1 = "https://otieu.com/4/10489994"
 DIRECT_LINK_2 = "https://otieu.com/4/10489998"
 
@@ -49,7 +52,7 @@ tz_bj = pytz.timezone('Asia/Shanghai')
 scheduler = AsyncIOScheduler(timezone=tz_bj)
 bot_app = None
 
-# 状态机状态
+# 状态机状态 (管理员后台用)
 WAITING_FOR_PHOTO = 1
 WAITING_LINK_1 = 2
 WAITING_LINK_2 = 3
@@ -60,10 +63,7 @@ def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    """
-    初始化数据库 (V3版)。
-    强制使用 _v3 后缀，确保表结构正确，解决 UndefinedColumn 错误。
-    """
+    """初始化数据库 (V3版)"""
     conn = get_db_connection()
     cur = conn.cursor()
     
@@ -134,8 +134,7 @@ def init_db():
         );
     """)
     
-    # 初始化 system_keys 行 (如果不存在)
-    # 如果是第一次创建，这里插入一个默认行
+    # 初始化 system_keys 行
     cur.execute("INSERT INTO system_keys_v3 (id, session_date) VALUES (1, %s) ON CONFLICT (id) DO NOTHING", (date(2000,1,1),))
     
     conn.commit()
@@ -144,23 +143,22 @@ def init_db():
 
 # --- 辅助逻辑 ---
 def get_session_date():
-    """获取当前业务日期 (10:00 AM 为界)"""
+    """获取当前业务日期 (以北京时间10:00AM为界)"""
     now = datetime.now(tz_bj)
     if now.hour < 10:
         return (now - timedelta(days=1)).date()
     return now.date()
 
 def generate_random_key():
-    """生成10位随机大小写数字混合密钥"""
+    """生成10位随机密钥"""
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(10))
 
-# --- 数据库函数集合 (全部更新为 v3) ---
+# --- 数据库函数集合 (V3) ---
 
 def ensure_user_exists(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    # 修复：使用 users_v3 和 user_ads_v3
     cur.execute("INSERT INTO users_v3 (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (user_id,))
     cur.execute("INSERT INTO user_ads_v3 (user_id, daily_watch_count) VALUES (%s, 0) ON CONFLICT (user_id) DO NOTHING", (user_id,))
     conn.commit()
@@ -235,7 +233,6 @@ def verify_token(token):
     return row[0] if row else None
 
 def get_ad_status(user_id):
-    """获取广告观看状态"""
     ensure_user_exists(user_id)
     conn = get_db_connection()
     cur = conn.cursor()
@@ -365,7 +362,6 @@ def claim_key_points(user_id, text_input):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    # 确保用户入库，使用新表 v3
     ensure_user_exists(user.id)
     text = f"👋 你好，{user.first_name}！\n欢迎使用功能："
     kb = InlineKeyboardMarkup([
@@ -406,9 +402,10 @@ async def activity_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ensure_user_exists(user.id)
     
     count = get_ad_status(user.id)
-    
     token = create_ad_token(user.id)
-    protocol = "https" if "railway" in RAILWAY_DOMAIN else "http"
+    
+    # 构造链接时，使用处理过的 RAILWAY_DOMAIN
+    protocol = "https" # Railway 默认开启 HTTPS
     watch_url = f"{protocol}://{RAILWAY_DOMAIN}/watch_ad/{token}"
     
     text = (
@@ -432,9 +429,8 @@ async def quark_key_btn_handler(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     
     info = get_system_keys_info()
-    # 如果 info 存在但是 key 是 None，说明还没生成
     if not info or not info[1]:
-        await query.message.reply_text("⏳ **密钥正在初始化...**\n请稍等几分钟后重试，或联系管理员检查。")
+        await query.message.reply_text("⏳ **密钥正在初始化...**\n请稍后或联系管理员。")
         return
 
     clicks = get_user_click_status(user.id)
@@ -445,7 +441,7 @@ async def quark_key_btn_handler(update: Update, context: ContextTypes.DEFAULT_TY
     target_type = 1 if clicks == 0 else 2
     increment_user_click(user.id)
     
-    protocol = "https" if "railway" in RAILWAY_DOMAIN else "http"
+    protocol = "https"
     jump_url = f"{protocol}://{RAILWAY_DOMAIN}/jump?type={target_type}"
     
     name_ref = "密钥1" if target_type == 1 else "密钥2"
@@ -465,7 +461,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"✅ **成功！**\n积分：+{result['points']}\n总分：`{result['total']}`", parse_mode='Markdown')
     elif result["status"] == "already_claimed":
         await update.message.reply_text("⚠️ 密钥已使用。")
-    # 不回 else，避免刷屏
 
 # --- Admin ---
 async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -524,18 +519,15 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_ID): return
     info = get_system_keys_info()
-    # 强制检查：如果 info 里的 Key 为空，直接生成。
     if not info or not info[1]:
-        k1 = generate_random_key()
-        k2 = generate_random_key()
-        update_system_keys(k1, k2, date.today())
+        update_system_keys(generate_random_key(), generate_random_key(), date.today())
         info = get_system_keys_info()
 
     k1, l1, k2, l2, date_s = info
     msg = (
         f"👮‍♂️ **密钥管理** ({date_s})\n"
-        f"K1 (8pt): `{k1}`\nL1: {l1 or '❌'}\n\n"
-        f"K2 (6pt): `{k2}`\nL2: {l2 or '❌'}\n\n"
+        f"K1: `{k1}`\nL1: {l1 or '❌'}\n\n"
+        f"K2: `{k2}`\nL2: {l2 or '❌'}\n\n"
         "👇 发送【密钥 1】新链接:"
     )
     await update.message.reply_text(msg, parse_mode='Markdown')
@@ -557,7 +549,6 @@ async def cancel_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🚫 取消。")
     return ConversationHandler.END
 
-# --- 定时任务 ---
 async def daily_reset_task():
     key1 = generate_random_key()
     key2 = generate_random_key()
@@ -565,55 +556,37 @@ async def daily_reset_task():
     logger.info(f"Daily keys reset: {key1}, {key2}")
     if bot_app and ADMIN_ID:
         try:
-            msg = (
-                "🔔 **每日密钥更新 (10:00 AM)**\n\n"
-                f"🔑 K1: `{key1}`\n🔑 K2: `{key2}`\n\n"
-                "⚠️ 原链接已失效，请用 `/my` 绑定新链接。"
-            )
+            msg = f"🔔 **每日密钥更新**\n\n🔑 K1: `{key1}`\n🔑 K2: `{key2}`\n⚠️ 原链接失效，请用 /my 绑定新链接。"
             await bot_app.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode='Markdown')
         except Exception as e:
             logger.error(f"Failed to send admin msg: {e}")
 
-# --- 核心运行逻辑 (Lifespan + Main) ---
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. 初始化数据库 (V3)
     init_db()
     print("Database Initialized (v3 tables).")
     
-    # 2. 检查并生成初始密钥 (防止 /my 为空)
     info = get_system_keys_info()
-    # 如果没有 session_date 或 session_date 是默认的2000年，说明是新表
     if not info or info[4] == date(2000, 1, 1):
         print("Generating Initial Keys...")
-        k1 = generate_random_key()
-        k2 = generate_random_key()
-        update_system_keys(k1, k2, date.today())
+        update_system_keys(generate_random_key(), generate_random_key(), date.today())
     
-    # 3. 启动定时任务
     scheduler.add_job(daily_reset_task, 'cron', hour=10, minute=0, timezone=tz_bj)
     scheduler.start()
-    print("Scheduler Started.")
-
-    # 4. 初始化并运行 Bot
+    
     global bot_app
     bot_app = Application.builder().token(BOT_TOKEN).build()
     
-    # 注册 Handlers
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CallbackQueryHandler(start, pattern="^back_to_home$"))
     bot_app.add_handler(CommandHandler("hd", activity_handler))
     bot_app.add_handler(CallbackQueryHandler(activity_handler, pattern="^open_activity$"))
     bot_app.add_handler(CallbackQueryHandler(quark_key_btn_handler, pattern="^get_quark_key$"))
-    
     bot_app.add_handler(CommandHandler("jf", jf_command_handler))
     bot_app.add_handler(CallbackQueryHandler(jf_command_handler, pattern="^my_points$"))
     bot_app.add_handler(CallbackQueryHandler(checkin_handler, pattern="^do_checkin$"))
-    
     bot_app.add_handler(CallbackQueryHandler(verify_handler, pattern="^start_verify$"))
 
-    # Admin 图片
     admin_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_upload_flow, pattern="^start_upload$"), CommandHandler("id", lambda u, c: start_upload_flow(u, c))],
         states={WAITING_FOR_PHOTO: [MessageHandler(filters.PHOTO, handle_photo_upload), CallbackQueryHandler(admin_entry, pattern="^back_to_admin$")]},
@@ -627,7 +600,6 @@ async def lifespan(app: FastAPI):
     bot_app.add_handler(CallbackQueryHandler(cancel_delete, pattern="^cancel_del$"))
     bot_app.add_handler(admin_conv)
 
-    # Admin 密钥
     key_conv = ConversationHandler(
         entry_points=[CommandHandler("my", my_command)],
         states={
@@ -637,8 +609,6 @@ async def lifespan(app: FastAPI):
         fallbacks=[CommandHandler("cancel", cancel_admin)]
     )
     bot_app.add_handler(key_conv)
-    
-    # 文本监听
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
     await bot_app.initialize()
@@ -653,8 +623,6 @@ async def lifespan(app: FastAPI):
         await bot_app.shutdown()
     scheduler.shutdown()
 
-# --- FastAPI 路由 ---
-
 app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
@@ -663,89 +631,31 @@ async def health_check():
 
 @app.get("/watch_ad/{token}", response_class=HTMLResponse)
 async def watch_ad_page(token: str):
-    # 严格按照 Moontag 要求编写的 HTML
     html_content = f"""
-    <!DOCTYPE html>
-    <html lang="zh-CN">
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>视频任务</title>
-        <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
-        <style>
-            body {{ font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; }}
-            .container {{ max-width: 500px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-            h2 {{ color: #333; }}
-            .btn {{ padding: 12px 24px; background: #0088cc; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; transition: background 0.3s; }}
-            .btn:disabled {{ background: #ccc; cursor: not-allowed; }}
-            #s {{ margin-top: 15px; font-weight: bold; color: #555; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h2>📺 观看广告获取积分</h2>
-            <p>点击按钮观看完整广告即可获得奖励。</p>
-            <button id="adBtn" class="btn" onclick="show()">开始观看</button>
-            <div id="s"></div>
-        </div>
-
-        <script>
-        const statusDiv = document.getElementById('s');
-        const btn = document.getElementById('adBtn');
-        const token = "{token}";
-
-        function show() {{
-            btn.disabled = true;
-            statusDiv.innerText = "⏳ 正在加载广告...";
-            
-            // 严格的 Moontag 调用
-            if (typeof show_10489957 === 'function') {{
-                show_10489957('pop').then(() => {{
-                    // 用户看完或关闭插屏，开始验证
-                    statusDiv.innerText = "✅ 广告完成，正在验证...";
-                    verify();
-                }}).catch(e => {{
-                    console.error(e);
-                    statusDiv.innerText = "❌ 广告加载出错或被拦截，请重试。";
-                    btn.disabled = false;
-                }});
-            }} else {{
-                statusDiv.innerText = "❌ SDK 未加载，请关闭广告拦截插件刷新重试。";
-                btn.disabled = false;
-            }}
-        }}
-
-        function verify() {{
-            fetch('/api/verify_ad', {{
-                method: 'POST',
-                headers: {{ 'Content-Type': 'application/json' }},
-                body: JSON.stringify({{ token: token }})
-            }})
-            .then(response => response.json())
-            .then(data => {{
-                if (data.success) {{
-                    statusDiv.innerHTML = "🎉 <b>验证成功！</b><br>积分已发放: " + data.points + "<br>您现在可以返回 Telegram 了。";
-                    btn.style.display = 'none';
-                }} else {{
-                    statusDiv.innerText = "❌ 验证失败: " + data.message;
-                    btn.disabled = false;
-                }}
-            }})
-            .catch(error => {{
-                statusDiv.innerText = "❌ 网络错误，请检查连接。";
-                btn.disabled = false;
-            }});
-        }}
-        </script>
-    </body>
-    </html>
+    <!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>视频任务</title>
+    <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
+    <style>body{{font-family:sans-serif;text-align:center;padding:20px;background:#f4f4f9}} .container{{max-width:500px;margin:0 auto;background:white;padding:20px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1)}} .btn{{padding:12px 24px;background:#0088cc;color:white;border:none;border-radius:5px;font-size:16px;cursor:pointer}} .btn:disabled{{background:#ccc}} #s{{margin-top:15px;font-weight:bold;color:#555}}</style>
+    </head><body><div class="container"><h2>📺 观看广告获取积分</h2><p>点击按钮观看完整广告即可获得奖励。</p><button id="adBtn" class="btn" onclick="show()">开始观看</button><div id="s"></div></div>
+    <script>
+    const s = document.getElementById('s'); const btn = document.getElementById('adBtn'); const token = "{token}";
+    function show(){{
+        btn.disabled = true; s.innerText = "⏳ 正在加载...";
+        if (typeof show_10489957 === 'function') {{
+            show_10489957('pop').then(() => {{ s.innerText = "✅ 验证中..."; verify(); }}).catch(e => {{ s.innerText = "❌ 广告加载失败"; btn.disabled = false; }});
+        }} else {{ s.innerText = "❌ 请关闭拦截插件"; btn.disabled = false; }}
+    }}
+    function verify(){{
+        fetch('/api/verify_ad', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{token:token}})}})
+        .then(r=>r.json()).then(d=>{{ if(d.success){{ s.innerHTML="🎉 成功! +"+d.points+"分"; btn.style.display='none'; }}else{{ s.innerText="❌ "+d.message; btn.disabled=false; }} }});
+    }}
+    </script></body></html>
     """
     return HTMLResponse(content=html_content)
 
 @app.post("/api/verify_ad")
 async def verify_ad_api(payload: dict):
     user_id = verify_token(payload.get("token"))
-    if not user_id: return JSONResponse({"success": False, "message": "Expired or Invalid Token"})
+    if not user_id: return JSONResponse({"success": False, "message": "Expired"})
     res = process_ad_reward(user_id)
     return JSONResponse({"success": res["status"]=="success", "points": res.get("added"), "message": res.get("status")})
 
@@ -755,28 +665,21 @@ async def jump_page(request: Request, type: int = 1):
     if not info: return HTMLResponse("<h1>🚫 系统维护中</h1>")
     
     target_link = info[1] if type == 1 else info[3]
-    if not target_link:
-        return HTMLResponse("<h1>⏳ 等待管理员更新今日链接...</h1>")
+    if not target_link: return HTMLResponse("<h1>⏳ 等待管理员更新...</h1>")
+    
+    # 隐形加载逻辑
+    moontag_ad = DIRECT_LINK_1 if type == 1 else DIRECT_LINK_2
     
     html = f"""
-    <!DOCTYPE html>
-    <html lang="zh-CN">
-    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>跳转中...</title>
+    <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>跳转中...</title>
     <style>body{{font-family:Arial,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;background:#f0f2f5;margin:0}} .card{{background:white;padding:30px;border-radius:12px;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,0.1)}} .loader{{border:4px solid #f3f3f3;border-top:4px solid #3498db;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;margin:20px auto}} @keyframes spin{{0%{{transform:rotate(0deg)}}100%{{transform:rotate(360deg)}}}}</style>
     </head><body>
-        <div class="card">
-            <h2>🚀 正在为您获取密钥...</h2><div class="loader"></div>
-            <p id="msg">3 秒后跳转...</p>
-        </div>
+        <div class="card"><h2>🚀 正在为您获取密钥...</h2><div class="loader"></div><p id="msg">3 秒后跳转...</p></div>
+        <!-- 隐形加载 Moontag 直链 -->
+        <iframe src="{moontag_ad}" style="width:1px;height:1px;opacity:0;position:absolute;border:none;"></iframe>
         <script>
-            let count = 3;
-            const msg = document.getElementById('msg');
-            const target = "{target_link}";
-            setInterval(() => {{
-                count--;
-                if(count > 0) msg.innerText = count + " 秒后跳转...";
-                else {{ msg.innerText = "正在跳转..."; window.location.href = target; }}
-            }}, 1000);
+            let count = 3; const msg = document.getElementById('msg'); const target = "{target_link}";
+            setInterval(() => {{ count--; if(count > 0) msg.innerText = count + " 秒后跳转..."; else {{ msg.innerText = "正在跳转..."; window.location.href = target; }} }}, 1000);
         </script>
     </body></html>
     """
