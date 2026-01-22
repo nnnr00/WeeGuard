@@ -2,7 +2,7 @@ import os
 import logging
 import asyncio
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -21,6 +21,10 @@ from telegram.ext import (
     ContextTypes
 )
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+import pytz
+
 from database import Database
 
 # 日志配置
@@ -34,13 +38,19 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 DATABASE_URL = os.getenv('DATABASE_URL')
-WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://你的用户名.github.io/你的仓库名')  # GitHub Pages URL
+WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://你的用户名.github.io/你的仓库名')
+
+# 北京时区
+BEIJING_TZ = pytz.timezone('Asia/Shanghai')
 
 # 初始化数据库
 db = Database(DATABASE_URL)
 
 # Telegram Bot 应用实例
 bot_app = None
+
+# APScheduler 调度器
+scheduler = AsyncIOScheduler(timezone=BEIJING_TZ)
 
 
 # ==================== FastAPI 部分 ====================
@@ -169,6 +179,40 @@ async def get_user_points(user_id: int):
         )
 
 
+@api.get("/api/secret/link/{link_num}")
+async def get_secret_link(link_num: int):
+    """获取密钥链接"""
+    try:
+        secrets_data = db.get_daily_secrets()
+        
+        if not secrets_data:
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "message": "密钥未生成"}
+            )
+        
+        if link_num == 1:
+            link = secrets_data.get('link1')
+            updated = secrets_data.get('link1_updated', False)
+        else:
+            link = secrets_data.get('link2')
+            updated = secrets_data.get('link2_updated', False)
+        
+        if not updated or not link:
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "message": "链接未设置"}
+            )
+        
+        return {"success": True, "link": link}
+    except Exception as e:
+        logger.error(f"Error getting secret link: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)}
+        )
+
+
 # ==================== Telegram Bot 部分 ====================
 
 def is_admin(user_id: int) -> bool:
@@ -222,6 +266,8 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # 清除等待状态
     context.user_data['waiting_for_image'] = False
+    context.user_data['waiting_for_link1'] = False
+    context.user_data['waiting_for_link2'] = False
     
     await update.message.reply_text(
         "🔧 <b>管理员后台</b>\n\n请选择功能：",
@@ -288,9 +334,11 @@ async def hd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.get_or_create_user(user.id, user.username)
     
     watch_count = db.get_ad_watch_count_today(user.id)
+    click_count = db.get_user_redirect_clicks_today(user.id)
     
     keyboard = [
         [InlineKeyboardButton(f"🎬 看视频赚积分 ({watch_count}/3)", callback_data="watch_ad_info")],
+        [InlineKeyboardButton(f"📦 网盘密钥福利 ({click_count}/2)", callback_data="secret_key_info")],
         [InlineKeyboardButton("🔙 返回首页", callback_data="back_to_start")],
     ]
     
@@ -298,6 +346,56 @@ async def hd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎉 <b>开业活动中心</b>\n\n"
         "欢迎参与我们的开业活动！\n"
         "完成任务即可获得丰厚积分奖励！",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='HTML'
+    )
+
+
+async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理 /my 命令 - 管理员查看/更换密钥"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔ 您没有管理员权限")
+        return
+    
+    # 检查是否在北京时间10点后
+    if not db.is_after_10am_beijing():
+        now = db.get_beijing_now()
+        await update.message.reply_text(
+            f"⏰ <b>时间未到</b>\n\n"
+            f"当前北京时间：{now.strftime('%H:%M:%S')}\n\n"
+            f"请在 <b>10:00</b> 之后再操作密钥链接。",
+            parse_mode='HTML'
+        )
+        return
+    
+    # 确保当天密钥存在
+    secrets_data = db.get_daily_secrets()
+    if not secrets_data:
+        secrets_data = db.create_daily_secrets()
+    
+    link1_status = "✅ 已设置" if secrets_data.get('link1_updated') else "❌ 未设置"
+    link2_status = "✅ 已设置" if secrets_data.get('link2_updated') else "❌ 未设置"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔗 设置密钥1链接", callback_data="set_link1")],
+        [InlineKeyboardButton("🔗 设置密钥2链接", callback_data="set_link2")],
+        [InlineKeyboardButton("🔙 返回后台", callback_data="back_to_admin")],
+    ]
+    
+    await update.message.reply_text(
+        f"🔑 <b>今日密钥管理</b>\n\n"
+        f"📅 密钥日期：{secrets_data['secret_date']}\n\n"
+        f"────────────\n"
+        f"🔐 <b>密钥1</b>（8积分）：\n"
+        f"<code>{secrets_data['secret1']}</code>\n"
+        f"链接状态：{link1_status}\n\n"
+        f"🔐 <b>密钥2</b>（6积分）：\n"
+        f"<code>{secrets_data['secret2']}</code>\n"
+        f"链接状态：{link2_status}\n"
+        f"────────────\n\n"
+        f"⏰ 密钥每日北京时间 10:00 自动更新",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='HTML'
     )
@@ -316,7 +414,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # 返回首页
     if data == "back_to_start":
-        # 确保用户存在于数据库
+        # 清除等待状态
+        context.user_data['waiting_for_image'] = False
+        context.user_data['waiting_for_link1'] = False
+        context.user_data['waiting_for_link2'] = False
+        context.user_data['waiting_for_secret'] = False
+        
         db.get_or_create_user(user_id, user.username)
         
         await query.edit_message_text(
@@ -409,9 +512,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.get_or_create_user(user_id, user.username)
         
         watch_count = db.get_ad_watch_count_today(user_id)
+        click_count = db.get_user_redirect_clicks_today(user_id)
         
         keyboard = [
             [InlineKeyboardButton(f"🎬 看视频赚积分 ({watch_count}/3)", callback_data="watch_ad_info")],
+            [InlineKeyboardButton(f"📦 网盘密钥福利 ({click_count}/2)", callback_data="secret_key_info")],
             [InlineKeyboardButton("🔙 返回首页", callback_data="back_to_start")],
         ]
         
@@ -476,6 +581,138 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='HTML'
             )
     
+    # ==================== 网盘密钥福利 ====================
+    
+    # 密钥信息页
+    elif data == "secret_key_info":
+        db.get_or_create_user(user_id, user.username)
+        
+        click_count = db.get_user_redirect_clicks_today(user_id)
+        claimed_secrets = db.get_user_claimed_secrets_today(user_id)
+        
+        # 检查链接是否已设置
+        links_ready = db.are_links_ready()
+        
+        if click_count >= 2:
+            keyboard = [
+                [InlineKeyboardButton("🔙 返回活动中心", callback_data="activity_center")],
+            ]
+            
+            await query.edit_message_text(
+                "📦 <b>网盘密钥福利</b>\n\n"
+                "❌ 今日获取次数已用完\n\n"
+                "⏰ 明日 <b>上午 10:00</b> 重置后可继续获取",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML'
+            )
+        elif not links_ready:
+            keyboard = [
+                [InlineKeyboardButton("🔄 刷新状态", callback_data="secret_key_info")],
+                [InlineKeyboardButton("🔙 返回活动中心", callback_data="activity_center")],
+            ]
+            
+            await query.edit_message_text(
+                "📦 <b>网盘密钥福利</b>\n\n"
+                "⏳ 请等待管理员更换新密钥链接\n\n"
+                "管理员每日 10:00 更新链接，请稍后再试",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML'
+            )
+        else:
+            # 计算下次奖励
+            if click_count == 0:
+                next_reward = "8 积分"
+            else:
+                next_reward = "6 积分"
+            
+            keyboard = [
+                [InlineKeyboardButton("🔑 开始获取密钥", callback_data="start_get_secret")],
+                [InlineKeyboardButton("🔙 返回活动中心", callback_data="activity_center")],
+            ]
+            
+            await query.edit_message_text(
+                f"📦 <b>网盘密钥福利</b>\n\n"
+                f"通过夸克网盘获取隐藏密钥，输入即可领取积分！\n\n"
+                f"────────────\n"
+                f"📊 今日进度：{click_count}/2\n"
+                f"🎁 下次奖励：{next_reward}\n"
+                f"────────────\n\n"
+                f"📌 <b>获取步骤：</b>\n"
+                f"1️⃣ 点击「开始获取密钥」按钮\n"
+                f"2️⃣ 等待 3 秒自动跳转到网盘页面\n"
+                f"3️⃣ 保存文件到网盘，查看文件名\n"
+                f"4️⃣ 复制文件名中的密钥\n"
+                f"5️⃣ 返回机器人发送密钥领取积分\n\n"
+                f"────────────\n"
+                f"📌 <b>奖励规则：</b>\n"
+                f"• 第1次密钥：8 积分\n"
+                f"• 第2次密钥：6 积分\n\n"
+                f"⏰ 每日北京时间 <b>10:00</b> 重置",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML'
+            )
+    
+    # 开始获取密钥
+    elif data == "start_get_secret":
+        db.get_or_create_user(user_id, user.username)
+        
+        click_count = db.get_user_redirect_clicks_today(user_id)
+        
+        if click_count >= 2:
+            await query.answer("今日获取次数已用完", show_alert=True)
+            return
+        
+        # 检查链接是否已设置
+        if not db.are_links_ready():
+            await query.answer("请等待管理员更换新密钥链接", show_alert=True)
+            return
+        
+        # 记录点击
+        new_count = db.record_redirect_click(user_id)
+        
+        # 根据是第几次点击决定使用哪个中转页面
+        if new_count == 1:
+            redirect_url = f"{WEBAPP_URL}/docs/redirect1.html"
+        else:
+            redirect_url = f"{WEBAPP_URL}/docs/redirect2.html"
+        
+        # 设置等待密钥输入状态
+        context.user_data['waiting_for_secret'] = True
+        
+        keyboard = [
+            [InlineKeyboardButton("🔗 前往获取密钥", url=redirect_url)],
+            [InlineKeyboardButton("📝 我已获取，输入密钥", callback_data="input_secret")],
+            [InlineKeyboardButton("🔙 返回活动中心", callback_data="activity_center")],
+        ]
+        
+        await query.edit_message_text(
+            f"📦 <b>获取密钥 - 第 {new_count} 次</b>\n\n"
+            f"请点击下方按钮前往获取密钥\n\n"
+            f"⚠️ <b>注意事项：</b>\n"
+            f"• 页面将先跳转广告（约3秒）\n"
+            f"• 然后自动跳转到网盘页面\n"
+            f"• 保存文件后查看文件名即为密钥\n\n"
+            f"获取密钥后，直接在聊天框发送密钥即可领取积分！",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
+        )
+    
+    # 输入密钥
+    elif data == "input_secret":
+        context.user_data['waiting_for_secret'] = True
+        
+        keyboard = [
+            [InlineKeyboardButton("🔙 返回活动中心", callback_data="activity_center")],
+        ]
+        
+        await query.edit_message_text(
+            "📝 <b>输入密钥</b>\n\n"
+            "请在聊天框中直接发送您获取的密钥\n\n"
+            "密钥格式：12位字母+数字组合",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
+        )
+    
     # ==================== 管理员后台 ====================
     
     # 返回后台
@@ -485,6 +722,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         context.user_data['waiting_for_image'] = False
+        context.user_data['waiting_for_link1'] = False
+        context.user_data['waiting_for_link2'] = False
+        
         await query.edit_message_text(
             "🔧 <b>管理员后台</b>\n\n请选择功能：",
             reply_markup=get_admin_keyboard(),
@@ -623,6 +863,176 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ]]),
                 parse_mode='HTML'
             )
+    
+    # ==================== 设置密钥链接（管理员）====================
+    
+    # 设置密钥1链接
+    elif data == "set_link1":
+        if not is_admin(user_id):
+            await query.edit_message_text("⛔ 您没有管理员权限")
+            return
+        
+        context.user_data['waiting_for_link1'] = True
+        context.user_data['waiting_for_link2'] = False
+        
+        keyboard = [[InlineKeyboardButton("❌ 取消", callback_data="cancel_set_link")]]
+        
+        await query.edit_message_text(
+            "🔗 <b>设置密钥1链接</b>\n\n"
+            "请发送密钥1的夸克网盘链接：",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
+        )
+    
+    # 设置密钥2链接
+    elif data == "set_link2":
+        if not is_admin(user_id):
+            await query.edit_message_text("⛔ 您没有管理员权限")
+            return
+        
+        context.user_data['waiting_for_link1'] = False
+        context.user_data['waiting_for_link2'] = True
+        
+        keyboard = [[InlineKeyboardButton("❌ 取消", callback_data="cancel_set_link")]]
+        
+        await query.edit_message_text(
+            "🔗 <b>设置密钥2链接</b>\n\n"
+            "请发送密钥2的夸克网盘链接：",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
+        )
+    
+    # 取消设置链接
+    elif data == "cancel_set_link":
+        if not is_admin(user_id):
+            return
+        
+        context.user_data['waiting_for_link1'] = False
+        context.user_data['waiting_for_link2'] = False
+        
+        # 返回密钥管理页面
+        secrets_data = db.get_daily_secrets()
+        if not secrets_data:
+            secrets_data = db.create_daily_secrets()
+        
+        link1_status = "✅ 已设置" if secrets_data.get('link1_updated') else "❌ 未设置"
+        link2_status = "✅ 已设置" if secrets_data.get('link2_updated') else "❌ 未设置"
+        
+        keyboard = [
+            [InlineKeyboardButton("🔗 设置密钥1链接", callback_data="set_link1")],
+            [InlineKeyboardButton("🔗 设置密钥2链接", callback_data="set_link2")],
+            [InlineKeyboardButton("🔙 返回后台", callback_data="back_to_admin")],
+        ]
+        
+        await query.edit_message_text(
+            f"🔑 <b>今日密钥管理</b>\n\n"
+            f"📅 密钥日期：{secrets_data['secret_date']}\n\n"
+            f"────────────\n"
+            f"🔐 <b>密钥1</b>（8积分）：\n"
+            f"<code>{secrets_data['secret1']}</code>\n"
+            f"链接状态：{link1_status}\n\n"
+            f"🔐 <b>密钥2</b>（6积分）：\n"
+            f"<code>{secrets_data['secret2']}</code>\n"
+            f"链接状态：{link2_status}\n"
+            f"────────────\n\n"
+            f"⏰ 密钥每日北京时间 10:00 自动更新",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
+        )
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理文本消息"""
+    user = update.effective_user
+    user_id = user.id
+    text = update.message.text.strip()
+    
+    # ==================== 管理员：设置密钥链接 ====================
+    
+    if is_admin(user_id):
+        # 设置密钥1链接
+        if context.user_data.get('waiting_for_link1'):
+            context.user_data['waiting_for_link1'] = False
+            
+            success = db.update_secret_link(1, text)
+            
+            if success:
+                await update.message.reply_text(
+                    "✅ <b>密钥1链接设置成功！</b>\n\n"
+                    "请继续设置密钥2链接，或使用 /my 查看详情",
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text("❌ 设置失败，请重试")
+            return
+        
+        # 设置密钥2链接
+        if context.user_data.get('waiting_for_link2'):
+            context.user_data['waiting_for_link2'] = False
+            
+            success = db.update_secret_link(2, text)
+            
+            if success:
+                await update.message.reply_text(
+                    "✅ <b>密钥2链接设置成功！</b>\n\n"
+                    "所有链接已设置完毕，用户现在可以获取密钥了！\n\n"
+                    "使用 /my 查看详情",
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text("❌ 设置失败，请重试")
+            return
+    
+    # ==================== 用户：输入密钥 ====================
+    
+    if context.user_data.get('waiting_for_secret') or len(text) == 12:
+        # 确保用户存在
+        db.get_or_create_user(user_id, user.username)
+        
+        # 验证密钥
+        is_valid, secret_type, points = db.verify_secret(text)
+        
+        if is_valid:
+            # 尝试领取
+            success, message = db.claim_secret(user_id, secret_type, points)
+            
+            context.user_data['waiting_for_secret'] = False
+            
+            if success:
+                total_points = db.get_user_points(user_id)
+                
+                keyboard = [[InlineKeyboardButton("🔙 返回活动中心", callback_data="activity_center")]]
+                
+                await update.message.reply_text(
+                    f"🎉 <b>领取成功！</b>\n\n"
+                    f"✅ 密钥验证通过\n"
+                    f"💎 获得积分：<b>+{points}</b>\n"
+                    f"💰 当前总积分：<b>{total_points}</b>\n\n"
+                    f"感谢参与活动！",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='HTML'
+                )
+            else:
+                keyboard = [[InlineKeyboardButton("🔙 返回活动中心", callback_data="activity_center")]]
+                
+                await update.message.reply_text(
+                    f"⚠️ <b>领取失败</b>\n\n"
+                    f"{message}",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='HTML'
+                )
+        else:
+            # 密钥无效
+            if context.user_data.get('waiting_for_secret'):
+                keyboard = [[InlineKeyboardButton("🔙 返回活动中心", callback_data="activity_center")]]
+                
+                await update.message.reply_text(
+                    "❌ <b>密钥无效</b>\n\n"
+                    "请确认您输入的密钥是否正确，或该密钥已过期。\n\n"
+                    "密钥每日北京时间 10:00 更新",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='HTML'
+                )
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -662,6 +1072,42 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Error: {context.error}")
 
 
+# ==================== 定时任务 ====================
+
+async def daily_secret_update():
+    """每日密钥更新任务 - 北京时间10:00执行"""
+    try:
+        logger.info("Starting daily secret update...")
+        
+        # 生成新的每日密钥
+        today = db.get_beijing_today()
+        secrets_data = db.create_daily_secrets(today)
+        
+        if secrets_data and bot_app:
+            # 发送通知给管理员
+            message = (
+                f"🔔 <b>每日密钥已更新</b>\n\n"
+                f"📅 日期：{secrets_data['secret_date']}\n\n"
+                f"────────────\n"
+                f"🔐 <b>密钥1</b>（8积分）：\n"
+                f"<code>{secrets_data['secret1']}</code>\n\n"
+                f"🔐 <b>密钥2</b>（6积分）：\n"
+                f"<code>{secrets_data['secret2']}</code>\n"
+                f"────────────\n\n"
+                f"⚠️ 请使用 /my 命令设置今日密钥链接"
+            )
+            
+            await bot_app.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=message,
+                parse_mode='HTML'
+            )
+            
+            logger.info(f"Daily secrets created and admin notified: {secrets_data['secret1']}, {secrets_data['secret2']}")
+    except Exception as e:
+        logger.error(f"Error in daily secret update: {e}")
+
+
 def run_bot():
     """运行 Telegram Bot"""
     global bot_app
@@ -678,11 +1124,25 @@ def run_bot():
     bot_app.add_handler(CommandHandler("id", id_command))
     bot_app.add_handler(CommandHandler("jf", jf_command))
     bot_app.add_handler(CommandHandler("hd", hd_command))
+    bot_app.add_handler(CommandHandler("my", my_command))
     bot_app.add_handler(CallbackQueryHandler(button_handler))
     bot_app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # 错误处理
     bot_app.add_error_handler(error_handler)
+    
+    # 配置定时任务
+    scheduler.add_job(
+        daily_secret_update,
+        CronTrigger(hour=10, minute=0, timezone=BEIJING_TZ),
+        id='daily_secret_update',
+        replace_existing=True
+    )
+    
+    # 启动调度器
+    scheduler.start()
+    logger.info("APScheduler started - Daily secret update scheduled at 10:00 Beijing time")
     
     # 启动机器人
     logger.info("Telegram Bot is starting...")
