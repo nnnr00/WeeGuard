@@ -517,7 +517,13 @@ def reset_admin_stats(aid):
     cur.execute("UPDATE user_key_clicks_v3 SET click_count=0 WHERE user_id=%s", (aid,))
     cur.execute("DELETE FROM user_key_claims_v3 WHERE user_id=%s", (aid,))
     cur.execute("DELETE FROM user_purchases_v5 WHERE user_id=%s", (aid,))
-    cur.execute("UPDATE users_v3 SET verify_fails=0,verify_lock=NULL,verify_done=FALSE,wx_fails=0,wx_lock=NULL,wx_done=FALSE,ali_fails=0,ali_lock=NULL,ali_done=FALSE WHERE user_id=%s", (aid,))
+    cur.execute("""
+        UPDATE users_v3 SET 
+        verify_fails=0, verify_lock=NULL, verify_done=FALSE,
+        wx_fails=0, wx_lock=NULL, wx_done=FALSE,
+        ali_fails=0, ali_lock=NULL, ali_done=FALSE
+        WHERE user_id = %s
+    """, (aid,))
     conn.commit()
     cur.close()
     conn.close()
@@ -577,7 +583,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         verify_text = f"🚫 验证锁定 ({h}h{m}m)"
         verify_cb = "locked_verify"
 
-    text = "👋 欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~\n\n📢 小卫小卫，守门员小卫！\n一键入群，小卫帮你搞定！\n新人来报到，小卫查身份！"
+    text = (
+        "👋 欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~\n\n"
+        "📢 小卫小卫，守门员小卫！\n"
+        "一键入群，小卫帮你搞定！\n"
+        "新人来报到，小卫查身份！"
+    )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(verify_text, callback_data=verify_cb)],
         [InlineKeyboardButton("💰 积分 & 兑换", callback_data="my_points")],
@@ -611,7 +622,7 @@ async def jf_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(text, reply_markup=kb, parse_mode='Markdown')
 
 async def view_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """查看余额与流水"""
+    """查看余额与流水 (修复了格式化报错)"""
     query = update.callback_query
     await query.answer()
     uid = update.effective_user.id
@@ -622,6 +633,7 @@ async def view_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if logs:
         for l in logs:
             # l: (change_amount, reason, created_at)
+            # 这里的 int(l[0]) 强制转换解决了 ValueError: Unknown format code 'd'
             log_text += f"• {l[2].strftime('%m-%d %H:%M')} | {int(l[0]):+d} | {l[1]}\n"
     else:
         log_text = "暂无记录"
@@ -637,6 +649,7 @@ async def recharge_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _, wx_l, wx_d = check_lock(uid, 'wx')
     _, ali_l, ali_d = check_lock(uid, 'ali')
     
+    # 充值锁改为 3 小时
     if wx_d:
         wx_t, wx_c = "✅ 微信已充", "noop_done"
     elif wx_l and datetime.now() < wx_l:
@@ -678,23 +691,28 @@ async def activity_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kc = get_user_click_status(user.id)
     t = create_ad_token(user.id)
     
+    # 强制使用 https 并清洗域名
     w_url = f"https://{RAILWAY_DOMAIN}/watch_ad/{t}"
     test_url = f"https://{RAILWAY_DOMAIN}/test_page"
     
-    text = f"🎉 **活动中心**\n1️⃣ 视频积分 ({count}/3)\n2️⃣ 夸克密钥 ({kc}/2)\n🛠 功能测试"
+    text = (
+        "🎉 **开业活动中心**\n\n"
+        "📺 **视频任务**：观看 15 秒广告，每日 3 次，积分随机。\n"
+        "🔑 **密钥任务**：跳转夸克网盘保存文件，文件名即密钥，发送给机器人领分。每日 2 次。"
+    )
     
     kb = []
     if count < 3:
-        kb.append([InlineKeyboardButton("📺 看视频", url=w_url)])
+        kb.append([InlineKeyboardButton(f"📺 去看视频 ({count}/3)", url=w_url)])
     else:
-        kb.append([InlineKeyboardButton("✅ 视频已完成", callback_data="noop_done")])
+        kb.append([InlineKeyboardButton("✅ 视频已完成 (3/3)", callback_data="noop_done")])
         
     if kc < 2:
-        kb.append([InlineKeyboardButton("🔑 获取密钥", callback_data="get_quark_key")])
+        kb.append([InlineKeyboardButton(f"🔑 获取密钥 ({kc}/2)", callback_data="get_quark_key")])
     else:
-        kb.append([InlineKeyboardButton("✅ 密钥已完成", callback_data="noop_done")])
+        kb.append([InlineKeyboardButton("✅ 密钥已完成 (2/2)", callback_data="noop_done")])
         
-    kb.append([InlineKeyboardButton("🛠 测试", url=test_url)])
+    kb.append([InlineKeyboardButton("🛠 测试按钮", url=test_url)])
     kb.append([InlineKeyboardButton("🔙 返回", callback_data="back_to_home")])
     
     if update.callback_query:
@@ -719,9 +737,10 @@ async def quark_key_btn_handler(update: Update, context: ContextTypes.DEFAULT_TY
         
     increment_user_click(uid)
     t = 1 if kc == 0 else 2
+    # 直接使用 /jump 跳转页
     url = f"https://{RAILWAY_DOMAIN}/jump?type={t}"
     
-    await context.bot.send_message(uid, f"🚀 **获取密钥**\n链接：{url}\n点击跳转->保存->复制文件名->发送给机器人")
+    await context.bot.send_message(uid, f"🚀 **获取密钥**\n\n请点击下方按钮跳转夸克网盘，保存文件后复制文件名发送给我。\n\n链接：{url}")
 
 async def cz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_ID):
@@ -860,9 +879,12 @@ async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows, total = get_products_list(limit=10, offset=offset)
     
     kb = []
+    # 始终存在的测试按钮
     kb.append([InlineKeyboardButton("🎁 测试商品 (0积分)", callback_data="confirm_buy_test")])
     
+    # 数据库商品
     for r in rows:
+        # r: id, name, price
         is_bought = check_purchase(update.effective_user.id, r[0])
         if is_bought:
             btn_text = f"✅ {r[1]} (已兑换)"
@@ -872,6 +894,7 @@ async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             callback = f"confirm_buy_{r[0]}"
         kb.append([InlineKeyboardButton(btn_text, callback_data=callback)])
         
+    # 翻页
     nav = []
     if offset > 0:
         nav.append(InlineKeyboardButton("⬅️ 上一页", callback_data=f"list_prod_{offset-10}"))
@@ -880,7 +903,7 @@ async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav:
         kb.append(nav)
     
-    kb.append([InlineKeyboardButton("💰 查看余额 & 记录", callback_data="view_balance")])
+    # 移除了余额按钮，只保留返回
     kb.append([InlineKeyboardButton("🔙 返回首页", callback_data="back_to_home")])
     
     text = "🎁 **积分兑换中心**\n请选择您要兑换的商品："
@@ -890,13 +913,17 @@ async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """处理购买确认与发货"""
     query = update.callback_query
     await query.answer()
     data = query.data
     uid = update.effective_user.id
     
+    # 1. 测试商品
     if data == "confirm_buy_test":
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 确认", callback_data="do_buy_test"), InlineKeyboardButton("❌ 取消", callback_data="list_prod_0")]])
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ 确认", callback_data="do_buy_test"), InlineKeyboardButton("❌ 取消", callback_data="list_prod_0")]
+        ])
         await query.edit_message_text("❓ **确认兑换**\n商品：测试商品\n价格：0 积分", reply_markup=kb, parse_mode='Markdown')
         return
     elif data == "do_buy_test":
@@ -904,16 +931,20 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🎉 **兑换成功！**\n内容：哈哈", reply_markup=kb, parse_mode='Markdown')
         return
 
+    # 2. 真实商品
     pid = int(data.split("_")[-1])
     
+    # 查看已购
     if "view_bought_" in data:
         prod = get_product_details(pid)
         if not prod:
             await query.answer("商品已下架", show_alert=True)
             return
+        
         content = prod[3] or "无文本"
         fid = prod[4]
         ftype = prod[5]
+        
         await query.message.reply_text(f"📦 **已购内容：**\n{content}", parse_mode='Markdown')
         if fid:
             try:
@@ -925,29 +956,36 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         return
 
+    # 确认购买
     if "confirm_buy_" in data:
         prod = get_product_details(pid)
         if not prod:
             await query.answer("商品已下架", show_alert=True)
             return
         price = prod[2]
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 确认支付", callback_data=f"do_buy_{pid}"), InlineKeyboardButton("❌ 取消", callback_data="list_prod_0")]])
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ 确认支付", callback_data=f"do_buy_{pid}"), InlineKeyboardButton("❌ 取消", callback_data="list_prod_0")]
+        ])
         await query.edit_message_text(f"❓ **确认兑换**\n商品：{prod[1]}\n价格：{price} 积分", reply_markup=kb, parse_mode='Markdown')
         return
 
+    # 执行购买
     if "do_buy_" in data:
         prod = get_product_details(pid)
         if not prod:
             await query.answer("商品已下架", show_alert=True)
             return
         price = prod[2]
+        
         user_pts = get_user_data(uid)[0]
         if user_pts < price:
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="list_prod_0")]])
             await query.edit_message_text("❌ **余额不足！**\n请充值或赚取更多积分。", reply_markup=kb, parse_mode='Markdown')
             return
+            
         update_points(uid, -price, f"兑换-{prod[1]}")
         record_purchase(uid, pid)
+        
         await query.message.reply_text(f"🎉 **兑换成功！**\n消耗 {price} 积分。\n\n📦 **内容：**\n{prod[3] or ''}", parse_mode='Markdown')
         if prod[4]:
             try:
@@ -957,8 +995,9 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_video(uid, prod[4])
             except:
                 pass
+            
         await asyncio.sleep(1)
-        await dh_command(update, context)
+        await dh_command(update, context) # 刷新列表
 
 # --- Admin Handlers ---
 
@@ -966,10 +1005,9 @@ async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_ID):
         return
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🖼 获取 File ID", callback_data="start_upload")],
-        [InlineKeyboardButton("📂 管理图片", callback_data="view_files")],
-        [InlineKeyboardButton("📚 频道转发库 (添加/管理)", callback_data="manage_cmds_entry")],
-        [InlineKeyboardButton("🛍 商品管理 (上架/下架)", callback_data="manage_products_entry")],
+        [InlineKeyboardButton("🖼 File ID 管理", callback_data="start_upload")],
+        [InlineKeyboardButton("📚 频道转发库", callback_data="manage_cmds_entry")],
+        [InlineKeyboardButton("🛍 商品管理", callback_data="manage_products_entry")],
         [InlineKeyboardButton("👥 用户与记录", callback_data="list_users")]
     ])
     if update.callback_query:
@@ -987,39 +1025,6 @@ async def manage_products_entry(update: Update, context: ContextTypes.DEFAULT_TY
         [InlineKeyboardButton("🔙 返回后台", callback_data="back_to_admin")]
     ])
     await query.edit_message_text("🛍 **商品管理**", reply_markup=kb, parse_mode='Markdown')
-
-async def list_admin_prods(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    offset = int(query.data.split("_")[-1])
-    rows, total = get_products_list(limit=10, offset=offset)
-    kb = []
-    for r in rows:
-        kb.append([InlineKeyboardButton(f"🗑 下架 {r[1]}", callback_data=f"ask_del_prod_{r[0]}")])
-    nav = []
-    if offset > 0:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"list_admin_prods_{offset-10}"))
-    if offset + 10 < total:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"list_admin_prods_{offset+10}"))
-    if nav:
-        kb.append(nav)
-    kb.append([InlineKeyboardButton("🔙 返回", callback_data="manage_products_entry")])
-    await query.edit_message_text(f"🛍 **商品列表 ({offset//10 + 1})**", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-
-async def ask_del_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    pid = int(query.data.split("_")[-1])
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_prod_{pid}"), InlineKeyboardButton("❌ 取消", callback_data="list_admin_prods_0")]])
-    await query.edit_message_text(f"⚠️ 确认下架商品 ID {pid}?", reply_markup=kb)
-
-async def confirm_del_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    pid = int(query.data.split("_")[-1])
-    delete_product(pid)
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="manage_products_entry")]])
-    await query.edit_message_text("🗑 已下架。", reply_markup=kb)
 
 async def add_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1046,34 +1051,69 @@ async def receive_prod_content(update: Update, context: ContextTypes.DEFAULT_TYP
     fid = None
     ftype = 'text'
     txt = msg.text or msg.caption
+    
     if msg.photo:
         fid = msg.photo[-1].file_id
         ftype = 'photo'
     elif msg.video:
         fid = msg.video.file_id
         ftype = 'video'
+    
     add_product(context.user_data['p_name'], context.user_data['p_price'], txt, fid, ftype)
+    
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="manage_products_entry")]])
     await update.message.reply_text("✅ **商品上架成功！**", reply_markup=kb, parse_mode='Markdown')
     return ConversationHandler.END
 
-async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_admin_prods(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query:
-        await query.answer()
+    await query.answer()
+    offset = int(query.data.split("_")[-1])
+    rows, total = get_products_list(limit=10, offset=offset)
+    
+    kb = []
+    for r in rows:
+        kb.append([InlineKeyboardButton(f"🗑 下架 {r[1]}", callback_data=f"ask_del_prod_{r[0]}")])
+        
+    nav = []
+    if offset > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"list_admin_prods_{offset-10}"))
+    if offset + 10 < total:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"list_admin_prods_{offset+10}"))
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("🔙 返回", callback_data="manage_products_entry")])
+    
+    await query.edit_message_text(f"🛍 **商品列表 ({offset//10 + 1})**", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+async def ask_del_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    pid = int(query.data.split("_")[-1])
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_prod_{pid}"), InlineKeyboardButton("❌ 取消", callback_data="list_admin_prods_0")]
+    ])
+    await query.edit_message_text(f"⚠️ 确认下架商品 ID {pid}?", reply_markup=kb)
+
+async def confirm_del_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    pid = int(query.data.split("_")[-1])
+    delete_product(pid)
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="manage_products_entry")]])
+    await query.edit_message_text("🗑 已下架。", reply_markup=kb)
+
+# Admin User List
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_ID):
         return
     rows, _ = get_all_users_info(20, 0)
     msg = "👥 **用户列表 (Top 20)**\n\n"
     for r in rows:
         msg += f"ID: `{r[0]}` | 名: {r[1] or '无'} | 分: {r[2]}\n"
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回后台", callback_data="back_to_admin")]])
-    if query:
-        await query.edit_message_text(msg, reply_markup=kb, parse_mode='Markdown')
-    else:
-        await update.message.reply_text(msg, reply_markup=kb, parse_mode='Markdown')
+    await update.message.reply_text(msg, parse_mode='Markdown')
 
-# --- Admin Handlers (Other) ---
+# --- Admin Handlers Continued ---
 
 async def manage_cmds_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1090,12 +1130,15 @@ async def list_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     offset = int(query.data.split('_')[-1])
     rows, total = get_commands_list(limit=10, offset=offset)
+    
     if not rows:
         await query.edit_message_text("📭 暂无自定义命令。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="manage_cmds_entry")]]))
         return
+        
     kb = []
     for r in rows:
         kb.append([InlineKeyboardButton(f"🗑 删除 {r[1]}", callback_data=f"ask_del_cmd_{r[0]}")])
+        
     nav = []
     if offset > 0:
         nav.append(InlineKeyboardButton("⬅️", callback_data=f"list_cmds_{offset-10}"))
@@ -1104,13 +1147,16 @@ async def list_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav:
         kb.append(nav)
     kb.append([InlineKeyboardButton("🔙 返回", callback_data="manage_cmds_entry")])
+    
     await query.edit_message_text(f"📂 **命令列表 ({offset//10 + 1})**", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 async def ask_del_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     cmd_id = int(query.data.split('_')[-1])
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_cmd_{cmd_id}"), InlineKeyboardButton("❌ 取消", callback_data="manage_cmds_entry")]])
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_cmd_{cmd_id}"), InlineKeyboardButton("❌ 取消", callback_data="manage_cmds_entry")]
+    ])
     await query.edit_message_text(f"⚠️ **确定删除吗？**", reply_markup=kb, parse_mode='Markdown')
 
 async def confirm_del_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1225,7 +1271,9 @@ async def pre_delete_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     did = q.data.split('_')[-1]
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_{did}"), InlineKeyboardButton("❌ 取消", callback_data="cancel_del")]])
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_{did}"), InlineKeyboardButton("❌ 取消", callback_data="cancel_del")]
+    ])
     await q.edit_message_caption(f"⚠️ 确认删除 ID {did}?", reply_markup=kb)
 
 async def execute_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1250,6 +1298,8 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     text = update.message.text
     if not text or text.startswith('/'):
         return
+    
+    # 1. 检查是否为自定义命令 (纯净转发)
     contents = get_command_content(text.strip())
     if contents:
         sent_msg_ids = []
@@ -1263,10 +1313,11 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             chunk = contents[i:i + chunk_size]
             media_group = []
             for item in chunk:
+                # 移除 caption, 纯图转发
                 if item[2] == 'photo':
-                    media_group.append(InputMediaPhoto(media=item[1], caption=item[3]))
+                    media_group.append(InputMediaPhoto(media=item[1]))
                 elif item[2] == 'video':
-                    media_group.append(InputMediaVideo(media=item[1], caption=item[3]))
+                    media_group.append(InputMediaVideo(media=item[1]))
             if len(media_group) == len(chunk) and len(media_group) > 1:
                 try:
                     msgs = await context.bot.send_media_group(chat_id=chat_id, media=media_group)
@@ -1280,24 +1331,28 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                         if item[2] == 'text':
                             m = await context.bot.send_message(chat_id, item[4])
                         elif item[2] == 'photo':
-                            m = await context.bot.send_photo(chat_id, item[1], caption=item[3])
+                            m = await context.bot.send_photo(chat_id, item[1]) # 无 caption
                         elif item[2] == 'video':
-                            m = await context.bot.send_video(chat_id, item[1], caption=item[3])
+                            m = await context.bot.send_video(chat_id, item[1]) # 无 caption
                         elif item[2] == 'document':
-                            m = await context.bot.send_document(chat_id, item[1], caption=item[3])
+                            m = await context.bot.send_document(chat_id, item[1]) # 无 caption
                         if m:
                             sent_msg_ids.append(m.message_id)
                     except:
                         pass
-        success_msg = await context.bot.send_message(chat_id, "✅ **信息已发送。**\n正在为您跳转...", parse_mode='Markdown')
+        success_msg = await context.bot.send_message(chat_id, "✅ **发送完毕**", parse_mode='Markdown')
         sent_msg_ids.append(success_msg.message_id)
         asyncio.create_task(delete_messages_task(chat_id, sent_msg_ids))
         await asyncio.sleep(2)
         await dh_command(update, context)
         return
+    
+    # 2. 密钥验证
     result = claim_key_points(user.id, text)
     if result["status"] == "success":
-        await update.message.reply_text(f"✅ **成功！** +{result['points']}分", parse_mode='Markdown')
+        await update.message.reply_text(f"✅ **兑换成功！** 获得 {result['points']} 积分", parse_mode='Markdown')
+        # 成功后显示新的活动面板
+        await activity_handler(update, context)
     elif result["status"] == "already_claimed":
         await update.message.reply_text("⚠️ 密钥已使用。")
     else:
@@ -1332,17 +1387,7 @@ async def lifespan(app: FastAPI):
         fallbacks=[CommandHandler("jf", jf_command_handler), CallbackQueryHandler(jf_command_handler, pattern="^my_points$")], per_message=False
     )
     
-    prod_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(add_product_start, pattern="^add_product_start$")],
-        states={
-            WAITING_PROD_NAME: [MessageHandler(filters.TEXT, receive_prod_name)],
-            WAITING_PROD_PRICE: [MessageHandler(filters.TEXT, receive_prod_price)],
-            WAITING_PROD_CONTENT: [MessageHandler(filters.ALL, receive_prod_content)]
-        },
-        fallbacks=[CallbackQueryHandler(manage_products_entry, pattern="^manage_products_entry$")], per_message=False
-    )
-    
-    cmd_conv = ConversationHandler(
+    cmd_add_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_cmd_start, pattern="^add_new_cmd$")],
         states={
             WAITING_CMD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_cmd_name)],
@@ -1362,13 +1407,23 @@ async def lifespan(app: FastAPI):
         states={WAITING_FOR_PHOTO:[MessageHandler(filters.PHOTO, handle_photo_upload), CallbackQueryHandler(admin_entry, pattern="^back_to_admin$")]},
         fallbacks=[CommandHandler("admin", admin_entry)]
     )
+    
+    prod_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(add_product_start, pattern="^add_product_start$")],
+        states={
+            WAITING_PROD_NAME: [MessageHandler(filters.TEXT, receive_prod_name)],
+            WAITING_PROD_PRICE: [MessageHandler(filters.TEXT, receive_prod_price)],
+            WAITING_PROD_CONTENT: [MessageHandler(filters.ALL, receive_prod_content)]
+        },
+        fallbacks=[CallbackQueryHandler(manage_products_entry, pattern="^manage_products_entry$")], per_message=False
+    )
 
     bot_app.add_handler(verify_conv)
     bot_app.add_handler(recharge_conv)
-    bot_app.add_handler(prod_conv)
-    bot_app.add_handler(cmd_conv)
+    bot_app.add_handler(cmd_add_conv)
     bot_app.add_handler(key_conv)
     bot_app.add_handler(admin_up_conv)
+    bot_app.add_handler(prod_conv)
     
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CallbackQueryHandler(start, pattern="^back_to_home$"))
@@ -1403,9 +1458,6 @@ async def lifespan(app: FastAPI):
     bot_app.add_handler(CommandHandler("my", my_command))
     bot_app.add_handler(CommandHandler("cz", cz_command))
     bot_app.add_handler(CommandHandler("users", list_users))
-    
-    # 这里的 list_users 回调处理需要补充
-    bot_app.add_handler(CallbackQueryHandler(list_users, pattern="^list_users$"))
     
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
