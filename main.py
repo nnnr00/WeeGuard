@@ -32,9 +32,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# --- 核心修复：404错误根源 ---
+# --- 核心修复：自动清洗域名 ---
 raw_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
-# 自动清洗域名
 RAILWAY_DOMAIN = raw_domain.replace("https://", "").replace("http://", "").strip("/")
 
 # Moontag 直链配置
@@ -637,7 +636,7 @@ async def watch_ad_page(token: str):
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>视频任务</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
-        <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
+        <script src='https://libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
         <style>
             body {{ font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; }}
             .container {{ max-width: 500px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
@@ -657,28 +656,26 @@ async def watch_ad_page(token: str):
         const token = "{token}";
         const s = document.getElementById('s');
         const btn = document.getElementById('adBtn');
-
-        // 初始化 Telegram WebApp
-        if (window.Telegram && window.Telegram.WebApp) {{
-            window.Telegram.WebApp.ready();
-        }}
         
+        // 你的广告调用逻辑
         function startAd() {{
             btn.disabled = true;
             s.innerText = "⏳ 正在请求广告...";
             
             if (typeof show_10489957 === 'function') {{
                 show_10489957().then(() => {{
-                    // 广告结束，开始验证
+                    // 用户要求：alert 提示
+                    alert('You have seen an ad!');
+                    // 验证并加分
                     s.innerText = "广告观看完成，正在验证...";
                     verifyAndClose();
                 }}).catch(e => {{
                     console.log(e);
-                    s.innerText = "❌ 广告加载失败 (请关闭拦截插件)";
+                    s.innerText = "❌ 广告加载失败: " + e;
                     btn.disabled = false;
                 }});
             }} else {{
-                s.innerText = "❌ SDK 未加载，请检查网络";
+                s.innerText = "❌ SDK 未加载 (请检查网络)";
                 btn.disabled = false;
             }}
         }}
@@ -694,7 +691,6 @@ async def watch_ad_page(token: str):
                 if(d.success) {{
                     s.innerHTML = "🎉 <b>验证成功! +"+d.points+"分</b><br>即将自动关闭...";
                     btn.style.display = 'none';
-                    // 2秒后关闭 WebApp
                     setTimeout(() => {{
                         if (window.Telegram && window.Telegram.WebApp) {{
                             window.Telegram.WebApp.close();
