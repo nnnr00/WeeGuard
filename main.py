@@ -151,7 +151,7 @@ def generate_random_key():
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(10))
 
-# --- 数据库函数集合 (V3) ---
+# --- 数据库函数集合 ---
 
 def ensure_user_exists(user_id):
     conn = get_db_connection()
@@ -355,6 +355,20 @@ def claim_key_points(user_id, text_input):
     
     return {"status": "success", "points": matched_points, "total": new_total}
 
+def reset_admin_stats(admin_id):
+    """管理员重置测试状态 (/cz)"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # 重置广告观看次数
+    cur.execute("UPDATE user_ads_v3 SET daily_watch_count = 0 WHERE user_id = %s", (admin_id,))
+    # 重置密钥点击次数
+    cur.execute("UPDATE user_key_clicks_v3 SET click_count = 0 WHERE user_id = %s", (admin_id,))
+    # 清空已领取的密钥记录 (为了测试可以反复领)
+    cur.execute("DELETE FROM user_key_claims_v3 WHERE user_id = %s", (admin_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
 # --- Telegram Bot Handlers ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -401,24 +415,43 @@ async def activity_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = get_ad_status(user.id)
     token = create_ad_token(user.id)
     
-    # 强制使用 https 并使用清洗后的域名
+    # 真实广告链接
     watch_url = f"https://{RAILWAY_DOMAIN}/watch_ad/{token}"
+    # 测试链接
+    test_url = f"https://{RAILWAY_DOMAIN}/test_page"
     
     text = (
         "🎉 **开业活动中心**\n\n"
         f"1️⃣ **观看视频得积分** ({count}/3)\n"
+        "每天 00:00 重置。观看完整广告即可获得积分。\n"
+        "奖励：10分 -> 6分 -> 随机3-10分。\n\n"
         "2️⃣ **夸克网盘取密钥** (🔥推荐)\n"
-        "点击按钮 -> 跳转中转站(3秒) -> 存网盘 -> 复制文件名(密钥) -> 发给机器人。\n"
-        "⚠️ **注意：** 每天北京时间 10:00 重置。"
+        "点击跳转 -> 存网盘 -> 复制文件名 -> 发给机器人。\n\n"
+        "🛠 **功能测试**\n"
+        "点击下方测试按钮，体验流程 (不加分)。"
     )
-    # 使用 url 按钮直接打开网页
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📺 看视频 (积分)", url=watch_url)],
-        [InlineKeyboardButton("🔑 获取今日密钥", callback_data="get_quark_key")],
-        [InlineKeyboardButton("🔙 返回首页", callback_data="back_to_home")]
-    ])
-    if update.callback_query: await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode='Markdown')
-    else: await update.message.reply_text(text, reply_markup=kb, parse_mode='Markdown')
+    
+    kb_list = []
+    # 如果没达到3次，显示广告按钮；否则显示已完成
+    if count < 3:
+        kb_list.append([InlineKeyboardButton("📺 看视频 (积分)", url=watch_url)])
+    else:
+        kb_list.append([InlineKeyboardButton("✅ 今日已完成 (3/3)", callback_data="none")])
+        
+    kb_list.append([InlineKeyboardButton("🔑 获取今日密钥", callback_data="get_quark_key")])
+    kb_list.append([InlineKeyboardButton("🛠 测试按钮 (体验流程)", url=test_url)])
+    kb_list.append([InlineKeyboardButton("🔙 返回首页", callback_data="back_to_home")])
+    
+    kb = InlineKeyboardMarkup(kb_list)
+    
+    if update.callback_query:
+        # 如果是点击已完成按钮，只弹窗提示
+        if update.callback_query.data == "none":
+            await update.callback_query.answer("明天再来吧！", show_alert=True)
+            return
+        await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(text, reply_markup=kb, parse_mode='Markdown')
 
 async def quark_key_btn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -467,6 +500,22 @@ async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     await update.message.reply_text("⚙️ **管理员后台**", reply_markup=kb, parse_mode='Markdown')
     return ConversationHandler.END
+
+async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/c 命令：清理状态返回后台"""
+    if str(update.effective_user.id) != str(ADMIN_ID): return
+    # 实际上 ConversationHandler.END 配合新消息就能达到重置效果
+    # 也可以手动清理 user_data
+    context.user_data.clear()
+    await update.message.reply_text("🧹 **状态已清理。**")
+    await admin_entry(update, context) # 返回后台菜单
+    return ConversationHandler.END
+
+async def cz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/cz 命令：重置管理员测试数据"""
+    if str(update.effective_user.id) != str(ADMIN_ID): return
+    reset_admin_stats(update.effective_user.id)
+    await update.message.reply_text("✅ **测试数据已重置。**\n您现在可以重新观看广告和领取密钥了。")
 
 async def start_upload_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -583,6 +632,10 @@ async def lifespan(app: FastAPI):
     bot_app.add_handler(CallbackQueryHandler(jf_command_handler, pattern="^my_points$"))
     bot_app.add_handler(CallbackQueryHandler(checkin_handler, pattern="^do_checkin$"))
     bot_app.add_handler(CallbackQueryHandler(verify_handler, pattern="^start_verify$"))
+    
+    # 新增 Admin 命令
+    bot_app.add_handler(CommandHandler("c", clear_command))
+    bot_app.add_handler(CommandHandler("cz", cz_command))
 
     admin_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_upload_flow, pattern="^start_upload$"), CommandHandler("id", lambda u, c: start_upload_flow(u, c))],
@@ -626,6 +679,7 @@ app = FastAPI(lifespan=lifespan)
 async def health_check():
     return {"status": "running"}
 
+# --- 1. 观看广告页 (含 15s 倒计时 + 跳转) ---
 @app.get("/watch_ad/{token}", response_class=HTMLResponse)
 async def watch_ad_page(token: str):
     html_content = f"""
@@ -636,55 +690,68 @@ async def watch_ad_page(token: str):
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>视频任务</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
-        <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
+        <script src='https://libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
         <style>
-            body {{ font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; }}
-            .container {{ max-width: 500px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-            .btn {{ padding: 12px 24px; background: #0088cc; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; }}
-            #s {{ margin-top: 15px; font-weight: bold; color: #555; }}
+            body {{ font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; display: flex; flex-direction: column; justify-content: center; height: 90vh; }}
+            .container {{ max-width: 500px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }}
+            .btn {{ padding: 15px 30px; background: #0088cc; color: white; border: none; border-radius: 8px; font-size: 18px; cursor: pointer; width: 100%; font-weight: bold; }}
+            .btn:disabled {{ background: #ccc; cursor: not-allowed; }}
+            #status {{ margin-top: 20px; font-size: 16px; color: #555; line-height: 1.5; }}
+            .progress {{ width: 100%; background-color: #ddd; border-radius: 5px; margin-top: 15px; height: 10px; display: none; }}
+            .bar {{ width: 0%; height: 100%; background-color: #4CAF50; border-radius: 5px; transition: width 1s linear; }}
         </style>
     </head>
     <body>
         <div class="container">
             <h2>📺 观看广告获取积分</h2>
-            <p>点击下方按钮开始观看</p>
-            <button id="adBtn" class="btn" onclick="startAd()">开始观看</button>
-            <div id="s"></div>
+            <p style="color: #666; margin-bottom: 25px;">请点击下方按钮，保持页面开启 15 秒。</p>
+            
+            <button id="adBtn" class="btn" onclick="startProcess()">▶️ 开始观看</button>
+            
+            <div class="progress" id="progress"><div class="bar" id="bar"></div></div>
+            <div id="status"></div>
         </div>
 
         <script>
         const token = "{token}";
-        const s = document.getElementById('s');
+        const statusDiv = document.getElementById('status');
         const btn = document.getElementById('adBtn');
-
-        if (window.Telegram && window.Telegram.WebApp) {{
-            window.Telegram.WebApp.ready();
-        }}
+        const bar = document.getElementById('bar');
+        const progress = document.getElementById('progress');
         
-        function startAd() {{
+        if (window.Telegram && window.Telegram.WebApp) {{ window.Telegram.WebApp.ready(); }}
+
+        function startProcess() {{
             btn.disabled = true;
-            s.innerText = "⏳ 正在请求广告...";
+            statusDiv.innerText = "⏳ 正在加载广告资源...";
             
+            // 1. 尝试调用广告 SDK (后台运行)
             if (typeof show_10489957 === 'function') {{
-                show_10489957().then(() => {{
-                    // 用户要求：alert 提示
-                    alert('You have seen an ad!');
-                    // 延迟1秒验证，防止alert卡死 fetch
-                    s.innerText = "广告完成，验证中...";
-                    setTimeout(verifyAndClose, 1000);
-                }}).catch(e => {{
-                    console.log(e);
-                    s.innerText = "❌ 广告加载失败: " + e;
-                    // 显示失败后恢复按钮
-                    btn.disabled = false;
-                }});
-            }} else {{
-                s.innerText = "❌ SDK Error (Moontag 拒绝连接)";
-                btn.disabled = false;
+                show_10489957().catch(e => console.log("Ad Blocked/No Fill"));
             }}
+            
+            // 2. 启动 15 秒倒计时
+            statusDiv.innerText = "📺 广告观看中... 请勿关闭页面";
+            progress.style.display = 'block';
+            let timeLeft = 15;
+            
+            const timer = setInterval(() => {{
+                timeLeft--;
+                const percent = ((15 - timeLeft) / 15) * 100;
+                bar.style.width = percent + "%";
+                
+                if (timeLeft <= 0) {{
+                    clearInterval(timer);
+                    validateAndRedirect();
+                }} else {{
+                    statusDiv.innerText = "📺 剩余时间: " + timeLeft + " 秒";
+                }}
+            }}, 1000);
         }}
 
-        function verifyAndClose() {{
+        function validateAndRedirect() {{
+            statusDiv.innerText = "✅ 观看完成，正在验证...";
+            
             fetch('/api/verify_ad', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
@@ -693,21 +760,16 @@ async def watch_ad_page(token: str):
             .then(r => r.json())
             .then(d => {{
                 if(d.success) {{
-                    s.innerHTML = "🎉 <b>验证成功! +"+d.points+"分</b><br>即将自动关闭...";
-                    btn.style.display = 'none';
-                    setTimeout(() => {{
-                        if (window.Telegram && window.Telegram.WebApp) {{
-                            window.Telegram.WebApp.close();
-                        }} else {{
-                            window.close();
-                        }}
-                    }}, 2000);
+                    // 跳转到成功页面
+                    window.location.href = "/ad_success?points=" + d.points;
                 }} else {{
-                    s.innerText = "❌ " + d.message;
+                    statusDiv.innerText = "❌ 验证失败: " + d.message;
+                    btn.disabled = false;
                 }}
             }})
-            .catch(err => {{
-                s.innerText = "❌ API Error: " + err;
+            .catch(e => {{
+                statusDiv.innerText = "❌ 网络错误，请重试";
+                btn.disabled = false;
             }});
         }}
         </script>
@@ -715,6 +777,101 @@ async def watch_ad_page(token: str):
     </html>
     """
     return HTMLResponse(content=html_content)
+
+# --- 2. 验证成功跳转页 (自动关闭) ---
+@app.get("/ad_success", response_class=HTMLResponse)
+async def success_page(points: int = 0):
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>成功</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <style>
+            body {{ font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #e8f5e9; text-align: center; margin: 0; }}
+            .card {{ background: white; padding: 40px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }}
+            h1 {{ color: #2e7d32; margin: 0 0 10px 0; }}
+            p {{ font-size: 18px; color: #555; }}
+            .score {{ font-size: 40px; font-weight: bold; color: #f57c00; display: block; margin: 20px 0; }}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h1>🎉 观看成功！</h1>
+            <p>您已获得奖励</p>
+            <span class="score">+{points} 积分</span>
+            <p style="font-size: 14px; color: #999;">页面将自动关闭...</p>
+        </div>
+        <script>
+            setTimeout(() => {{
+                if (window.Telegram && window.Telegram.WebApp) {{
+                    window.Telegram.WebApp.close();
+                }} else {{
+                    window.close();
+                }}
+            }}, 2500);
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+# --- 3. 纯功能测试页 (不加分，仅体验) ---
+@app.get("/test_page", response_class=HTMLResponse)
+async def test_page():
+    html = """
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>测试模式</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <style>
+            body { font-family: sans-serif; text-align: center; padding: 20px; background: #fff3e0; display: flex; flex-direction: column; justify-content: center; height: 90vh; }
+            .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+            .btn { padding: 15px 30px; background: #ff9800; color: white; border: none; border-radius: 8px; font-size: 18px; cursor: pointer; width: 100%; }
+            .btn:disabled { background: #ccc; }
+            #status { margin-top: 20px; font-weight: bold; color: #555; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h2>🛠 测试模式</h2>
+            <p>这是一个简陋的测试页面。</p>
+            <button id="btn" class="btn" onclick="startTest()">🖱 点击测试观看</button>
+            <div id="status"></div>
+        </div>
+        <script>
+            function startTest() {
+                const btn = document.getElementById('btn');
+                const s = document.getElementById('status');
+                btn.disabled = true;
+                
+                let count = 3;
+                s.innerText = "⏳ 模拟观看中... " + count;
+                
+                const timer = setInterval(() => {
+                    count--;
+                    if (count <= 0) {
+                        clearInterval(timer);
+                        s.innerText = "✅ 模拟成功！正在跳转...";
+                        // 模拟跳转到成功页
+                        setTimeout(() => {
+                            window.location.href = "/ad_success?points=0(测试)";
+                        }, 1000);
+                    } else {
+                        s.innerText = "⏳ 模拟观看中... " + count;
+                    }
+                }, 1000);
+            }
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
 @app.post("/api/verify_ad")
 async def verify_ad_api(payload: dict):
