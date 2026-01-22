@@ -1,11 +1,12 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import pytz
 import random
 import hashlib
 import secrets
+import string
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,48 @@ class Database:
                     used BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     expires_at TIMESTAMP NOT NULL
+                )
+            ''')
+            
+            # 创建 daily_secrets 表 - 每日密钥配置
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS daily_secrets (
+                    id SERIAL PRIMARY KEY,
+                    secret_date DATE NOT NULL,
+                    secret1 TEXT NOT NULL,
+                    secret2 TEXT NOT NULL,
+                    link1 TEXT,
+                    link2 TEXT,
+                    link1_updated BOOLEAN DEFAULT FALSE,
+                    link2_updated BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(secret_date)
+                )
+            ''')
+            
+            # 创建 user_secret_claims 表 - 用户密钥领取记录
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_secret_claims (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    claim_date DATE NOT NULL,
+                    secret_type INTEGER NOT NULL,
+                    points_earned INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, claim_date, secret_type)
+                )
+            ''')
+            
+            # 创建 user_redirect_clicks 表 - 用户中转页面点击记录
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_redirect_clicks (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    click_date DATE NOT NULL,
+                    click_count INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, click_date)
                 )
             ''')
             
@@ -269,6 +312,25 @@ class Database:
     def get_beijing_today(self):
         """获取北京时间今天的日期"""
         return datetime.now(BEIJING_TZ).date()
+    
+    def get_beijing_now(self):
+        """获取北京时间当前时间"""
+        return datetime.now(BEIJING_TZ)
+    
+    def get_secret_date(self):
+        """
+        获取密钥日期
+        北京时间10点前算前一天，10点后算当天
+        """
+        now = self.get_beijing_now()
+        reset_time = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        
+        if now < reset_time:
+            # 10点前，使用前一天的日期
+            return (now - timedelta(days=1)).date()
+        else:
+            # 10点后，使用当天日期
+            return now.date()
     
     def check_signed_today(self, user_id: int) -> bool:
         """检查用户今天是否已签到"""
@@ -542,3 +604,288 @@ class Database:
             conn.close()
         except Exception as e:
             logger.error(f"Error cleaning up tokens: {e}")
+    
+    # ==================== 每日密钥相关方法 ====================
+    
+    def generate_random_secret(self, length: int = 12) -> str:
+        """生成随机密钥（大小写字母+数字）"""
+        characters = string.ascii_letters + string.digits
+        return ''.join(random.choice(characters) for _ in range(length))
+    
+    def create_daily_secrets(self, secret_date=None) -> dict:
+        """创建每日密钥"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            if secret_date is None:
+                secret_date = self.get_beijing_today()
+            
+            # 检查是否已存在
+            cursor.execute(
+                'SELECT * FROM daily_secrets WHERE secret_date = %s',
+                (secret_date,)
+            )
+            existing = cursor.fetchone()
+            
+            if existing:
+                cursor.close()
+                conn.close()
+                return dict(existing)
+            
+            # 生成新密钥
+            secret1 = self.generate_random_secret(12)
+            secret2 = self.generate_random_secret(12)
+            
+            cursor.execute(
+                '''INSERT INTO daily_secrets (secret_date, secret1, secret2) 
+                   VALUES (%s, %s, %s) RETURNING *''',
+                (secret_date, secret1, secret2)
+            )
+            
+            result = cursor.fetchone()
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"Created daily secrets for {secret_date}: {secret1}, {secret2}")
+            return dict(result)
+        except Exception as e:
+            logger.error(f"Error creating daily secrets: {e}")
+            return None
+    
+    def get_daily_secrets(self, secret_date=None) -> dict:
+        """获取每日密钥"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            if secret_date is None:
+                secret_date = self.get_secret_date()
+            
+            cursor.execute(
+                'SELECT * FROM daily_secrets WHERE secret_date = %s',
+                (secret_date,)
+            )
+            result = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            return dict(result) if result else None
+        except Exception as e:
+            logger.error(f"Error getting daily secrets: {e}")
+            return None
+    
+    def update_secret_link(self, link_num: int, link_url: str) -> bool:
+        """更新密钥链接"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            secret_date = self.get_secret_date()
+            
+            # 确保当天密钥存在
+            secrets_data = self.get_daily_secrets(secret_date)
+            if not secrets_data:
+                self.create_daily_secrets(secret_date)
+            
+            if link_num == 1:
+                cursor.execute(
+                    '''UPDATE daily_secrets SET link1 = %s, link1_updated = TRUE 
+                       WHERE secret_date = %s''',
+                    (link_url, secret_date)
+                )
+            else:
+                cursor.execute(
+                    '''UPDATE daily_secrets SET link2 = %s, link2_updated = TRUE 
+                       WHERE secret_date = %s''',
+                    (link_url, secret_date)
+                )
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error updating secret link: {e}")
+            return False
+    
+    def are_links_ready(self) -> bool:
+        """检查密钥链接是否已设置"""
+        try:
+            secrets_data = self.get_daily_secrets()
+            if not secrets_data:
+                return False
+            return secrets_data.get('link1_updated', False) and secrets_data.get('link2_updated', False)
+        except Exception as e:
+            logger.error(f"Error checking links ready: {e}")
+            return False
+    
+    def verify_secret(self, secret_input: str) -> tuple:
+        """
+        验证密钥
+        返回: (是否有效, 密钥类型1或2, 积分)
+        """
+        try:
+            secrets_data = self.get_daily_secrets()
+            
+            if not secrets_data:
+                return (False, 0, 0)
+            
+            if secret_input == secrets_data['secret1']:
+                return (True, 1, 8)
+            elif secret_input == secrets_data['secret2']:
+                return (True, 2, 6)
+            else:
+                return (False, 0, 0)
+        except Exception as e:
+            logger.error(f"Error verifying secret: {e}")
+            return (False, 0, 0)
+    
+    def claim_secret(self, user_id: int, secret_type: int, points: int) -> tuple:
+        """
+        领取密钥奖励
+        返回: (是否成功, 消息)
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            claim_date = self.get_secret_date()
+            
+            # 检查是否已领取
+            cursor.execute(
+                '''SELECT id FROM user_secret_claims 
+                   WHERE user_id = %s AND claim_date = %s AND secret_type = %s''',
+                (user_id, claim_date, secret_type)
+            )
+            existing = cursor.fetchone()
+            
+            if existing:
+                cursor.close()
+                conn.close()
+                return (False, "您已经领取过该密钥奖励了，请勿重复领取！")
+            
+            # 记录领取
+            cursor.execute(
+                '''INSERT INTO user_secret_claims (user_id, claim_date, secret_type, points_earned) 
+                   VALUES (%s, %s, %s, %s)''',
+                (user_id, claim_date, secret_type, points)
+            )
+            
+            # 更新用户积分
+            cursor.execute(
+                '''UPDATE users SET points = points + %s, updated_at = CURRENT_TIMESTAMP 
+                   WHERE user_id = %s''',
+                (points, user_id)
+            )
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return (True, f"恭喜获得 {points} 积分！")
+        except Exception as e:
+            logger.error(f"Error claiming secret: {e}")
+            return (False, "领取失败，请稍后重试")
+    
+    def get_user_redirect_clicks_today(self, user_id: int) -> int:
+        """获取用户今天的中转页面点击次数"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            click_date = self.get_secret_date()
+            
+            cursor.execute(
+                'SELECT click_count FROM user_redirect_clicks WHERE user_id = %s AND click_date = %s',
+                (user_id, click_date)
+            )
+            result = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            return result['click_count'] if result else 0
+        except Exception as e:
+            logger.error(f"Error getting redirect clicks: {e}")
+            return 0
+    
+    def record_redirect_click(self, user_id: int) -> int:
+        """
+        记录中转页面点击
+        返回: 当前点击次数
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            click_date = self.get_secret_date()
+            
+            # 获取当前点击次数
+            cursor.execute(
+                'SELECT click_count FROM user_redirect_clicks WHERE user_id = %s AND click_date = %s',
+                (user_id, click_date)
+            )
+            result = cursor.fetchone()
+            
+            current_count = result['click_count'] if result else 0
+            
+            if current_count >= 2:
+                cursor.close()
+                conn.close()
+                return current_count
+            
+            new_count = current_count + 1
+            
+            if result:
+                cursor.execute(
+                    '''UPDATE user_redirect_clicks SET click_count = %s, updated_at = CURRENT_TIMESTAMP 
+                       WHERE user_id = %s AND click_date = %s''',
+                    (new_count, user_id, click_date)
+                )
+            else:
+                cursor.execute(
+                    '''INSERT INTO user_redirect_clicks (user_id, click_date, click_count) 
+                       VALUES (%s, %s, %s)''',
+                    (user_id, click_date, new_count)
+                )
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return new_count
+        except Exception as e:
+            logger.error(f"Error recording redirect click: {e}")
+            return 0
+    
+    def get_user_claimed_secrets_today(self, user_id: int) -> list:
+        """获取用户今天已领取的密钥类型"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            claim_date = self.get_secret_date()
+            
+            cursor.execute(
+                'SELECT secret_type FROM user_secret_claims WHERE user_id = %s AND claim_date = %s',
+                (user_id, claim_date)
+            )
+            results = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            return [r['secret_type'] for r in results]
+        except Exception as e:
+            logger.error(f"Error getting claimed secrets: {e}")
+            return []
+    
+    def is_after_10am_beijing(self) -> bool:
+        """检查当前是否在北京时间10点之后"""
+        now = self.get_beijing_now()
+        return now.hour >= 10
