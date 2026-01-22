@@ -32,12 +32,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# 处理 Railway 域名，防止用户填错导致 404
+# --- 核心修复：404错误根源 ---
+# 强制清洗域名，无论用户怎么填，都处理成纯域名格式
 raw_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
-# 自动去除 https://, http:// 和末尾的 /
 RAILWAY_DOMAIN = raw_domain.replace("https://", "").replace("http://", "").strip("/")
 
-# Moontag 直链配置 (用于隐形加载)
+# Moontag 直链配置
 DIRECT_LINK_1 = "https://otieu.com/4/10489994"
 DIRECT_LINK_2 = "https://otieu.com/4/10489998"
 
@@ -52,7 +52,7 @@ tz_bj = pytz.timezone('Asia/Shanghai')
 scheduler = AsyncIOScheduler(timezone=tz_bj)
 bot_app = None
 
-# 状态机状态 (管理员后台用)
+# 状态机状态
 WAITING_FOR_PHOTO = 1
 WAITING_LINK_1 = 2
 WAITING_LINK_2 = 3
@@ -67,7 +67,7 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # 1. 基础表 (v3)
+    # 1. 基础表
     cur.execute("""
         CREATE TABLE IF NOT EXISTS file_ids_v3 (
             id SERIAL PRIMARY KEY,
@@ -85,7 +85,7 @@ def init_db():
         );
     """)
     
-    # 2. 视频广告表 (v3)
+    # 2. 视频广告表
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_ads_v3 (
             user_id BIGINT PRIMARY KEY,
@@ -101,7 +101,7 @@ def init_db():
         );
     """)
     
-    # 3. 密钥系统中转表 (v3)
+    # 3. 密钥系统中转表
     cur.execute("""
         CREATE TABLE IF NOT EXISTS system_keys_v3 (
             id INTEGER PRIMARY KEY,
@@ -114,7 +114,7 @@ def init_db():
         );
     """)
     
-    # user_key_clicks (v3)
+    # user_key_clicks
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_key_clicks_v3 (
             user_id BIGINT PRIMARY KEY,
@@ -123,7 +123,7 @@ def init_db():
         );
     """)
     
-    # user_key_claims (v3)
+    # user_key_claims
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_key_claims_v3 (
             id SERIAL PRIMARY KEY,
@@ -143,14 +143,12 @@ def init_db():
 
 # --- 辅助逻辑 ---
 def get_session_date():
-    """获取当前业务日期 (以北京时间10:00AM为界)"""
     now = datetime.now(tz_bj)
     if now.hour < 10:
         return (now - timedelta(days=1)).date()
     return now.date()
 
 def generate_random_key():
-    """生成10位随机密钥"""
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(10))
 
@@ -404,9 +402,8 @@ async def activity_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = get_ad_status(user.id)
     token = create_ad_token(user.id)
     
-    # 构造链接时，使用处理过的 RAILWAY_DOMAIN
-    protocol = "https" # Railway 默认开启 HTTPS
-    watch_url = f"{protocol}://{RAILWAY_DOMAIN}/watch_ad/{token}"
+    # 强制使用 https 并使用清洗后的域名
+    watch_url = f"https://{RAILWAY_DOMAIN}/watch_ad/{token}"
     
     text = (
         "🎉 **开业活动中心**\n\n"
@@ -441,8 +438,7 @@ async def quark_key_btn_handler(update: Update, context: ContextTypes.DEFAULT_TY
     target_type = 1 if clicks == 0 else 2
     increment_user_click(user.id)
     
-    protocol = "https"
-    jump_url = f"{protocol}://{RAILWAY_DOMAIN}/jump?type={target_type}"
+    jump_url = f"https://{RAILWAY_DOMAIN}/jump?type={target_type}"
     
     name_ref = "密钥1" if target_type == 1 else "密钥2"
     msg = (
@@ -631,24 +627,75 @@ async def health_check():
 
 @app.get("/watch_ad/{token}", response_class=HTMLResponse)
 async def watch_ad_page(token: str):
+    # 这里是按要求删除复杂 JS 回调后的 HTML
+    # 只包含 SDK 引用和简单的按钮触发
+    # 增加了一个延迟显示的 "领取积分" 按钮，因为删除了 Promise，无法自动判断广告是否看完
     html_content = f"""
-    <!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>视频任务</title>
-    <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
-    <style>body{{font-family:sans-serif;text-align:center;padding:20px;background:#f4f4f9}} .container{{max-width:500px;margin:0 auto;background:white;padding:20px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.1)}} .btn{{padding:12px 24px;background:#0088cc;color:white;border:none;border-radius:5px;font-size:16px;cursor:pointer}} .btn:disabled{{background:#ccc}} #s{{margin-top:15px;font-weight:bold;color:#555}}</style>
-    </head><body><div class="container"><h2>📺 观看广告获取积分</h2><p>点击按钮观看完整广告即可获得奖励。</p><button id="adBtn" class="btn" onclick="show()">开始观看</button><div id="s"></div></div>
-    <script>
-    const s = document.getElementById('s'); const btn = document.getElementById('adBtn'); const token = "{token}";
-    function show(){{
-        btn.disabled = true; s.innerText = "⏳ 正在加载...";
-        if (typeof show_10489957 === 'function') {{
-            show_10489957('pop').then(() => {{ s.innerText = "✅ 验证中..."; verify(); }}).catch(e => {{ s.innerText = "❌ 广告加载失败"; btn.disabled = false; }});
-        }} else {{ s.innerText = "❌ 请关闭拦截插件"; btn.disabled = false; }}
-    }}
-    function verify(){{
-        fetch('/api/verify_ad', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{token:token}})}})
-        .then(r=>r.json()).then(d=>{{ if(d.success){{ s.innerHTML="🎉 成功! +"+d.points+"分"; btn.style.display='none'; }}else{{ s.innerText="❌ "+d.message; btn.disabled=false; }} }});
-    }}
-    </script></body></html>
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>视频任务</title>
+        <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
+        <style>
+            body {{ font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; }}
+            .container {{ max-width: 500px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+            .btn {{ padding: 12px 24px; background: #0088cc; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; }}
+            #verifyBtn {{ background: #28a745; display: none; margin-top: 15px; }}
+            #s {{ margin-top: 15px; font-weight: bold; color: #555; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h2>📺 观看广告获取积分</h2>
+            <p>1. 点击“开始观看” (请允许弹出窗口)</p>
+            <p>2. 等待 3 秒后点击“领取积分”</p>
+            
+            <button id="adBtn" class="btn" onclick="startAd()">开始观看</button>
+            <button id="verifyBtn" class="btn" onclick="verify()">领取积分</button>
+            
+            <div id="s"></div>
+        </div>
+
+        <script>
+        const token = "{token}";
+        const s = document.getElementById('s');
+        
+        function startAd() {{
+            // 尝试调用 SDK，不处理回调
+            if (typeof show_10489957 === 'function') {{
+                show_10489957('pop'); 
+            }}
+            // 无论广告是否成功弹出，3秒后允许领取
+            // (因为按要求删除了复杂的错误捕捉逻辑)
+            s.innerText = "⏳ 请稍候...";
+            setTimeout(() => {{
+                document.getElementById('verifyBtn').style.display = 'inline-block';
+                s.innerText = "✅ 请点击下方按钮领取";
+            }}, 3000);
+        }}
+
+        function verify() {{
+            fetch('/api/verify_ad', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ token: token }})
+            }})
+            .then(r => r.json())
+            .then(d => {{
+                if(d.success) {{
+                    s.innerHTML = "🎉 成功! +"+d.points+"分";
+                    document.getElementById('verifyBtn').style.display = 'none';
+                    document.getElementById('adBtn').style.display = 'none';
+                }} else {{
+                    s.innerText = "❌ " + d.message;
+                }}
+            }});
+        }}
+        </script>
+    </body>
+    </html>
     """
     return HTMLResponse(content=html_content)
 
@@ -663,11 +710,9 @@ async def verify_ad_api(payload: dict):
 async def jump_page(request: Request, type: int = 1):
     info = get_system_keys_info()
     if not info: return HTMLResponse("<h1>🚫 系统维护中</h1>")
-    
     target_link = info[1] if type == 1 else info[3]
     if not target_link: return HTMLResponse("<h1>⏳ 等待管理员更新...</h1>")
     
-    # 隐形加载逻辑
     moontag_ad = DIRECT_LINK_1 if type == 1 else DIRECT_LINK_2
     
     html = f"""
@@ -675,7 +720,6 @@ async def jump_page(request: Request, type: int = 1):
     <style>body{{font-family:Arial,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;background:#f0f2f5;margin:0}} .card{{background:white;padding:30px;border-radius:12px;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,0.1)}} .loader{{border:4px solid #f3f3f3;border-top:4px solid #3498db;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite;margin:20px auto}} @keyframes spin{{0%{{transform:rotate(0deg)}}100%{{transform:rotate(360deg)}}}}</style>
     </head><body>
         <div class="card"><h2>🚀 正在为您获取密钥...</h2><div class="loader"></div><p id="msg">3 秒后跳转...</p></div>
-        <!-- 隐形加载 Moontag 直链 -->
         <iframe src="{moontag_ad}" style="width:1px;height:1px;opacity:0;position:absolute;border:none;"></iframe>
         <script>
             let count = 3; const msg = document.getElementById('msg'); const target = "{target_link}";
