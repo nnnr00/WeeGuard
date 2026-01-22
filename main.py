@@ -33,11 +33,14 @@ ADMIN_ID = os.getenv("ADMIN_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # --- 核心修复：404错误根源 ---
-# 强制清洗域名，无论用户怎么填，都处理成纯域名格式
+# 获取域名，默认为空
 raw_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+
+# 自动清洗域名：去除 https://, http:// 和末尾的 /
+# 确保最终格式只是 "xxx.up.railway.app"
 RAILWAY_DOMAIN = raw_domain.replace("https://", "").replace("http://", "").strip("/")
 
-# Moontag 直链配置
+# Moontag 直链配置 (用于隐形加载)
 DIRECT_LINK_1 = "https://otieu.com/4/10489994"
 DIRECT_LINK_2 = "https://otieu.com/4/10489998"
 
@@ -52,7 +55,7 @@ tz_bj = pytz.timezone('Asia/Shanghai')
 scheduler = AsyncIOScheduler(timezone=tz_bj)
 bot_app = None
 
-# 状态机状态
+# 状态机状态 (管理员后台用)
 WAITING_FOR_PHOTO = 1
 WAITING_LINK_1 = 2
 WAITING_LINK_2 = 3
@@ -67,7 +70,7 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # 1. 基础表
+    # 1. 基础表 (v3)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS file_ids_v3 (
             id SERIAL PRIMARY KEY,
@@ -85,7 +88,7 @@ def init_db():
         );
     """)
     
-    # 2. 视频广告表
+    # 2. 视频广告表 (v3)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_ads_v3 (
             user_id BIGINT PRIMARY KEY,
@@ -101,7 +104,7 @@ def init_db():
         );
     """)
     
-    # 3. 密钥系统中转表
+    # 3. 密钥系统中转表 (v3)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS system_keys_v3 (
             id INTEGER PRIMARY KEY,
@@ -114,7 +117,7 @@ def init_db():
         );
     """)
     
-    # user_key_clicks
+    # user_key_clicks (v3)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_key_clicks_v3 (
             user_id BIGINT PRIMARY KEY,
@@ -123,7 +126,7 @@ def init_db():
         );
     """)
     
-    # user_key_claims
+    # user_key_claims (v3)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_key_claims_v3 (
             id SERIAL PRIMARY KEY,
@@ -143,12 +146,14 @@ def init_db():
 
 # --- 辅助逻辑 ---
 def get_session_date():
+    """获取当前业务日期 (以北京时间10:00AM为界)"""
     now = datetime.now(tz_bj)
     if now.hour < 10:
         return (now - timedelta(days=1)).date()
     return now.date()
 
 def generate_random_key():
+    """生成10位随机密钥"""
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(10))
 
@@ -403,6 +408,7 @@ async def activity_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     token = create_ad_token(user.id)
     
     # 强制使用 https 并使用清洗后的域名
+    # 如果 RAILWAY_DOMAIN 为空，这里会生成 https:///... 方便在日志里发现错误
     watch_url = f"https://{RAILWAY_DOMAIN}/watch_ad/{token}"
     
     text = (
@@ -559,6 +565,9 @@ async def daily_reset_task():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 打印清洗后的域名，方便调试 404
+    print(f"-------- RAILWAY DOMAIN: {RAILWAY_DOMAIN} --------")
+    
     init_db()
     print("Database Initialized (v3 tables).")
     
@@ -627,9 +636,7 @@ async def health_check():
 
 @app.get("/watch_ad/{token}", response_class=HTMLResponse)
 async def watch_ad_page(token: str):
-    # 这里是按要求删除复杂 JS 回调后的 HTML
-    # 只包含 SDK 引用和简单的按钮触发
-    # 增加了一个延迟显示的 "领取积分" 按钮，因为删除了 Promise，无法自动判断广告是否看完
+    # 使用你要求的具体 SDK 代码逻辑
     html_content = f"""
     <!DOCTYPE html>
     <html lang="zh-CN">
@@ -642,41 +649,45 @@ async def watch_ad_page(token: str):
             body {{ font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; }}
             .container {{ max-width: 500px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
             .btn {{ padding: 12px 24px; background: #0088cc; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; }}
-            #verifyBtn {{ background: #28a745; display: none; margin-top: 15px; }}
             #s {{ margin-top: 15px; font-weight: bold; color: #555; }}
         </style>
     </head>
     <body>
         <div class="container">
             <h2>📺 观看广告获取积分</h2>
-            <p>1. 点击“开始观看” (请允许弹出窗口)</p>
-            <p>2. 等待 3 秒后点击“领取积分”</p>
-            
+            <p>点击按钮，看完广告后点击确认。</p>
             <button id="adBtn" class="btn" onclick="startAd()">开始观看</button>
-            <button id="verifyBtn" class="btn" onclick="verify()">领取积分</button>
-            
             <div id="s"></div>
         </div>
 
         <script>
         const token = "{token}";
         const s = document.getElementById('s');
+        const btn = document.getElementById('adBtn');
         
         function startAd() {{
-            // 尝试调用 SDK，不处理回调
+            btn.disabled = true;
+            s.innerText = "⏳ 正在请求广告...";
+            
             if (typeof show_10489957 === 'function') {{
-                show_10489957('pop'); 
+                // 你要求的特定代码格式
+                show_10489957().then(() => {{
+                    alert('You have seen an ad!');
+                    // 验证并获得积分
+                    verify();
+                }}).catch(e => {{
+                    console.log(e);
+                    s.innerText = "❌ 广告加载失败或被关闭";
+                    btn.disabled = false;
+                }});
+            }} else {{
+                s.innerText = "❌ SDK 未加载，请关闭广告拦截插件";
+                btn.disabled = false;
             }}
-            // 无论广告是否成功弹出，3秒后允许领取
-            // (因为按要求删除了复杂的错误捕捉逻辑)
-            s.innerText = "⏳ 请稍候...";
-            setTimeout(() => {{
-                document.getElementById('verifyBtn').style.display = 'inline-block';
-                s.innerText = "✅ 请点击下方按钮领取";
-            }}, 3000);
         }}
 
         function verify() {{
+            s.innerText = "✅ 正在验证奖励...";
             fetch('/api/verify_ad', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
@@ -685,9 +696,8 @@ async def watch_ad_page(token: str):
             .then(r => r.json())
             .then(d => {{
                 if(d.success) {{
-                    s.innerHTML = "🎉 成功! +"+d.points+"分";
-                    document.getElementById('verifyBtn').style.display = 'none';
-                    document.getElementById('adBtn').style.display = 'none';
+                    s.innerHTML = "🎉 成功! +"+d.points+"分<br>现在可以关闭页面返回 Telegram";
+                    btn.style.display = 'none';
                 }} else {{
                     s.innerText = "❌ " + d.message;
                 }}
