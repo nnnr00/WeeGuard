@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Telegram Imports
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -33,14 +33,11 @@ ADMIN_ID = os.getenv("ADMIN_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # --- 核心修复：404错误根源 ---
-# 获取域名，默认为空
 raw_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
-
-# 自动清洗域名：去除 https://, http:// 和末尾的 /
-# 确保最终格式只是 "xxx.up.railway.app"
+# 自动清洗域名
 RAILWAY_DOMAIN = raw_domain.replace("https://", "").replace("http://", "").strip("/")
 
-# Moontag 直链配置 (用于隐形加载)
+# Moontag 直链配置
 DIRECT_LINK_1 = "https://otieu.com/4/10489994"
 DIRECT_LINK_2 = "https://otieu.com/4/10489998"
 
@@ -55,7 +52,7 @@ tz_bj = pytz.timezone('Asia/Shanghai')
 scheduler = AsyncIOScheduler(timezone=tz_bj)
 bot_app = None
 
-# 状态机状态 (管理员后台用)
+# 状态机状态
 WAITING_FOR_PHOTO = 1
 WAITING_LINK_1 = 2
 WAITING_LINK_2 = 3
@@ -70,7 +67,7 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # 1. 基础表 (v3)
+    # 1. 基础表
     cur.execute("""
         CREATE TABLE IF NOT EXISTS file_ids_v3 (
             id SERIAL PRIMARY KEY,
@@ -88,7 +85,7 @@ def init_db():
         );
     """)
     
-    # 2. 视频广告表 (v3)
+    # 2. 视频广告表
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_ads_v3 (
             user_id BIGINT PRIMARY KEY,
@@ -104,7 +101,7 @@ def init_db():
         );
     """)
     
-    # 3. 密钥系统中转表 (v3)
+    # 3. 密钥系统中转表
     cur.execute("""
         CREATE TABLE IF NOT EXISTS system_keys_v3 (
             id INTEGER PRIMARY KEY,
@@ -117,7 +114,7 @@ def init_db():
         );
     """)
     
-    # user_key_clicks (v3)
+    # user_key_clicks
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_key_clicks_v3 (
             user_id BIGINT PRIMARY KEY,
@@ -126,7 +123,7 @@ def init_db():
         );
     """)
     
-    # user_key_claims (v3)
+    # user_key_claims
     cur.execute("""
         CREATE TABLE IF NOT EXISTS user_key_claims_v3 (
             id SERIAL PRIMARY KEY,
@@ -146,14 +143,12 @@ def init_db():
 
 # --- 辅助逻辑 ---
 def get_session_date():
-    """获取当前业务日期 (以北京时间10:00AM为界)"""
     now = datetime.now(tz_bj)
     if now.hour < 10:
         return (now - timedelta(days=1)).date()
     return now.date()
 
 def generate_random_key():
-    """生成10位随机密钥"""
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(10))
 
@@ -408,7 +403,6 @@ async def activity_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     token = create_ad_token(user.id)
     
     # 强制使用 https 并使用清洗后的域名
-    # 如果 RAILWAY_DOMAIN 为空，这里会生成 https:///... 方便在日志里发现错误
     watch_url = f"https://{RAILWAY_DOMAIN}/watch_ad/{token}"
     
     text = (
@@ -418,6 +412,7 @@ async def activity_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "点击按钮 -> 跳转中转站(3秒) -> 存网盘 -> 复制文件名(密钥) -> 发给机器人。\n"
         "⚠️ **注意：** 每天北京时间 10:00 重置。"
     )
+    # 使用 url 按钮直接打开网页
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📺 看视频 (积分)", url=watch_url)],
         [InlineKeyboardButton("🔑 获取今日密钥", callback_data="get_quark_key")],
@@ -565,9 +560,7 @@ async def daily_reset_task():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 打印清洗后的域名，方便调试 404
     print(f"-------- RAILWAY DOMAIN: {RAILWAY_DOMAIN} --------")
-    
     init_db()
     print("Database Initialized (v3 tables).")
     
@@ -636,7 +629,6 @@ async def health_check():
 
 @app.get("/watch_ad/{token}", response_class=HTMLResponse)
 async def watch_ad_page(token: str):
-    # 使用你要求的具体 SDK 代码逻辑
     html_content = f"""
     <!DOCTYPE html>
     <html lang="zh-CN">
@@ -644,6 +636,7 @@ async def watch_ad_page(token: str):
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>视频任务</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
         <style>
             body {{ font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; }}
@@ -655,7 +648,7 @@ async def watch_ad_page(token: str):
     <body>
         <div class="container">
             <h2>📺 观看广告获取积分</h2>
-            <p>点击按钮，看完广告后点击确认。</p>
+            <p>点击下方按钮开始观看</p>
             <button id="adBtn" class="btn" onclick="startAd()">开始观看</button>
             <div id="s"></div>
         </div>
@@ -664,30 +657,33 @@ async def watch_ad_page(token: str):
         const token = "{token}";
         const s = document.getElementById('s');
         const btn = document.getElementById('adBtn');
+
+        // 初始化 Telegram WebApp
+        if (window.Telegram && window.Telegram.WebApp) {{
+            window.Telegram.WebApp.ready();
+        }}
         
         function startAd() {{
             btn.disabled = true;
             s.innerText = "⏳ 正在请求广告...";
             
             if (typeof show_10489957 === 'function') {{
-                // 你要求的特定代码格式
                 show_10489957().then(() => {{
-                    alert('You have seen an ad!');
-                    // 验证并获得积分
-                    verify();
+                    // 广告结束，开始验证
+                    s.innerText = "广告观看完成，正在验证...";
+                    verifyAndClose();
                 }}).catch(e => {{
                     console.log(e);
-                    s.innerText = "❌ 广告加载失败或被关闭";
+                    s.innerText = "❌ 广告加载失败 (请关闭拦截插件)";
                     btn.disabled = false;
                 }});
             }} else {{
-                s.innerText = "❌ SDK 未加载，请关闭广告拦截插件";
+                s.innerText = "❌ SDK 未加载，请检查网络";
                 btn.disabled = false;
             }}
         }}
 
-        function verify() {{
-            s.innerText = "✅ 正在验证奖励...";
+        function verifyAndClose() {{
             fetch('/api/verify_ad', {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
@@ -696,8 +692,16 @@ async def watch_ad_page(token: str):
             .then(r => r.json())
             .then(d => {{
                 if(d.success) {{
-                    s.innerHTML = "🎉 成功! +"+d.points+"分<br>现在可以关闭页面返回 Telegram";
+                    s.innerHTML = "🎉 <b>验证成功! +"+d.points+"分</b><br>即将自动关闭...";
                     btn.style.display = 'none';
+                    // 2秒后关闭 WebApp
+                    setTimeout(() => {{
+                        if (window.Telegram && window.Telegram.WebApp) {{
+                            window.Telegram.WebApp.close();
+                        }} else {{
+                            window.close();
+                        }}
+                    }}, 2000);
                 }} else {{
                     s.innerText = "❌ " + d.message;
                 }}
