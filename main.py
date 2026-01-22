@@ -34,7 +34,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # 请确保在 Railway 环境变量设置了 RAILWAY_PUBLIC_DOMAIN (不带 https://)
 RAILWAY_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", "your-app.up.railway.app")
 
-# 直链 (硬编码 - 这里的链接作为备用或初始值，实际逻辑走数据库)
+# 直链 (硬编码 - 备用)
 DIRECT_LINK_1 = "https://otieu.com/4/10489994"
 DIRECT_LINK_2 = "https://otieu.com/4/10489998"
 
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # --- 全局变量 ---
 tz_bj = pytz.timezone('Asia/Shanghai')
 scheduler = AsyncIOScheduler(timezone=tz_bj)
-bot_app = None  # 全局引用，用于定时任务发送消息
+bot_app = None  # 全局引用
 
 # 状态机状态
 WAITING_FOR_PHOTO = 1
@@ -60,13 +60,17 @@ def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    """初始化所有数据表"""
+    """
+    初始化数据库。
+    注意：为了修复 'UndefinedColumn' 错误，我们将表名升级为 v2。
+    这确保了全新的表结构，同时保留了你数据库中旧表的数据不被删除。
+    """
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # 1. 基础表 (FileID, Users)
+    # 1. 基础表 (v2)
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS file_ids (
+        CREATE TABLE IF NOT EXISTS file_ids_v2 (
             id SERIAL PRIMARY KEY,
             file_id TEXT NOT NULL,
             file_unique_id TEXT,
@@ -74,7 +78,7 @@ def init_db():
         );
     """)
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE IF NOT EXISTS users_v2 (
             user_id BIGINT PRIMARY KEY,
             points INTEGER DEFAULT 0,
             last_checkin_date DATE,
@@ -82,25 +86,25 @@ def init_db():
         );
     """)
     
-    # 2. 视频广告表
+    # 2. 视频广告表 (v2)
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS user_ads (
+        CREATE TABLE IF NOT EXISTS user_ads_v2 (
             user_id BIGINT PRIMARY KEY,
             last_watch_date DATE,
             daily_watch_count INTEGER DEFAULT 0
         );
     """)
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS ad_tokens (
+        CREATE TABLE IF NOT EXISTS ad_tokens_v2 (
             token TEXT PRIMARY KEY,
             user_id BIGINT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
     
-    # 3. 密钥系统中转表
+    # 3. 密钥系统中转表 (v2)
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS system_keys (
+        CREATE TABLE IF NOT EXISTS system_keys_v2 (
             id INTEGER PRIMARY KEY,
             key_1 TEXT,
             link_1 TEXT,
@@ -111,18 +115,18 @@ def init_db():
         );
     """)
     
-    # user_key_clicks: 记录用户点击中转按钮的次数 (0/2)
+    # user_key_clicks (v2)
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS user_key_clicks (
+        CREATE TABLE IF NOT EXISTS user_key_clicks_v2 (
             user_id BIGINT PRIMARY KEY,
             click_count INTEGER DEFAULT 0,
             session_date DATE
         );
     """)
     
-    # user_key_claims: 记录用户是否已领取了某个密钥
+    # user_key_claims (v2)
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS user_key_claims (
+        CREATE TABLE IF NOT EXISTS user_key_claims_v2 (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
             key_val TEXT,
@@ -132,7 +136,7 @@ def init_db():
     """)
     
     # 初始化 system_keys 行
-    cur.execute("INSERT INTO system_keys (id, session_date) VALUES (1, %s) ON CONFLICT (id) DO NOTHING", (date(2000,1,1),))
+    cur.execute("INSERT INTO system_keys_v2 (id, session_date) VALUES (1, %s) ON CONFLICT (id) DO NOTHING", (date(2000,1,1),))
     
     conn.commit()
     cur.close()
@@ -151,13 +155,14 @@ def generate_random_key():
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(10))
 
-# --- 数据库函数集合 ---
+# --- 数据库函数集合 (全部更新为 v2 表名) ---
 
 def ensure_user_exists(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("INSERT INTO users (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (user_id,))
-    cur.execute("INSERT INTO user_ads (user_id, daily_watch_count) VALUES (%s, 0) ON CONFLICT (user_id) DO NOTHING", (user_id,))
+    # 修复：使用 users_v2 和 user_ads_v2
+    cur.execute("INSERT INTO users_v2 (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (user_id,))
+    cur.execute("INSERT INTO user_ads_v2 (user_id, daily_watch_count) VALUES (%s, 0) ON CONFLICT (user_id) DO NOTHING", (user_id,))
     conn.commit()
     cur.close()
     conn.close()
@@ -165,7 +170,7 @@ def ensure_user_exists(user_id):
 def save_file_id(file_id, file_unique_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("INSERT INTO file_ids (file_id, file_unique_id) VALUES (%s, %s)", (file_id, file_unique_id))
+    cur.execute("INSERT INTO file_ids_v2 (file_id, file_unique_id) VALUES (%s, %s)", (file_id, file_unique_id))
     conn.commit()
     cur.close()
     conn.close()
@@ -173,7 +178,7 @@ def save_file_id(file_id, file_unique_id):
 def get_all_files():
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, file_id FROM file_ids ORDER BY id DESC LIMIT 10")
+    cur.execute("SELECT id, file_id FROM file_ids_v2 ORDER BY id DESC LIMIT 10")
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -182,7 +187,7 @@ def get_all_files():
 def delete_file_by_id(db_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("DELETE FROM file_ids WHERE id = %s", (db_id,))
+    cur.execute("DELETE FROM file_ids_v2 WHERE id = %s", (db_id,))
     conn.commit()
     cur.close()
     conn.close()
@@ -191,7 +196,7 @@ def get_user_data(user_id):
     ensure_user_exists(user_id)
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT points, last_checkin_date, checkin_count FROM users WHERE user_id = %s", (user_id,))
+    cur.execute("SELECT points, last_checkin_date, checkin_count FROM users_v2 WHERE user_id = %s", (user_id,))
     row = cur.fetchone()
     cur.close()
     conn.close()
@@ -202,13 +207,13 @@ def process_checkin(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
     today = datetime.now(tz_bj).date()
-    cur.execute("SELECT last_checkin_date, checkin_count FROM users WHERE user_id = %s", (user_id,))
+    cur.execute("SELECT last_checkin_date, checkin_count FROM users_v2 WHERE user_id = %s", (user_id,))
     row = cur.fetchone()
     if row[0] == today:
         cur.close(); conn.close(); return {"status": "already_checked"}
     
     added = 10 if row[1] == 0 else random.randint(3, 8)
-    cur.execute("UPDATE users SET points = points + %s, last_checkin_date = %s, checkin_count = checkin_count + 1 WHERE user_id = %s RETURNING points", (added, today, user_id))
+    cur.execute("UPDATE users_v2 SET points = points + %s, last_checkin_date = %s, checkin_count = checkin_count + 1 WHERE user_id = %s RETURNING points", (added, today, user_id))
     total = cur.fetchone()[0]
     conn.commit(); cur.close(); conn.close()
     return {"status": "success", "added": added, "total": total}
@@ -217,14 +222,14 @@ def create_ad_token(user_id):
     token = str(uuid.uuid4())
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("INSERT INTO ad_tokens (token, user_id) VALUES (%s, %s)", (token, user_id))
+    cur.execute("INSERT INTO ad_tokens_v2 (token, user_id) VALUES (%s, %s)", (token, user_id))
     conn.commit(); cur.close(); conn.close()
     return token
 
 def verify_token(token):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("DELETE FROM ad_tokens WHERE token = %s RETURNING user_id", (token,))
+    cur.execute("DELETE FROM ad_tokens_v2 WHERE token = %s RETURNING user_id", (token,))
     row = cur.fetchone()
     conn.commit(); cur.close(); conn.close()
     return row[0] if row else None
@@ -234,7 +239,7 @@ def process_ad_reward(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
     today = datetime.now(tz_bj).date()
-    cur.execute("SELECT last_watch_date, daily_watch_count FROM user_ads WHERE user_id = %s FOR UPDATE", (user_id,))
+    cur.execute("SELECT last_watch_date, daily_watch_count FROM user_ads_v2 WHERE user_id = %s FOR UPDATE", (user_id,))
     row = cur.fetchone()
     last_date, count = row[0], row[1]
     if last_date != today: count = 0
@@ -243,8 +248,8 @@ def process_ad_reward(user_id):
         conn.rollback(); cur.close(); conn.close(); return {"status": "limit_reached"}
     
     points = 10 if count == 0 else (6 if count == 1 else random.randint(3, 10))
-    cur.execute("UPDATE users SET points = points + %s WHERE user_id = %s", (points, user_id))
-    cur.execute("UPDATE user_ads SET last_watch_date = %s, daily_watch_count = %s + 1 WHERE user_id = %s", (today, count, user_id))
+    cur.execute("UPDATE users_v2 SET points = points + %s WHERE user_id = %s", (points, user_id))
+    cur.execute("UPDATE user_ads_v2 SET last_watch_date = %s, daily_watch_count = %s + 1 WHERE user_id = %s", (today, count, user_id))
     conn.commit(); cur.close(); conn.close()
     return {"status": "success", "added": points}
 
@@ -252,7 +257,7 @@ def update_system_keys(key1, key2, session_date):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        UPDATE system_keys 
+        UPDATE system_keys_v2 
         SET key_1 = %s, key_2 = %s, link_1 = NULL, link_2 = NULL, session_date = %s
         WHERE id = 1
     """, (key1, key2, session_date))
@@ -263,7 +268,7 @@ def update_system_keys(key1, key2, session_date):
 def update_key_links(link1, link2):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("UPDATE system_keys SET link_1 = %s, link_2 = %s WHERE id = 1", (link1, link2))
+    cur.execute("UPDATE system_keys_v2 SET link_1 = %s, link_2 = %s WHERE id = 1", (link1, link2))
     conn.commit()
     cur.close()
     conn.close()
@@ -271,7 +276,7 @@ def update_key_links(link1, link2):
 def get_system_keys_info():
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT key_1, link_1, key_2, link_2, session_date FROM system_keys WHERE id = 1")
+    cur.execute("SELECT key_1, link_1, key_2, link_2, session_date FROM system_keys_v2 WHERE id = 1")
     row = cur.fetchone()
     cur.close()
     conn.close()
@@ -281,12 +286,12 @@ def get_user_click_status(user_id):
     session_date = get_session_date()
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT click_count, session_date FROM user_key_clicks WHERE user_id = %s", (user_id,))
+    cur.execute("SELECT click_count, session_date FROM user_key_clicks_v2 WHERE user_id = %s", (user_id,))
     row = cur.fetchone()
     
     if not row or row[1] != session_date:
         cur.execute("""
-            INSERT INTO user_key_clicks (user_id, click_count, session_date) 
+            INSERT INTO user_key_clicks_v2 (user_id, click_count, session_date) 
             VALUES (%s, 0, %s) 
             ON CONFLICT (user_id) DO UPDATE SET click_count = 0, session_date = %s
         """, (user_id, session_date, session_date))
@@ -302,7 +307,7 @@ def increment_user_click(user_id):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        UPDATE user_key_clicks SET click_count = click_count + 1 
+        UPDATE user_key_clicks_v2 SET click_count = click_count + 1 
         WHERE user_id = %s AND session_date = %s
     """, (user_id, session_date))
     conn.commit()
@@ -328,13 +333,13 @@ def claim_key_points(user_id, text_input):
     conn = get_db_connection()
     cur = conn.cursor()
     
-    cur.execute("SELECT id FROM user_key_claims WHERE user_id = %s AND key_val = %s", (user_id, text_input.strip()))
+    cur.execute("SELECT id FROM user_key_claims_v2 WHERE user_id = %s AND key_val = %s", (user_id, text_input.strip()))
     if cur.fetchone():
         cur.close(); conn.close()
         return {"status": "already_claimed"}
     
-    cur.execute("INSERT INTO user_key_claims (user_id, key_val) VALUES (%s, %s)", (user_id, text_input.strip()))
-    cur.execute("UPDATE users SET points = points + %s WHERE user_id = %s RETURNING points", (matched_points, user_id))
+    cur.execute("INSERT INTO user_key_claims_v2 (user_id, key_val) VALUES (%s, %s)", (user_id, text_input.strip()))
+    cur.execute("UPDATE users_v2 SET points = points + %s WHERE user_id = %s RETURNING points", (matched_points, user_id))
     new_total = cur.fetchone()[0]
     
     conn.commit()
@@ -347,6 +352,7 @@ def claim_key_points(user_id, text_input):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    # 确保用户入库，使用新表
     ensure_user_exists(user.id)
     text = f"👋 你好，{user.first_name}！\n欢迎使用功能："
     kb = InlineKeyboardMarkup([
@@ -412,7 +418,10 @@ async def quark_key_btn_handler(update: Update, context: ContextTypes.DEFAULT_TY
     
     info = get_system_keys_info()
     if not info or not info[1]:
-        await query.message.reply_text("⏳ **密钥等待管理员更新中...**\n请10:00AM后再试。")
+        # 如果是新部署，可能需要手动触发一次密钥生成，或者等第二天
+        # 为了方便首次使用，这里可以加一个检查：如果 key 为 null，尝试生成（可选，但按逻辑是等定时任务）
+        # 这里仅提示
+        await query.message.reply_text("⏳ **密钥等待管理员更新中...**\n如果是首次部署，请管理员等待10:00AM或查看后台。")
         return
 
     clicks = get_user_click_status(user.id)
@@ -443,6 +452,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"✅ **成功！**\n积分：+{result['points']}\n总分：`{result['total']}`", parse_mode='Markdown')
     elif result["status"] == "already_claimed":
         await update.message.reply_text("⚠️ 密钥已使用。")
+    # 不回 else，避免刷屏
 
 # --- Admin ---
 async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -502,8 +512,11 @@ async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_ID): return
     info = get_system_keys_info()
     if not info:
-        await update.message.reply_text("⚠️ DB未初始化")
-        return ConversationHandler.END
+        # 如果是首次运行，数据库可能刚初始化，需要手动触发一次初始化数据填充
+        # 这里为了防止空指针，做个简单处理
+        update_system_keys(generate_random_key(), generate_random_key(), date.today())
+        info = get_system_keys_info()
+        
     k1, l1, k2, l2, date_s = info
     msg = (
         f"👮‍♂️ **密钥管理** ({date_s})\n"
@@ -553,7 +566,7 @@ async def daily_reset_task():
 async def lifespan(app: FastAPI):
     # 1. 初始化数据库
     init_db()
-    print("Database Initialized.")
+    print("Database Initialized (v2 tables).")
     
     # 2. 启动定时任务
     scheduler.add_job(daily_reset_task, 'cron', hour=10, minute=0, timezone=tz_bj)
@@ -615,7 +628,7 @@ async def lifespan(app: FastAPI):
     
     yield # 应用运行中...
 
-    # Shutdown logic (如果需要)
+    # Shutdown logic
     if bot_app:
         await bot_app.stop()
         await bot_app.shutdown()
