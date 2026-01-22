@@ -37,20 +37,14 @@ from telegram.ext import (
 from telegram.error import BadRequest
 
 # ==============================================================================
-# 🛠️ 【配置区域】 请在此处填入您上传图片后获得的 File ID
+# 🛠️ 【配置区域】 File ID
 # ==============================================================================
 CONFIG = {
-    # 首页 VIP 说明图
     "START_VIP_INFO": "AgACAgEAAxkBAAIC...", 
-    # 首页 查单教程图
     "START_TUTORIAL": "AgACAgEAAxkBAAIC...",
-    # 微信支付二维码
     "WX_PAY_QR": "AgACAgEAAxkBAAIC...",
-    # 微信查单教程
     "WX_ORDER_TUTORIAL": "AgACAgEAAxkBAAIC...",
-    # 支付宝支付二维码
     "ALI_PAY_QR": "AgACAgEAAxkBAAIC...",
-    # 支付宝查单教程
     "ALI_ORDER_TUTORIAL": "AgACAgEAAxkBAAIC...",
 }
 
@@ -58,27 +52,22 @@ CONFIG = {
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 DATABASE_URL = os.getenv("DATABASE_URL")
-
-# 域名清洗
 raw_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
 RAILWAY_DOMAIN = raw_domain.replace("https://", "").replace("http://", "").strip("/")
 
-# Moontag 直链 (隐形加载用)
+# Moontag 直链
 DIRECT_LINK_1 = "https://otieu.com/4/10489994"
 DIRECT_LINK_2 = "https://otieu.com/4/10489998"
 
 # 日志
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
-    level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 tz_bj = pytz.timezone('Asia/Shanghai')
 scheduler = AsyncIOScheduler(timezone=tz_bj)
 bot_app = None
 
-# 状态机定义
+# 状态机
 WAITING_FOR_PHOTO = 1
 WAITING_LINK_1 = 2
 WAITING_LINK_2 = 3
@@ -91,7 +80,7 @@ WAITING_START_ORDER = 10
 WAITING_RECHARGE_ORDER = 20
 
 # ==============================================================================
-# 数据库初始化 (V3/V4/V5)
+# 数据库逻辑 (含自动数据找回)
 # ==============================================================================
 
 def get_db_connection():
@@ -101,49 +90,32 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # 1. 基础素材 (V3) - 对应“管理图片”
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS file_ids_v3 (
-            id SERIAL PRIMARY KEY,
-            file_id TEXT,
-            file_unique_id TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
+    # 1. 基础表 V3
+    cur.execute("CREATE TABLE IF NOT EXISTS file_ids_v3 (id SERIAL PRIMARY KEY, file_id TEXT, file_unique_id TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
     
-    # 2. 用户表 (V3) - 包含积分、签到、所有锁
+    # 2. 用户表 V3 (含所有锁)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users_v3 (
             user_id BIGINT PRIMARY KEY,
             points INTEGER DEFAULT 0,
             last_checkin_date DATE,
             checkin_count INTEGER DEFAULT 0,
-            verify_fails INTEGER DEFAULT 0,
-            verify_lock TIMESTAMP,
-            verify_done BOOLEAN DEFAULT FALSE,
-            wx_fails INTEGER DEFAULT 0,
-            wx_lock TIMESTAMP,
-            wx_done BOOLEAN DEFAULT FALSE,
-            ali_fails INTEGER DEFAULT 0,
-            ali_lock TIMESTAMP,
-            ali_done BOOLEAN DEFAULT FALSE,
+            verify_fails INTEGER DEFAULT 0, verify_lock TIMESTAMP, verify_done BOOLEAN DEFAULT FALSE,
+            wx_fails INTEGER DEFAULT 0, wx_lock TIMESTAMP, wx_done BOOLEAN DEFAULT FALSE,
+            ali_fails INTEGER DEFAULT 0, ali_lock TIMESTAMP, ali_done BOOLEAN DEFAULT FALSE,
             username TEXT
         );
     """)
     # 补全字段
-    cols = [
-        "verify_fails INTEGER DEFAULT 0", "verify_lock TIMESTAMP", "verify_done BOOLEAN DEFAULT FALSE",
-        "wx_fails INTEGER DEFAULT 0", "wx_lock TIMESTAMP", "wx_done BOOLEAN DEFAULT FALSE",
-        "ali_fails INTEGER DEFAULT 0", "ali_lock TIMESTAMP", "ali_done BOOLEAN DEFAULT FALSE",
-        "username TEXT"
-    ]
+    cols = ["verify_fails INT DEFAULT 0", "verify_lock TIMESTAMP", "verify_done BOOLEAN DEFAULT FALSE",
+            "wx_fails INT DEFAULT 0", "wx_lock TIMESTAMP", "wx_done BOOLEAN DEFAULT FALSE",
+            "ali_fails INT DEFAULT 0", "ali_lock TIMESTAMP", "ali_done BOOLEAN DEFAULT FALSE",
+            "username TEXT"]
     for c in cols:
-        try:
-            cur.execute(f"ALTER TABLE users_v3 ADD COLUMN IF NOT EXISTS {c};")
-        except Exception:
-            conn.rollback()
+        try: cur.execute(f"ALTER TABLE users_v3 ADD COLUMN IF NOT EXISTS {c};")
+        except: conn.rollback()
 
-    # 3. 广告/密钥相关 (V3)
+    # 3. 广告/密钥 V3
     cur.execute("CREATE TABLE IF NOT EXISTS user_ads_v3 (user_id BIGINT PRIMARY KEY, last_watch_date DATE, daily_watch_count INT DEFAULT 0);")
     cur.execute("CREATE TABLE IF NOT EXISTS ad_tokens_v3 (token TEXT PRIMARY KEY, user_id BIGINT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
     cur.execute("CREATE TABLE IF NOT EXISTS system_keys_v3 (id INTEGER PRIMARY KEY, key_1 TEXT, link_1 TEXT, key_2 TEXT, link_2 TEXT, session_date DATE, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
@@ -151,14 +123,37 @@ def init_db():
     cur.execute("CREATE TABLE IF NOT EXISTS user_key_clicks_v3 (user_id BIGINT PRIMARY KEY, click_count INT DEFAULT 0, session_date DATE);")
     cur.execute("CREATE TABLE IF NOT EXISTS user_key_claims_v3 (id SERIAL PRIMARY KEY, user_id BIGINT, key_val TEXT, claimed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, key_val));")
 
-    # 4. 频道转发库 (V4)
+    # 4. 转发库 V4
     cur.execute("CREATE TABLE IF NOT EXISTS custom_commands_v4 (id SERIAL PRIMARY KEY, command_name TEXT UNIQUE NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
     cur.execute("CREATE TABLE IF NOT EXISTS command_contents_v4 (id SERIAL PRIMARY KEY, command_id INT REFERENCES custom_commands_v4(id) ON DELETE CASCADE, file_id TEXT, file_type TEXT, caption TEXT, message_text TEXT, sort_order SERIAL);")
 
-    # 5. 商品与积分日志 (V5)
+    # 5. 商品 V5
     cur.execute("CREATE TABLE IF NOT EXISTS products_v5 (id SERIAL PRIMARY KEY, name TEXT NOT NULL, price INTEGER NOT NULL, content_text TEXT, content_file_id TEXT, content_type TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
     cur.execute("CREATE TABLE IF NOT EXISTS user_purchases_v5 (id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, product_id INTEGER REFERENCES products_v5(id) ON DELETE CASCADE, purchase_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, product_id));")
     cur.execute("CREATE TABLE IF NOT EXISTS point_logs_v5 (id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, change_amount INTEGER NOT NULL, reason TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
+
+    # --- 数据找回逻辑 (尝试从无后缀表迁移) ---
+    try:
+        # 尝试迁移用户积分
+        cur.execute("SELECT count(*) FROM users_v3")
+        if cur.fetchone()[0] == 0:
+            print("Attempting to migrate Users from old table...")
+            # 假设旧表叫 users
+            cur.execute("INSERT INTO users_v3 (user_id, points) SELECT user_id, points FROM users ON CONFLICT DO NOTHING")
+            print("Users migrated.")
+    except:
+        conn.rollback()
+
+    try:
+        # 尝试迁移商品
+        cur.execute("SELECT count(*) FROM products_v5")
+        if cur.fetchone()[0] == 0:
+            print("Attempting to migrate Products...")
+            # 假设旧表叫 products 或 products_v4
+            cur.execute("INSERT INTO products_v5 (name, price, content_text, content_file_id, content_type) SELECT name, price, content_text, content_file_id, content_type FROM products ON CONFLICT DO NOTHING")
+            print("Products migrated.")
+    except:
+        conn.rollback()
 
     conn.commit()
     cur.close()
@@ -193,7 +188,6 @@ def ensure_user_exists(user_id, username=None):
 # --- 积分系统 (V5 日志) ---
 
 def update_points(user_id, amount, reason):
-    """更新积分并记录流水"""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("UPDATE users_v3 SET points = points + %s WHERE user_id = %s RETURNING points", (amount, user_id))
@@ -215,7 +209,6 @@ def get_user_data(user_id):
     return row
 
 def get_point_logs(user_id, limit=5):
-    """获取积分流水 (修复格式化报错)"""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT change_amount, reason, created_at FROM point_logs_v5 WHERE user_id = %s ORDER BY id DESC LIMIT %s", (user_id, limit))
@@ -288,7 +281,7 @@ def get_ad_status(user_id):
     cur.execute("SELECT daily_watch_count FROM user_ads_v3 WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
     cnt = row[0] if row else 0
-    if row and row[0] != today: cnt = 0 # 日期变了但数据库没刷新的情况
+    if row and row[0] != today: cnt = 0 
     cur.close()
     conn.close()
     return cnt
@@ -360,7 +353,9 @@ def get_user_click_status(user_id):
     row = cur.fetchone()
     if not row or row[1] != s:
         cur.execute("INSERT INTO user_key_clicks_v3 (user_id,click_count,session_date) VALUES (%s,0,%s) ON CONFLICT(user_id) DO UPDATE SET click_count=0,session_date=%s", (user_id, s, s))
-        conn.commit(); cur.close(); conn.close()
+        conn.commit()
+        cur.close()
+        conn.close()
         return 0
     cur.close()
     conn.close()
@@ -388,7 +383,8 @@ def claim_key_points(user_id, txt):
     cur = conn.cursor()
     cur.execute("SELECT id FROM user_key_claims_v3 WHERE user_id=%s AND key_val=%s", (user_id, txt.strip()))
     if cur.fetchone():
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         return {"status": "already_claimed"}
     cur.execute("INSERT INTO user_key_claims_v3 (user_id, key_val) VALUES (%s, %s)", (user_id, txt.strip()))
     conn.commit()
@@ -408,7 +404,6 @@ def add_product(name, price, text, fid, ftype):
     conn.close()
 
 def get_products_list(limit, offset):
-    """修复参数名错误"""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT id, name, price FROM products_v5 ORDER BY id DESC LIMIT %s OFFSET %s", (limit, offset))
@@ -459,10 +454,14 @@ def add_custom_command(cmd):
     try:
         cur.execute("INSERT INTO custom_commands_v4 (command_name) VALUES (%s) RETURNING id", (cmd,))
         cid = cur.fetchone()[0]
-        conn.commit(); cur.close(); conn.close()
+        conn.commit()
+        cur.close()
+        conn.close()
         return cid
     except:
-        conn.rollback(); cur.close(); conn.close()
+        conn.rollback()
+        cur.close()
+        conn.close()
         return None
 
 def add_command_content(cid, fid, ftype, cap, txt):
@@ -607,7 +606,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "👋 欢迎加入【VIP中转】！我是守门员小卫，你的身份验证小助手~\n\n📢 小卫小卫，守门员小卫！\n一键入群，小卫帮你搞定！\n新人来报到，小卫查身份！"
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(verify_text, callback_data=verify_cb)],
-        [InlineKeyboardButton("💰 积分中心", callback_data="my_points")],
+        [InlineKeyboardButton("💰 积分 & 兑换", callback_data="my_points")],
         [InlineKeyboardButton("🎉 开业活动", callback_data="open_activity")]
     ])
     
@@ -748,7 +747,6 @@ async def quark_key_btn_handler(update: Update, context: ContextTypes.DEFAULT_TY
         
     increment_user_click(uid)
     t = 1 if kc == 0 else 2
-    # 直接使用 /jump 跳转页
     url = f"https://{RAILWAY_DOMAIN}/jump?type={t}"
     
     await context.bot.send_message(uid, f"🚀 **获取密钥**\n链接：{url}\n点击跳转->保存->复制文件名->发送给机器人")
@@ -887,7 +885,6 @@ async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if "list_prod_" in update.callback_query.data:
             offset = int(update.callback_query.data.split("_")[-1])
     
-    # 修复：明确指定参数名 limit 和 offset
     rows, total = get_products_list(limit=10, offset=offset)
     
     kb = []
@@ -1066,7 +1063,6 @@ async def list_admin_prods(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     offset = int(query.data.split("_")[-1])
-    # 修复：参数传递
     rows, total = get_products_list(limit=10, offset=offset)
     
     kb = []
@@ -1101,6 +1097,7 @@ async def confirm_del_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="manage_products_entry")]])
     await query.edit_message_text("🗑 已下架。", reply_markup=kb)
 
+# Admin User List
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_ID):
         return
@@ -1127,7 +1124,6 @@ async def list_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     offset = int(query.data.split('_')[-1])
-    # 修复参数
     rows, total = get_commands_list(limit=10, offset=offset)
     
     if not rows:
@@ -1292,16 +1288,20 @@ async def cancel_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🚫 取消")
     return ConversationHandler.END
 
+# 关键修复：admin_entry 统一处理按钮和命令
 async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_ID):
         return
-    # 强制覆盖旧的键盘，确保新功能按钮出现
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🖼 获取 File ID", callback_data="start_upload")],
         [InlineKeyboardButton("📂 管理图片", callback_data="view_files")],
         [InlineKeyboardButton("📚 频道转发库 (添加/管理)", callback_data="manage_cmds_entry")]
     ])
-    await update.message.reply_text("⚙️ **管理员后台**", reply_markup=kb, parse_mode='Markdown')
+    # 区分 CallbackQuery (按钮点击) 和 Message (命令输入)
+    if update.callback_query:
+        await update.callback_query.edit_message_text("⚙️ **管理员后台**", reply_markup=kb, parse_mode='Markdown')
+    else:
+        await update.message.reply_text("⚙️ **管理员后台**", reply_markup=kb, parse_mode='Markdown')
     return ConversationHandler.END
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1483,8 +1483,6 @@ app = FastAPI(lifespan=lifespan)
 async def health():
     return {"status": "ok"}
 
-# 修复 HTML 中 f-string 语法冲突问题
-# 使用 .replace() 替代 f-string 直接嵌入
 @app.get("/watch_ad/{token}")
 async def wad(token: str):
     html = """
