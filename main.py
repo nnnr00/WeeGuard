@@ -636,7 +636,7 @@ async def watch_ad_page(token: str):
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>视频任务</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
-        <script src='https://libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
+        <script src='//libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
         <style>
             body {{ font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f9; }}
             .container {{ max-width: 500px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
@@ -656,8 +656,11 @@ async def watch_ad_page(token: str):
         const token = "{token}";
         const s = document.getElementById('s');
         const btn = document.getElementById('adBtn');
+
+        if (window.Telegram && window.Telegram.WebApp) {{
+            window.Telegram.WebApp.ready();
+        }}
         
-        // 你的广告调用逻辑
         function startAd() {{
             btn.disabled = true;
             s.innerText = "⏳ 正在请求广告...";
@@ -666,16 +669,17 @@ async def watch_ad_page(token: str):
                 show_10489957().then(() => {{
                     // 用户要求：alert 提示
                     alert('You have seen an ad!');
-                    // 验证并加分
-                    s.innerText = "广告观看完成，正在验证...";
-                    verifyAndClose();
+                    // 延迟1秒验证，防止alert卡死 fetch
+                    s.innerText = "广告完成，验证中...";
+                    setTimeout(verifyAndClose, 1000);
                 }}).catch(e => {{
                     console.log(e);
                     s.innerText = "❌ 广告加载失败: " + e;
+                    // 显示失败后恢复按钮
                     btn.disabled = false;
                 }});
             }} else {{
-                s.innerText = "❌ SDK 未加载 (请检查网络)";
+                s.innerText = "❌ SDK Error (Moontag 拒绝连接)";
                 btn.disabled = false;
             }}
         }}
@@ -701,6 +705,9 @@ async def watch_ad_page(token: str):
                 }} else {{
                     s.innerText = "❌ " + d.message;
                 }}
+            }})
+            .catch(err => {{
+                s.innerText = "❌ API Error: " + err;
             }});
         }}
         </script>
