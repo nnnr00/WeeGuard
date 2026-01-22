@@ -40,12 +40,12 @@ from telegram.error import BadRequest
 # 🛠️ 配置区域 (File ID)
 # ==============================================================================
 CONFIG = {
-    "START_VIP_INFO": "AgACAgEAAxkBAAIC...", 
-    "START_TUTORIAL": "AgACAgEAAxkBAAIC...",
-    "WX_PAY_QR": "AgACAgEAAxkBAAIC...",
-    "WX_ORDER_TUTORIAL": "AgACAgEAAxkBAAIC...",
-    "ALI_PAY_QR": "AgACAgEAAxkBAAIC...",
-    "ALI_ORDER_TUTORIAL": "AgACAgEAAxkBAAIC...",
+    "START_VIP_INFO": "AgACAgUAAxkBAAIVKWlyKb6fuQp8_OCY9iqHY2LpA-K8AALVDWsb7fmZVyj0hAor7z5qAQADAgADeAADOAQ", 
+    "START_TUTORIAL": "AgACAgUAAxkBAAIVK2lyKcoH-dXKyUPLPowQBaQoJV27AALWDWsb7fmZVxKPhSqFdvd_AQADAgADeQADOAQ",
+    "WX_PAY_QR": "AgACAgUAAxkBAAIVLWlyKdiebEWmN1CpkNTD4DE7nZcWAALYDWsb7fmZV9cp0kh6kRGoAQADAgADeAADOAQ",
+    "WX_ORDER_TUTORIAL": "AgACAgUAAxkBAAIVL2lyKd7rUT5Lqnc2WWio96c0WeZcAALZDWsb7fmZV-_2XSNVWR2sAQADAgADeQADOAQ",
+    "ALI_PAY_QR": "AgACAgUAAxkBAAIVMWlyKePU_j7deGJK3nUGCeht5GsEAALaDWsb7fmZV3d4LED5eZmyAQADAgADeAADOAQ",
+    "ALI_ORDER_TUTORIAL": "AgACAgUAAxkBAAIVM2lyKeYuZoMDeKHeUYSvB_I5RhClAALcDWsb7fmZV0LzJA0aoR8tAQADAgADeQADOAQ",
 }
 
 # 环境变量
