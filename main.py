@@ -37,15 +37,29 @@ from telegram.ext import (
 from telegram.error import BadRequest
 
 # ==============================================================================
-# 🛠️ 配置区域 (File ID)
+# 🛠️ 【配置区域】 请在此处填入您上传图片后获得的 File ID
 # ==============================================================================
 CONFIG = {
-    "START_VIP_INFO": "AgACAgUAAxkBAAIVKWlyKb6fuQp8_OCY9iqHY2LpA-K8AALVDWsb7fmZVyj0hAor7z5qAQADAgADeAADOAQ", 
-    "START_TUTORIAL": "AgACAgUAAxkBAAIVK2lyKcoH-dXKyUPLPowQBaQoJV27AALWDWsb7fmZVxKPhSqFdvd_AQADAgADeQADOAQ",
-    "WX_PAY_QR": "AgACAgUAAxkBAAIVLWlyKdiebEWmN1CpkNTD4DE7nZcWAALYDWsb7fmZV9cp0kh6kRGoAQADAgADeAADOAQ",
-    "WX_ORDER_TUTORIAL": "AgACAgUAAxkBAAIVL2lyKd7rUT5Lqnc2WWio96c0WeZcAALZDWsb7fmZV-_2XSNVWR2sAQADAgADeQADOAQ",
-    "ALI_PAY_QR": "AgACAgUAAxkBAAIVMWlyKePU_j7deGJK3nUGCeht5GsEAALaDWsb7fmZV3d4LED5eZmyAQADAgADeAADOAQ",
-    "ALI_ORDER_TUTORIAL": "AgACAgUAAxkBAAIVM2lyKeYuZoMDeKHeUYSvB_I5RhClAALcDWsb7fmZV0LzJA0aoR8tAQADAgADeQADOAQ",
+    # 验证成功后的进群链接 (可修改)
+    "GROUP_LINK": "https://t.me/+495j5rWmApsxYzg9",
+
+    # 首页 /start -> 开始验证 -> VIP说明配图
+    "START_VIP_INFO": "AgACAgEAAxkBAAIC...", 
+    
+    # 首页 -> 点击"我已付款" -> 查找订单号教程图
+    "START_TUTORIAL": "AgACAgEAAxkBAAIC...",
+    
+    # 积分 -> 微信充值 -> 微信支付二维码
+    "WX_PAY_QR": "AgACAgEAAxkBAAIC...",
+    
+    # 积分 -> 微信充值 -> 微信账单查找交易单号教程图
+    "WX_ORDER_TUTORIAL": "AgACAgEAAxkBAAIC...",
+    
+    # 积分 -> 支付宝充值 -> 支付宝支付二维码
+    "ALI_PAY_QR": "AgACAgEAAxkBAAIC...",
+    
+    # 积分 -> 支付宝充值 -> 支付宝账单查找商家订单号教程图
+    "ALI_ORDER_TUTORIAL": "AgACAgEAAxkBAAIC...",
 }
 
 # 环境变量
@@ -55,7 +69,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 raw_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
 RAILWAY_DOMAIN = raw_domain.replace("https://", "").replace("http://", "").strip("/")
 
-# Moontag 直链
+# Moontag 直链 (用于隐形加载)
 DIRECT_LINK_1 = "https://otieu.com/4/10489994"
 DIRECT_LINK_2 = "https://otieu.com/4/10489998"
 
@@ -80,7 +94,7 @@ WAITING_START_ORDER = 10
 WAITING_RECHARGE_ORDER = 20
 
 # ==============================================================================
-# 数据库初始化
+# 数据库初始化 (V3/V4/V5)
 # ==============================================================================
 
 def get_db_connection():
@@ -90,10 +104,10 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # 1. 基础表 V3
+    # 1. 基础表 V3 (File ID)
     cur.execute("CREATE TABLE IF NOT EXISTS file_ids_v3 (id SERIAL PRIMARY KEY, file_id TEXT, file_unique_id TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
     
-    # 2. 用户表 V3
+    # 2. 用户表 V3 (含所有锁)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users_v3 (
             user_id BIGINT PRIMARY KEY,
@@ -140,7 +154,8 @@ def init_db():
 
 def get_session_date():
     now = datetime.now(tz_bj)
-    if now.hour < 10: return (now - timedelta(days=1)).date()
+    if now.hour < 10:
+        return (now - timedelta(days=1)).date()
     return now.date()
 
 def generate_random_key():
@@ -151,98 +166,140 @@ def get_file_id(key):
     fid = CONFIG.get(key)
     return fid if fid and fid.startswith("AgAC") else None
 
+def get_group_link():
+    """获取配置中的加群链接"""
+    return CONFIG.get("GROUP_LINK", "https://t.me/+495j5rWmApsxYzg9")
+
 def ensure_user_exists(user_id, username=None):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("INSERT INTO users_v3 (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username", (user_id, username))
     cur.execute("INSERT INTO user_ads_v3 (user_id, daily_watch_count) VALUES (%s, 0) ON CONFLICT (user_id) DO NOTHING", (user_id,))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
-# --- 积分系统 ---
+# --- 积分系统 (V5 日志) ---
 
 def update_points(user_id, amount, reason):
-    conn = get_db_connection(); cur = conn.cursor()
+    """更新积分并记录流水"""
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("UPDATE users_v3 SET points = points + %s WHERE user_id = %s RETURNING points", (amount, user_id))
     new_total = cur.fetchone()[0]
     cur.execute("INSERT INTO point_logs_v5 (user_id, change_amount, reason) VALUES (%s, %s, %s)", (user_id, amount, reason))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     return new_total
 
 def get_user_data(user_id):
     ensure_user_exists(user_id)
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT points, last_checkin_date, checkin_count FROM users_v3 WHERE user_id=%s", (user_id,))
-    row = cur.fetchone(); cur.close(); conn.close()
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
     return row
 
 def get_point_logs(user_id, limit=5):
-    conn = get_db_connection(); cur = conn.cursor()
+    """获取积分流水"""
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT change_amount, reason, created_at FROM point_logs_v5 WHERE user_id = %s ORDER BY id DESC LIMIT %s", (user_id, limit))
-    rows = cur.fetchall(); cur.close(); conn.close()
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
     return rows
 
 def process_checkin(user_id):
     ensure_user_exists(user_id)
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     today = datetime.now(tz_bj).date()
     cur.execute("SELECT last_checkin_date, checkin_count FROM users_v3 WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
-    if row[0] == today: cur.close(); conn.close(); return {"status": "already_checked"}
+    if row[0] == today:
+        cur.close(); conn.close()
+        return {"status": "already_checked"}
     pts = 10 if row[1] == 0 else random.randint(3, 8)
     cur.execute("UPDATE users_v3 SET points=points+%s, last_checkin_date=%s, checkin_count=checkin_count+1 WHERE user_id=%s RETURNING points", (pts, today, user_id))
     total = cur.fetchone()[0]
     cur.execute("INSERT INTO point_logs_v5 (user_id, change_amount, reason) VALUES (%s, %s, '每日签到')", (user_id, pts))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     return {"status": "success", "added": pts, "total": total}
 
-# --- 验证/锁 ---
+# --- 验证/锁 (V3) ---
 
 def check_lock(user_id, type_prefix):
     ensure_user_exists(user_id)
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     fields = f"{type_prefix}_fails, {type_prefix}_lock, {type_prefix}_done"
     cur.execute(f"SELECT {fields} FROM users_v3 WHERE user_id = %s", (user_id,))
-    row = cur.fetchone(); cur.close(); conn.close()
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
     return row if row else (0, None, False)
 
 def update_fail(user_id, type_prefix, current_fails, lock_hours):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     new_fails = current_fails + 1
     if new_fails >= 2:
         lock_until = datetime.now() + timedelta(hours=lock_hours)
         cur.execute(f"UPDATE users_v3 SET {type_prefix}_fails = %s, {type_prefix}_lock = %s WHERE user_id = %s", (new_fails, lock_until, user_id))
     else:
         cur.execute(f"UPDATE users_v3 SET {type_prefix}_fails = %s WHERE user_id = %s", (new_fails, user_id))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     return new_fails
 
 def mark_success(user_id, type_prefix):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute(f"UPDATE users_v3 SET {type_prefix}_fails=0, {type_prefix}_lock=NULL, {type_prefix}_done=TRUE WHERE user_id=%s", (user_id,))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
-# --- 广告 & 密钥 ---
+# --- 广告 & 密钥 (V3) ---
 
 def get_ad_status(user_id):
     ensure_user_exists(user_id)
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     today = datetime.now(tz_bj).date()
     cur.execute("SELECT daily_watch_count FROM user_ads_v3 WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
     cnt = row[0] if row else 0
     if row and row[0] != today: cnt = 0 
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     return cnt
 
 def create_ad_token(user_id):
-    t = str(uuid.uuid4()); conn = get_db_connection(); cur = conn.cursor()
+    t = str(uuid.uuid4())
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("INSERT INTO ad_tokens_v3 (token, user_id) VALUES (%s,%s)", (t, user_id))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     return t
 
 def verify_token(t):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("DELETE FROM ad_tokens_v3 WHERE token=%s RETURNING user_id", (t,))
-    row = cur.fetchone(); conn.commit(); cur.close(); conn.close()
+    row = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
     return row[0] if row else None
 
 def process_ad_reward(user_id):
@@ -251,142 +308,241 @@ def process_ad_reward(user_id):
     if cnt >= 3: return {"status": "limit_reached"}
     pts = 10 if cnt == 0 else (6 if cnt == 1 else random.randint(3, 10))
     update_points(user_id, pts, "观看广告")
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("UPDATE user_ads_v3 SET last_watch_date=%s, daily_watch_count=daily_watch_count+1 WHERE user_id=%s", (datetime.now(tz_bj).date(), user_id))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     return {"status": "success", "added": pts}
 
 def update_system_keys(k1, k2, d):
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("UPDATE system_keys_v3 SET key_1=%s, key_2=%s, session_date=%s WHERE id=1", (k1, k2, d))
-    conn.commit(); cur.close(); conn.close()
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # 每天重置时，同时清空链接 (link_1=NULL)
+    cur.execute("UPDATE system_keys_v3 SET key_1=%s, key_2=%s, link_1=NULL, link_2=NULL, session_date=%s WHERE id=1", (k1, k2, d))
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def update_key_links(l1, l2):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("UPDATE system_keys_v3 SET link_1=%s, link_2=%s WHERE id=1", (l1, l2))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def get_system_keys_info():
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT key_1, link_1, key_2, link_2, session_date FROM system_keys_v3 WHERE id=1")
-    row = cur.fetchone(); cur.close(); conn.close()
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
     return row
 
 def get_user_click_status(user_id):
-    s = get_session_date(); conn = get_db_connection(); cur = conn.cursor()
+    s = get_session_date()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT click_count, session_date FROM user_key_clicks_v3 WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
     if not row or row[1] != s:
         cur.execute("INSERT INTO user_key_clicks_v3 (user_id,click_count,session_date) VALUES (%s,0,%s) ON CONFLICT(user_id) DO UPDATE SET click_count=0,session_date=%s", (user_id, s, s))
-        conn.commit(); cur.close(); conn.close(); return 0
-    cur.close(); conn.close(); return row[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return 0
+    cur.close()
+    conn.close()
+    return row[0]
 
 def increment_user_click(user_id):
-    s = get_session_date(); conn = get_db_connection(); cur = conn.cursor()
+    s = get_session_date()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("UPDATE user_key_clicks_v3 SET click_count=click_count+1 WHERE user_id=%s AND session_date=%s", (user_id, s))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def claim_key_points(user_id, txt):
-    ensure_user_exists(user_id); info = get_system_keys_info()
+    ensure_user_exists(user_id)
+    info = get_system_keys_info()
     if not info: return {"status": "error"}
-    k1, _, k2, _, _ = info; pts = 0
-    if txt.strip() == k1: pts = 8
-    elif txt.strip() == k2: pts = 6
-    else: return {"status": "invalid"}
-    conn = get_db_connection(); cur = conn.cursor()
+    k1, _, k2, _, _ = info
+    pts = 0
+    if txt.strip() == k1:
+        pts = 8
+    elif txt.strip() == k2:
+        pts = 6
+    else:
+        return {"status": "invalid"}
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT id FROM user_key_claims_v3 WHERE user_id=%s AND key_val=%s", (user_id, txt.strip()))
-    if cur.fetchone(): cur.close(); conn.close(); return {"status": "already_claimed"}
+    if cur.fetchone():
+        cur.close()
+        conn.close()
+        return {"status": "already_claimed"}
     cur.execute("INSERT INTO user_key_claims_v3 (user_id, key_val) VALUES (%s, %s)", (user_id, txt.strip()))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     update_points(user_id, pts, "密钥兑换")
     return {"status": "success", "points": pts}
 
-# --- 商品 & 命令 ---
+# --- 商品 (V5) & 命令 (V4) ---
 
 def add_product(name, price, text, fid, ftype):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("INSERT INTO products_v5 (name, price, content_text, content_file_id, content_type) VALUES (%s, %s, %s, %s, %s)", (name, price, text, fid, ftype))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def get_products_list(limit, offset):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT id, name, price FROM products_v5 ORDER BY id DESC LIMIT %s OFFSET %s", (limit, offset))
-    rows = cur.fetchall(); cur.execute("SELECT COUNT(*) FROM products_v5"); t = cur.fetchone()[0]
-    cur.close(); conn.close(); return rows, t
+    rows = cur.fetchall()
+    cur.execute("SELECT COUNT(*) FROM products_v5")
+    total = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return rows, total
 
 def get_product_details(pid):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT id, name, price, content_text, content_file_id, content_type FROM products_v5 WHERE id=%s", (pid,))
-    row = cur.fetchone(); cur.close(); conn.close(); return row
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row
 
 def delete_product(pid):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("DELETE FROM products_v5 WHERE id=%s", (pid,))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def check_purchase(uid, pid):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT id FROM user_purchases_v5 WHERE user_id=%s AND product_id=%s", (uid, pid))
-    row = cur.fetchone(); cur.close(); conn.close(); return True if row else False
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return True if row else False
 
 def record_purchase(uid, pid):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("INSERT INTO user_purchases_v5 (user_id, product_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (uid, pid))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def add_custom_command(cmd):
-    conn = get_db_connection(); cur = conn.cursor()
-    try: cur.execute("INSERT INTO custom_commands_v4 (command_name) VALUES (%s) RETURNING id", (cmd,)); cid = cur.fetchone()[0]; conn.commit(); cur.close(); conn.close(); return cid
-    except: conn.rollback(); cur.close(); conn.close(); return None
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("INSERT INTO custom_commands_v4 (command_name) VALUES (%s) RETURNING id", (cmd,))
+        cid = cur.fetchone()[0]
+        conn.commit(); cur.close(); conn.close()
+        return cid
+    except:
+        conn.rollback(); cur.close(); conn.close()
+        return None
 
 def add_command_content(cid, fid, ftype, cap, txt):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("INSERT INTO command_contents_v4 (command_id,file_id,file_type,caption,message_text) VALUES (%s,%s,%s,%s,%s)", (cid, fid, ftype, cap, txt))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def get_commands_list(limit, offset):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT id, command_name FROM custom_commands_v4 ORDER BY id DESC LIMIT %s OFFSET %s", (limit, offset))
-    rs = cur.fetchall(); cur.execute("SELECT COUNT(*) FROM custom_commands_v4"); t = cur.fetchone()[0]; cur.close(); conn.close(); return rs, t
+    rs = cur.fetchall()
+    cur.execute("SELECT COUNT(*) FROM custom_commands_v4")
+    t = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return rs, t
 
 def delete_command_by_id(cid):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("DELETE FROM custom_commands_v4 WHERE id=%s", (cid,))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def get_command_content(cmd):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT c.id, c.file_id, c.file_type, c.caption, c.message_text FROM command_contents_v4 c JOIN custom_commands_v4 cmd ON c.command_id=cmd.id WHERE cmd.command_name=%s ORDER BY c.sort_order", (cmd,))
-    rs = cur.fetchall(); cur.close(); conn.close(); return rs
+    rs = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rs
 
 def get_all_users_info(limit, offset):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT user_id, username, points FROM users_v3 ORDER BY points DESC LIMIT %s OFFSET %s", (limit, offset))
-    rs = cur.fetchall(); cur.execute("SELECT COUNT(*) FROM users_v3"); t = cur.fetchone()[0]; cur.close(); conn.close(); return rs, t
+    rs = cur.fetchall()
+    cur.execute("SELECT COUNT(*) FROM users_v3")
+    t = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return rs, t
 
 def reset_admin_stats(aid):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("UPDATE user_ads_v3 SET daily_watch_count=0 WHERE user_id=%s", (aid,))
     cur.execute("UPDATE user_key_clicks_v3 SET click_count=0 WHERE user_id=%s", (aid,))
     cur.execute("DELETE FROM user_key_claims_v3 WHERE user_id=%s", (aid,))
     cur.execute("DELETE FROM user_purchases_v5 WHERE user_id=%s", (aid,))
     cur.execute("UPDATE users_v3 SET verify_fails=0,verify_lock=NULL,verify_done=FALSE,wx_fails=0,wx_lock=NULL,wx_done=FALSE,ali_fails=0,ali_lock=NULL,ali_done=FALSE WHERE user_id=%s", (aid,))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def save_file_id(fid, fuid):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("INSERT INTO file_ids_v3 (file_id, file_unique_id) VALUES (%s, %s)", (fid, fuid))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def get_all_files():
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT id, file_id FROM file_ids_v3 ORDER BY id DESC LIMIT 10")
-    rs = cur.fetchall(); cur.close(); conn.close(); return rs
+    rs = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rs
 
 def delete_file_by_id(did):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("DELETE FROM file_ids_v3 WHERE id=%s", (did,))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     # ==============================================================================
 # 定时任务 (必须在 Handlers 之前定义)
 # ==============================================================================
@@ -750,7 +906,7 @@ async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav:
         kb.append(nav)
     
-    # 移除了余额按钮
+    # 已移除余额按钮，只保留返回
     kb.append([InlineKeyboardButton("🔙 返回首页", callback_data="back_to_home")])
     
     text = "🎁 **积分兑换中心**\n请选择您要兑换的商品："
@@ -792,7 +948,8 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fid = prod[4]
         ftype = prod[5]
         
-        await query.message.reply_text(f"📦 **已购内容：**\n{content}", parse_mode='Markdown')
+        # 使用 Markdown 代码块包裹内容，方便点击复制
+        await query.message.reply_text(f"📦 **已购内容：**\n`{content}`", parse_mode='Markdown')
         if fid:
             try:
                 if ftype == 'photo':
@@ -833,7 +990,7 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update_points(uid, -price, f"兑换-{prod[1]}")
         record_purchase(uid, pid)
         
-        await query.message.reply_text(f"🎉 **兑换成功！**\n消耗 {price} 积分。\n\n📦 **内容：**\n{prod[3] or ''}", parse_mode='Markdown')
+        await query.message.reply_text(f"🎉 **兑换成功！**\n消耗 {price} 积分。\n\n📦 **内容：**\n`{prod[3] or ''}`", parse_mode='Markdown')
         if prod[4]:
             try:
                 if prod[5] == 'photo':
@@ -857,7 +1014,6 @@ async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🛍 商品管理", callback_data="manage_products_entry")],
         [InlineKeyboardButton("👥 用户与记录", callback_data="list_users")]
     ])
-    # 修复：区分按钮和命令
     if update.callback_query:
         await update.callback_query.edit_message_text("⚙️ **管理员后台**", reply_markup=kb, parse_mode='Markdown')
     else:
@@ -891,7 +1047,7 @@ async def receive_prod_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except:
         await update.message.reply_text("❌ 必须是数字，请重试：")
         return WAITING_PROD_PRICE
-    await update.message.reply_text("📦 请发送 **商品内容** (文本/图片/视频)：")
+    await update.message.reply_text("📦 请发送 **商品内容** (文本/图片/视频)：\n提示：使用反引号 `内容` 可让用户点击复制。")
     return WAITING_PROD_CONTENT
 
 async def receive_prod_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1147,7 +1303,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not text or text.startswith('/'):
         return
     
-    # 1. 检查是否为自定义命令
+    # 1. 检查是否为自定义命令 (纯净转发)
     contents = get_command_content(text.strip())
     if contents:
         sent_msg_ids = []
@@ -1179,11 +1335,11 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                         if item[2] == 'text':
                             m = await context.bot.send_message(chat_id, item[4])
                         elif item[2] == 'photo':
-                            m = await context.bot.send_photo(chat_id, item[1])
+                            m = await context.bot.send_photo(chat_id, item[1]) # 无 caption
                         elif item[2] == 'video':
-                            m = await context.bot.send_video(chat_id, item[1])
+                            m = await context.bot.send_video(chat_id, item[1]) # 无 caption
                         elif item[2] == 'document':
-                            m = await context.bot.send_document(chat_id, item[1])
+                            m = await context.bot.send_document(chat_id, item[1]) # 无 caption
                         if m:
                             sent_msg_ids.append(m.message_id)
                     except:
@@ -1196,17 +1352,17 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await dh_command(update, context)
         return
     
-    # 2. 检查密钥
+    # 2. 密钥验证
     result = claim_key_points(user.id, text)
     if result["status"] == "success":
-        await update.message.reply_text(f"✅ **成功！** +{result['points']}分", parse_mode='Markdown')
+        await update.message.reply_text(f"✅ **兑换成功！** 获得 {result['points']} 积分", parse_mode='Markdown')
+        # 成功后显示新的活动面板
+        await activity_handler(update, context)
     elif result["status"] == "already_claimed":
         await update.message.reply_text("⚠️ 密钥已使用。")
     else:
-        # 全局回退
+        # 全局回退 (除了验证状态)
         await start(update, context)
-
-# --- Main App & Web Server ---
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1331,7 +1487,6 @@ async def health():
 
 @app.get("/watch_ad/{token}")
 async def wad(token: str):
-    # 修复：使用字符串替换而非 f-string 避免语法冲突
     html = """
 <!DOCTYPE html>
 <html>
@@ -1396,7 +1551,7 @@ async def vad(p: dict):
     uid = verify_token(p.get("token"))
     if not uid: return JSONResponse({"success": False, "message": "Expired"})
     
-    # 修复：加分后主动推送消息
+    # 主动推送消息
     res = process_ad_reward(uid)
     if res["status"] == "success":
         try:
@@ -1410,7 +1565,7 @@ async def jump(type: int = 1):
     i = get_system_keys_info()
     u = DIRECT_LINK_1 if type == 1 else DIRECT_LINK_2
     
-    # 修复：获取完整目标链接，防止拼接
+    # 绝对跳转修复
     raw_target = i[1] if type == 1 else i[3]
     target = raw_target if raw_target.startswith("http") else "https://" + raw_target
     
