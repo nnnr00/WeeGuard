@@ -44,22 +44,22 @@ CONFIG = {
     "GROUP_LINK": "https://t.me/+495j5rWmApsxYzg9",
 
     # 首页 /start -> 开始验证 -> VIP说明配图
-    "START_VIP_INFO": "AgACAgEAAxkBAAIC...", 
+    "START_VIP_INFO": "AgACAgUAAxkBAAIVKWlyKb6fuQp8_OCY9iqHY2LpA-K8AALVDWsb7fmZVyj0hAor7z5qAQADAgADeAADOAQ", 
     
     # 首页 -> 点击"我已付款" -> 查找订单号教程图
-    "START_TUTORIAL": "AgACAgEAAxkBAAIC...",
+    "START_TUTORIAL": "AgACAgUAAxkBAAIVK2lyKcoH-dXKyUPLPowQBaQoJV27AALWDWsb7fmZVxKPhSqFdvd_AQADAgADeQADOAQ",
     
     # 积分 -> 微信充值 -> 微信支付二维码
-    "WX_PAY_QR": "AgACAgEAAxkBAAIC...",
+    "WX_PAY_QR": "AgACAgUAAxkBAAIVLWlyKdiebEWmN1CpkNTD4DE7nZcWAALYDWsb7fmZV9cp0kh6kRGoAQADAgADeAADOAQ",
     
     # 积分 -> 微信充值 -> 微信账单查找交易单号教程图
-    "WX_ORDER_TUTORIAL": "AgACAgEAAxkBAAIC...",
+    "WX_ORDER_TUTORIAL": "AgACAgUAAxkBAAIVL2lyKd7rUT5Lqnc2WWio96c0WeZcAALZDWsb7fmZV-_2XSNVWR2sAQADAgADeQADOAQ",
     
     # 积分 -> 支付宝充值 -> 支付宝支付二维码
-    "ALI_PAY_QR": "AgACAgEAAxkBAAIC...",
+    "ALI_PAY_QR": "AgACAgUAAxkBAAIVMWlyKePU_j7deGJK3nUGCeht5GsEAALaDWsb7fmZV3d4LED5eZmyAQADAgADeAADOAQ",
     
     # 积分 -> 支付宝充值 -> 支付宝账单查找商家订单号教程图
-    "ALI_ORDER_TUTORIAL": "AgACAgEAAxkBAAIC...",
+    "ALI_ORDER_TUTORIAL": "AgACAgUAAxkBAAIVM2lyKeYuZoMDeKHeUYSvB_I5RhClAALcDWsb7fmZV0LzJA0aoR8tAQADAgADeQADOAQ",
 }
 
 # 环境变量
