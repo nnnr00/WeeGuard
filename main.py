@@ -167,7 +167,6 @@ def get_file_id(key):
     return fid if fid and fid.startswith("AgAC") else None
 
 def get_group_link():
-    """获取配置中的加群链接"""
     return CONFIG.get("GROUP_LINK", "https://t.me/+495j5rWmApsxYzg9")
 
 def ensure_user_exists(user_id, username=None):
@@ -179,10 +178,9 @@ def ensure_user_exists(user_id, username=None):
     cur.close()
     conn.close()
 
-# --- 积分系统 (V5 日志) ---
+# --- 积分系统 ---
 
 def update_points(user_id, amount, reason):
-    """更新积分并记录流水"""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("UPDATE users_v3 SET points = points + %s WHERE user_id = %s RETURNING points", (amount, user_id))
@@ -204,7 +202,6 @@ def get_user_data(user_id):
     return row
 
 def get_point_logs(user_id, limit=5):
-    """获取积分流水"""
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("SELECT change_amount, reason, created_at FROM point_logs_v5 WHERE user_id = %s ORDER BY id DESC LIMIT %s", (user_id, limit))
@@ -232,7 +229,7 @@ def process_checkin(user_id):
     conn.close()
     return {"status": "success", "added": pts, "total": total}
 
-# --- 验证/锁 (V3) ---
+# --- 验证/锁 ---
 
 def check_lock(user_id, type_prefix):
     ensure_user_exists(user_id)
@@ -267,7 +264,7 @@ def mark_success(user_id, type_prefix):
     cur.close()
     conn.close()
 
-# --- 广告 & 密钥 (V3) ---
+# --- 广告 & 密钥 ---
 
 def get_ad_status(user_id):
     ensure_user_exists(user_id)
@@ -319,7 +316,6 @@ def process_ad_reward(user_id):
 def update_system_keys(k1, k2, d):
     conn = get_db_connection()
     cur = conn.cursor()
-    # 每天重置时，同时清空链接 (link_1=NULL)
     cur.execute("UPDATE system_keys_v3 SET key_1=%s, key_2=%s, link_1=NULL, link_2=NULL, session_date=%s WHERE id=1", (k1, k2, d))
     conn.commit()
     cur.close()
@@ -393,7 +389,7 @@ def claim_key_points(user_id, txt):
     update_points(user_id, pts, "密钥兑换")
     return {"status": "success", "points": pts}
 
-# --- 商品 (V5) & 命令 (V4) ---
+# --- 商品 & 命令 ---
 
 def add_product(name, price, text, fid, ftype):
     conn = get_db_connection()
@@ -496,29 +492,6 @@ def get_command_content(cmd):
     conn.close()
     return rs
 
-def get_all_users_info(limit, offset):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT user_id, username, points FROM users_v3 ORDER BY points DESC LIMIT %s OFFSET %s", (limit, offset))
-    rs = cur.fetchall()
-    cur.execute("SELECT COUNT(*) FROM users_v3")
-    t = cur.fetchone()[0]
-    cur.close()
-    conn.close()
-    return rs, t
-
-def reset_admin_stats(aid):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("UPDATE user_ads_v3 SET daily_watch_count=0 WHERE user_id=%s", (aid,))
-    cur.execute("UPDATE user_key_clicks_v3 SET click_count=0 WHERE user_id=%s", (aid,))
-    cur.execute("DELETE FROM user_key_claims_v3 WHERE user_id=%s", (aid,))
-    cur.execute("DELETE FROM user_purchases_v5 WHERE user_id=%s", (aid,))
-    cur.execute("UPDATE users_v3 SET verify_fails=0,verify_lock=NULL,verify_done=FALSE,wx_fails=0,wx_lock=NULL,wx_done=FALSE,ali_fails=0,ali_lock=NULL,ali_done=FALSE WHERE user_id=%s", (aid,))
-    conn.commit()
-    cur.close()
-    conn.close()
-
 def save_file_id(fid, fuid):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -543,7 +516,30 @@ def delete_file_by_id(did):
     conn.commit()
     cur.close()
     conn.close()
-    # ==============================================================================
+
+def get_all_users_info(limit, offset):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, username, points FROM users_v3 ORDER BY points DESC LIMIT %s OFFSET %s", (limit, offset))
+    rs = cur.fetchall()
+    cur.execute("SELECT COUNT(*) FROM users_v3")
+    t = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return rs, t
+
+def reset_admin_stats(aid):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE user_ads_v3 SET daily_watch_count=0 WHERE user_id=%s", (aid,))
+    cur.execute("UPDATE user_key_clicks_v3 SET click_count=0 WHERE user_id=%s", (aid,))
+    cur.execute("DELETE FROM user_key_claims_v3 WHERE user_id=%s", (aid,))
+    cur.execute("DELETE FROM user_purchases_v5 WHERE user_id=%s", (aid,))
+    cur.execute("UPDATE users_v3 SET verify_fails=0,verify_lock=NULL,verify_done=FALSE,wx_fails=0,wx_lock=NULL,wx_done=FALSE,ali_fails=0,ali_lock=NULL,ali_done=FALSE WHERE user_id=%s", (aid,))
+    conn.commit()
+    cur.close()
+    conn.close()
+# ==============================================================================
 # 定时任务 (必须在 Handlers 之前定义)
 # ==============================================================================
 
@@ -617,6 +613,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, reply_markup=kb)
 
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """通用取消命令 /c"""
+    context.user_data.clear()
+    await update.message.reply_text("✅ 当前操作已取消，返回首页。")
+    await start(update, context)
+    return ConversationHandler.END
+
 async def jf_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     data = get_user_data(user.id)
@@ -643,7 +646,6 @@ async def view_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_text = ""
     if logs:
         for l in logs:
-            # l: (change_amount, reason, created_at)
             log_text += f"• {l[2].strftime('%m-%d %H:%M')} | {int(l[0]):+d} | {l[1]}\n"
     else:
         log_text = "暂无记录"
@@ -792,7 +794,8 @@ async def check_start_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if txt.startswith("20260"):
         mark_success(user_id, 'verify')
-        await update.message.reply_text("✅ **验证成功！**\n您已成功加入会员群，无需重复验证。", parse_mode='Markdown')
+        gl = get_group_link()
+        await update.message.reply_text("✅ **验证成功！**\n您已成功加入会员群，无需重复验证。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👉 点击加入会员群", url=gl)]]), parse_mode='Markdown')
         await asyncio.sleep(2)
         await start(update, context)
         return ConversationHandler.END
@@ -906,7 +909,7 @@ async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav:
         kb.append(nav)
     
-    # 已移除余额按钮，只保留返回
+    # 移除了余额按钮，只保留返回
     kb.append([InlineKeyboardButton("🔙 返回首页", callback_data="back_to_home")])
     
     text = "🎁 **积分兑换中心**\n请选择您要兑换的商品："
@@ -1364,6 +1367,14 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         # 全局回退 (除了验证状态)
         await start(update, context)
 
+# 关键新增：/c 强制退出命令
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """通用取消命令 /c"""
+    context.user_data.clear()
+    await update.message.reply_text("✅ 当前操作已取消，返回首页。")
+    await start(update, context)
+    return ConversationHandler.END
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(f"--- DOMAIN: {RAILWAY_DOMAIN} ---")
@@ -1384,13 +1395,15 @@ async def lifespan(app: FastAPI):
     verify_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(verify_entry, pattern="^start_verify_flow$")],
         states={WAITING_START_ORDER: [CallbackQueryHandler(ask_start_order, pattern="^paid_start$"), MessageHandler(filters.TEXT & ~filters.COMMAND, check_start_order)]},
-        fallbacks=[CommandHandler("start", start)], per_message=False
+        fallbacks=[CommandHandler("start", start), CommandHandler("c", cancel_command)],
+        per_message=False
     )
     
     recharge_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(recharge_menu, pattern="^go_recharge$"), CallbackQueryHandler(recharge_entry, pattern="^pay_wx|pay_ali$")],
         states={WAITING_RECHARGE_ORDER: [CallbackQueryHandler(ask_recharge_order, pattern="^paid_recharge$"), MessageHandler(filters.TEXT & ~filters.COMMAND, check_recharge_order)]},
-        fallbacks=[CommandHandler("jf", jf_command_handler), CallbackQueryHandler(jf_command_handler, pattern="^my_points$")], per_message=False
+        fallbacks=[CommandHandler("jf", jf_command_handler), CallbackQueryHandler(jf_command_handler, pattern="^my_points$"), CommandHandler("c", cancel_command)], 
+        per_message=False
     )
     
     cmd_add_conv = ConversationHandler(
@@ -1399,19 +1412,20 @@ async def lifespan(app: FastAPI):
             WAITING_CMD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_cmd_name)],
             WAITING_CMD_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND, receive_cmd_content), CallbackQueryHandler(finish_cmd_bind, pattern="^finish_cmd_bind$")]
         },
-        fallbacks=[CallbackQueryHandler(manage_cmds_entry, pattern="^manage_cmds_entry$")], per_message=False
+        fallbacks=[CallbackQueryHandler(manage_cmds_entry, pattern="^manage_cmds_entry$"), CommandHandler("c", cancel_command)], 
+        per_message=False
     )
     
     key_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_edit_links, pattern="^edit_links$")],
         states={WAITING_LINK_1:[MessageHandler(filters.TEXT, receive_link_1)], WAITING_LINK_2:[MessageHandler(filters.TEXT, receive_link_2)]},
-        fallbacks=[CommandHandler("cancel", cancel_admin)]
+        fallbacks=[CommandHandler("cancel", cancel_admin), CommandHandler("c", cancel_command)]
     )
     
     admin_up_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_upload_flow, pattern="^start_upload$")],
         states={WAITING_FOR_PHOTO:[MessageHandler(filters.PHOTO, handle_photo_upload), CallbackQueryHandler(admin_entry, pattern="^back_to_admin$")]},
-        fallbacks=[CommandHandler("admin", admin_entry)]
+        fallbacks=[CommandHandler("admin", admin_entry), CommandHandler("c", cancel_command)]
     )
     
     prod_conv = ConversationHandler(
@@ -1421,7 +1435,8 @@ async def lifespan(app: FastAPI):
             WAITING_PROD_PRICE: [MessageHandler(filters.TEXT, receive_prod_price)],
             WAITING_PROD_CONTENT: [MessageHandler(filters.ALL, receive_prod_content)]
         },
-        fallbacks=[CallbackQueryHandler(manage_products_entry, pattern="^manage_products_entry$")], per_message=False
+        fallbacks=[CallbackQueryHandler(manage_products_entry, pattern="^manage_products_entry$"), CommandHandler("c", cancel_command)], 
+        per_message=False
     )
 
     bot_app.add_handler(verify_conv)
@@ -1465,7 +1480,11 @@ async def lifespan(app: FastAPI):
     bot_app.add_handler(CommandHandler("cz", cz_command))
     bot_app.add_handler(CommandHandler("users", list_users))
     
+    # 这里的 list_users 回调处理需要补充
     bot_app.add_handler(CallbackQueryHandler(list_users, pattern="^list_users$"))
+    
+    # 新增通用退出命令
+    bot_app.add_handler(CommandHandler("c", cancel_command))
     
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
@@ -1487,6 +1506,7 @@ async def health():
 
 @app.get("/watch_ad/{token}")
 async def wad(token: str):
+    # 修复：使用字符串替换而非 f-string 避免语法冲突
     html = """
 <!DOCTYPE html>
 <html>
@@ -1590,7 +1610,46 @@ async def success_page(points: int = 0):
 
 @app.get("/test_page")
 async def test_page():
-    return HTMLResponse(content="<html><body><h1>Test Page</h1></body></html>")
+    html = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>测试</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>body{font-family:sans-serif;text-align:center;padding:20px;background:#fff3e0}.btn{padding:15px;background:#ff9800;color:white;border:none;border-radius:8px;width:100%}</style>
+</head>
+<body>
+<h2>🛠 测试模式</h2>
+<button id="btn" class="btn" onclick="start()">🖱 点击测试</button>
+<div id="s" style="margin-top:20px"></div>
+<script>
+const s = document.getElementById('s');
+const btn = document.getElementById('btn');
+if(window.Telegram && window.Telegram.WebApp) window.Telegram.WebApp.ready();
+
+function start() {
+    btn.disabled = true;
+    let c = 3;
+    const t = setInterval(() => {
+        c--;
+        if(c <= 0) {
+            clearInterval(t);
+            s.innerText = "✅ 模拟成功! 跳转中...";
+            setTimeout(() => {
+                window.location.href = "/ad_success?points=0";
+            }, 1000);
+        } else {
+            s.innerText = "⏳ 模拟中... " + c;
+        }
+    }, 1000);
+}
+</script>
+</body>
+</html>
+"""
+    return HTMLResponse(content=html)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
