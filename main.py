@@ -749,8 +749,8 @@ async def check_vip_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(f"❌ **订单号错误，请重试。**\n剩余机会：{2 - new_fails}次", parse_mode='Markdown')
             return WAITING_VIP_ORDER
-            # ==============================================================================
-# 兑换系统与七星密钥
+# ==============================================================================
+# 兑换系统 (V5) /dh
 # ==============================================================================
 
 async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -797,10 +797,14 @@ async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     # 翻页
     nav = []
-    if offset > 0: nav.append(InlineKeyboardButton("⬅️ 上一页", callback_data=f"list_prod_{offset-10}"))
-    if offset + 10 < total: nav.append(InlineKeyboardButton("➡️ 下一页", callback_data=f"list_prod_{offset+10}"))
-    if nav: kb.append(nav)
+    if offset > 0:
+        nav.append(InlineKeyboardButton("⬅️ 上一页", callback_data=f"list_prod_{offset-10}"))
+    if offset + 10 < total:
+        nav.append(InlineKeyboardButton("➡️ 下一页", callback_data=f"list_prod_{offset+10}"))
+    if nav:
+        kb.append(nav)
     
+    # 移除了余额按钮，只保留返回
     kb.append([InlineKeyboardButton("🔙 返回首页", callback_data="back_to_home")])
     
     text = "🎁 **积分兑换中心**\n请选择您要兑换的商品："
@@ -819,8 +823,11 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     uid = update.effective_user.id
     
+    # 1. 测试商品
     if data == "confirm_buy_test":
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 确认", callback_data="do_buy_test"), InlineKeyboardButton("❌ 取消", callback_data="list_prod_0")]])
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ 确认", callback_data="do_buy_test"), InlineKeyboardButton("❌ 取消", callback_data="list_prod_0")]
+        ])
         await query.edit_message_text("❓ 确认兑换测试商品？", reply_markup=kb, parse_mode='Markdown')
         return
     elif data == "do_buy_test":
@@ -830,6 +837,7 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     pid = int(data.split("_")[-1])
     
+    # 查看已购
     if "view_bought_" in data:
         prod = get_product_details(pid)
         if not prod:
@@ -840,14 +848,19 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fid = prod[4]
         ftype = prod[5]
         
+        # 使用 Markdown 代码块包裹内容，方便点击复制
         await query.message.reply_text(f"📦 **已购内容：**\n`{content}`", parse_mode='Markdown')
         if fid:
             try:
-                if ftype == 'photo': await context.bot.send_photo(uid, fid)
-                elif ftype == 'video': await context.bot.send_video(uid, fid)
-            except: pass
+                if ftype == 'photo':
+                    await context.bot.send_photo(uid, fid)
+                elif ftype == 'video':
+                    await context.bot.send_video(uid, fid)
+            except:
+                pass
         return
 
+    # 确认购买
     if "confirm_buy_" in data:
         prod = get_product_details(pid)
         if not prod:
@@ -857,12 +870,14 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_v, _ = is_vip(uid)
         _, has_free = check_daily_free(uid)
         cost_text = f"{prod[2]} 积分"
-        if is_v and has_free: cost_text = "0 积分 (会员特权)"
+        if is_v and has_free:
+            cost_text = "0 积分 (会员特权)"
             
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 确认兑换", callback_data=f"do_buy_{pid}"), InlineKeyboardButton("❌ 取消", callback_data="list_prod_0")]])
         await query.edit_message_text(f"❓ **确认兑换**\n商品：{prod[1]}\n价格：{cost_text}", reply_markup=kb, parse_mode='Markdown')
         return
 
+    # 执行购买
     if "do_buy_" in data:
         prod = get_product_details(pid)
         if not prod:
@@ -884,70 +899,21 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_points(uid, -price, f"兑换-{prod[1]}")
             
         record_purchase(uid, pid)
+        
         await query.message.reply_text(f"🎉 **兑换成功！**\n消耗 {price if not (is_v and has_free) else 0} 积分。\n\n📦 **内容：**\n`{prod[3] or ''}`", parse_mode='Markdown')
         if prod[4]:
             try:
-                if prod[5] == 'photo': await context.bot.send_photo(uid, prod[4])
-                elif prod[5] == 'video': await context.bot.send_video(uid, prod[4])
-            except: pass
+                if prod[5] == 'photo':
+                    await context.bot.send_photo(uid, prod[4])
+                elif prod[5] == 'video':
+                    await context.bot.send_video(uid, prod[4])
+            except:
+                pass
+            
         await asyncio.sleep(1)
-        await dh_command(update, context)
+        await dh_command(update, context) # 刷新列表
 
-async def get_quark_key_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """七星密钥入口"""
-    query = update.callback_query
-    await query.answer()
-    
-    row = get_system_keys_v7()
-    if not row:
-        await query.message.reply_text("⏳ 系统初始化中，请稍后再试。")
-        return
-
-    kb = []
-    # 百度 x 2
-    row1 = []
-    for i in range(1, 3):
-        if row[i*2]:
-            row1.append(InlineKeyboardButton(f"百度 {i}", url=f"https://{RAILWAY_DOMAIN}/jump?key_index={i}"))
-        else:
-            row1.append(InlineKeyboardButton(f"百度 {i} (空)", callback_data="noop_empty"))
-    kb.append(row1)
-    
-    # 夸克 x 5
-    row2 = []
-    for i in range(3, 6):
-        if row[i*2]:
-            row2.append(InlineKeyboardButton(f"夸克 {i}", url=f"https://{RAILWAY_DOMAIN}/jump?key_index={i}"))
-        else:
-            row2.append(InlineKeyboardButton(f"夸克 {i} (空)", callback_data="noop_empty"))
-    kb.append(row2)
-    
-    row3 = []
-    for i in range(6, 8):
-        if row[i*2]:
-            row3.append(InlineKeyboardButton(f"夸克 {i}", url=f"https://{RAILWAY_DOMAIN}/jump?key_index={i}"))
-        else:
-            row3.append(InlineKeyboardButton(f"夸克 {i} (空)", callback_data="noop_empty"))
-    kb.append(row3)
-    
-    kb.append([InlineKeyboardButton("🔙 返回积分中心", callback_data="my_points")])
-    
-    text = (
-        "🔑 **免费获取解锁密钥**\n\n"
-        "1. 点击下方按钮跳转网盘\n"
-        "2. 保存文件，文件名即为密钥 (如 `KEY123.zip`)\n"
-        "3. 复制文件名 (去掉后缀) 发送给机器人\n"
-        "4. **任意一个密钥** 即可解锁今日兑换权限！\n\n"
-        "⚠️ 注意：每个密钥 7 天内只能使用一次。"
-    )
-    
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-
-async def quark_key_btn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """旧的单个密钥入口 (保留以防报错，逻辑转接)"""
-    await get_quark_key_entry(update, context)
-
-# --- Admin Handlers (必须在此处定义，供 lifespan 调用) ---
+# --- Admin Handlers (必须在此处定义) ---
 
 async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_ID):
@@ -962,6 +928,11 @@ async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text("⚙️ **管理员后台**", reply_markup=kb, parse_mode='Markdown')
     else:
         await update.message.reply_text("⚙️ **管理员后台**", reply_markup=kb, parse_mode='Markdown')
+    return ConversationHandler.END
+
+async def cancel_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin 通用取消"""
+    await update.message.reply_text("🚫 取消")
     return ConversationHandler.END
 
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1141,7 +1112,6 @@ async def receive_cmd_content(update: Update, context: ContextTypes.DEFAULT_TYPE
     fid = None
     ftype = 'text'
     txt = msg.text or msg.caption
-    
     if msg.photo:
         fid = msg.photo[-1].file_id
         ftype = 'photo'
@@ -1151,7 +1121,6 @@ async def receive_cmd_content(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif msg.document:
         fid = msg.document.file_id
         ftype = 'document'
-    
     add_command_content(cid, fid, ftype, msg.caption, txt)
     return WAITING_CMD_CONTENT
 
@@ -1277,7 +1246,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not text or text.startswith('/'):
         return
     
-    # 1. 检查是否为自定义命令
     contents = get_command_content(text.strip())
     if contents:
         sent_msg_ids = []
@@ -1317,7 +1285,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                             sent_msg_ids.append(m.message_id)
                     except:
                         pass
-        
         success_msg = await context.bot.send_message(chat_id, "✅ **发送完毕**", parse_mode='Markdown')
         sent_msg_ids.append(success_msg.message_id)
         asyncio.create_task(delete_messages_task(chat_id, sent_msg_ids))
@@ -1325,7 +1292,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await dh_command(update, context)
         return
     
-    # 2. 密钥验证
     success, msg = check_key_valid(user.id, text)
     if success:
         await update.message.reply_text("✅ **密钥验证成功！**\n兑换中心已为您解锁。", parse_mode='Markdown')
@@ -1454,6 +1420,7 @@ async def lifespan(app: FastAPI):
     
     bot_app.add_handler(CallbackQueryHandler(list_users, pattern="^list_users$"))
     
+    # 新增通用退出命令
     bot_app.add_handler(CommandHandler("c", cancel_command))
     
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
@@ -1553,11 +1520,8 @@ async def jump(key_index: int = 1):
     row = get_system_keys_v7()
     if not row: return HTMLResponse("<h1>System Error</h1>")
     
-    link_idx = key_index * 2
-    raw_target = row[link_idx]
-    
+    link_idx = key_index * 2; raw_target = row[link_idx]
     if not raw_target: return HTMLResponse("<h1>Link Not Set</h1>")
-    
     target = raw_target if raw_target.startswith("http") else "https://" + raw_target
     
     html = """
@@ -1566,14 +1530,14 @@ async def jump(key_index: int = 1):
 <head><meta charset="utf-8"><title>跳转中</title></head>
 <body>
 <h2 style="text-align:center">🚀 跳转中...</h2>
-<iframe src="AD_URL" style="width:1px;height:1px;opacity:0;border:none"></iframe>
+<iframe src="https://otieu.com/4/10489994" style="width:1px;height:1px;opacity:0;border:none"></iframe>
 <script>
 setTimeout(() => window.location.href = "TARGET_URL", 3000);
 </script>
 </body>
 </html>
 """
-    return HTMLResponse(content=html.replace("AD_URL", DIRECT_LINK_1).replace("TARGET_URL", target))
+    return HTMLResponse(content=html.replace("TARGET_URL", target))
 
 @app.get("/ad_success")
 async def success_page(points: int = 0):
@@ -1581,7 +1545,46 @@ async def success_page(points: int = 0):
 
 @app.get("/test_page")
 async def test_page():
-    return HTMLResponse(content="<html><body><h1>Test Page</h1></body></html>")
+    html = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>测试</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>body{font-family:sans-serif;text-align:center;padding:20px;background:#fff3e0}.btn{padding:15px;background:#ff9800;color:white;border:none;border-radius:8px;width:100%}</style>
+</head>
+<body>
+<h2>🛠 测试模式</h2>
+<button id="btn" class="btn" onclick="start()">🖱 点击测试</button>
+<div id="s" style="margin-top:20px"></div>
+<script>
+const s = document.getElementById('s');
+const btn = document.getElementById('btn');
+if(window.Telegram && window.Telegram.WebApp) window.Telegram.WebApp.ready();
+
+function start() {
+    btn.disabled = true;
+    let c = 3;
+    const t = setInterval(() => {
+        c--;
+        if(c <= 0) {
+            clearInterval(t);
+            s.innerText = "✅ 模拟成功! 跳转中...";
+            setTimeout(() => {
+                window.location.href = "/ad_success?points=0";
+            }, 1000);
+        } else {
+            s.innerText = "⏳ 模拟中... " + c;
+        }
+    }, 1000);
+}
+</script>
+</body>
+</html>
+"""
+    return HTMLResponse(content=html)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
