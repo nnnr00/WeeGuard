@@ -1118,7 +1118,9 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(1)
         await dh_command(update, context)
 
-# --- Admin Handlers (必须在此处定义，供 lifespan 调用) ---
+# ==============================================================================
+# Admin Handlers
+# ==============================================================================
 
 async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_ID):
@@ -1184,9 +1186,16 @@ async def receive_prod_content(update: Update, context: ContextTypes.DEFAULT_TYP
     fid = None
     ftype = 'text'
     txt = msg.text or msg.caption
-    if msg.photo: fid=msg.photo[-1].file_id; ftype='photo'
-    elif msg.video: fid=msg.video.file_id; ftype='video'
+    
+    if msg.photo:
+        fid = msg.photo[-1].file_id
+        ftype = 'photo'
+    elif msg.video:
+        fid = msg.video.file_id
+        ftype = 'video'
+    
     add_product(context.user_data['p_name'], context.user_data['p_price'], txt, fid, ftype)
+    
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="manage_products_entry")]])
     await update.message.reply_text("✅ **商品上架成功！**", reply_markup=kb, parse_mode='Markdown')
     return ConversationHandler.END
@@ -1196,20 +1205,29 @@ async def list_admin_prods(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     offset = int(query.data.split("_")[-1])
     rows, total = get_products_list(limit=10, offset=offset)
+    
     kb = []
-    for r in rows: kb.append([InlineKeyboardButton(f"🗑 下架 {r[1]}", callback_data=f"ask_del_prod_{r[0]}")])
+    for r in rows:
+        kb.append([InlineKeyboardButton(f"🗑 下架 {r[1]}", callback_data=f"ask_del_prod_{r[0]}")])
+        
     nav = []
-    if offset > 0: nav.append(InlineKeyboardButton("⬅️", callback_data=f"list_admin_prods_{offset-10}"))
-    if offset+10 < total: nav.append(InlineKeyboardButton("➡️", callback_data=f"list_admin_prods_{offset+10}"))
-    if nav: kb.append(nav)
+    if offset > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"list_admin_prods_{offset-10}"))
+    if offset + 10 < total:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"list_admin_prods_{offset+10}"))
+    if nav:
+        kb.append(nav)
     kb.append([InlineKeyboardButton("🔙 返回", callback_data="manage_products_entry")])
+    
     await query.edit_message_text(f"🛍 **商品列表 ({offset//10 + 1})**", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 async def ask_del_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     pid = int(query.data.split("_")[-1])
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_prod_{pid}"), InlineKeyboardButton("❌ 取消", callback_data="list_admin_prods_0")]])
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_prod_{pid}"), InlineKeyboardButton("❌ 取消", callback_data="list_admin_prods_0")]
+    ])
     await query.edit_message_text(f"⚠️ 确认下架商品 ID {pid}?", reply_markup=kb)
 
 async def confirm_del_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1219,6 +1237,8 @@ async def confirm_del_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
     delete_product(pid)
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="manage_products_entry")]])
     await query.edit_message_text("🗑 已下架。", reply_markup=kb)
+
+# --- Admin Handlers Continued ---
 
 async def manage_cmds_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1235,21 +1255,33 @@ async def list_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     offset = int(query.data.split('_')[-1])
     rows, total = get_commands_list(limit=10, offset=offset)
-    if not rows: await query.edit_message_text("📭 暂无自定义命令。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="manage_cmds_entry")]])); return
+    
+    if not rows:
+        await query.edit_message_text("📭 暂无自定义命令。", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="manage_cmds_entry")]]))
+        return
+        
     kb = []
-    for r in rows: kb.append([InlineKeyboardButton(f"🗑 删除 {r[1]}", callback_data=f"ask_del_cmd_{r[0]}")])
+    for r in rows:
+        kb.append([InlineKeyboardButton(f"🗑 删除 {r[1]}", callback_data=f"ask_del_cmd_{r[0]}")])
+        
     nav = []
-    if offset > 0: nav.append(InlineKeyboardButton("⬅️", callback_data=f"list_cmds_{offset-10}"))
-    if offset+10 < total: nav.append(InlineKeyboardButton("➡️", callback_data=f"list_cmds_{offset+10}"))
-    if nav: kb.append(nav)
+    if offset > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"list_cmds_{offset-10}"))
+    if offset + 10 < total:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"list_cmds_{offset+10}"))
+    if nav:
+        kb.append(nav)
     kb.append([InlineKeyboardButton("🔙 返回", callback_data="manage_cmds_entry")])
+    
     await query.edit_message_text(f"📂 **命令列表 ({offset//10 + 1})**", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 async def ask_del_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     cmd_id = int(query.data.split('_')[-1])
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_cmd_{cmd_id}"), InlineKeyboardButton("❌ 取消", callback_data="manage_cmds_entry")]])
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_cmd_{cmd_id}"), InlineKeyboardButton("❌ 取消", callback_data="manage_cmds_entry")]
+    ])
     await query.edit_message_text(f"⚠️ **确定删除吗？**", reply_markup=kb, parse_mode='Markdown')
 
 async def confirm_del_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1269,8 +1301,11 @@ async def add_cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_cmd_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text.strip()
     cid = add_custom_command(name)
-    if not cid: await update.message.reply_text("❌ 已存在"); return ConversationHandler.END
-    context.user_data['ccd'] = cid; context.user_data['ccn'] = name
+    if not cid:
+        await update.message.reply_text("❌ 已存在")
+        return ConversationHandler.END
+    context.user_data['ccd'] = cid
+    context.user_data['ccn'] = name
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 完成", callback_data="finish_cmd_bind")]])
     await update.message.reply_text(f"✅ `{name}` 创建。\n👇 发送内容 (多条)，完成后点按钮。", reply_markup=kb, parse_mode='Markdown')
     return WAITING_CMD_CONTENT
@@ -1281,9 +1316,15 @@ async def receive_cmd_content(update: Update, context: ContextTypes.DEFAULT_TYPE
     fid = None
     ftype = 'text'
     txt = msg.text or msg.caption
-    if msg.photo: fid=msg.photo[-1].file_id; ftype='photo'
-    elif msg.video: fid=msg.video.file_id; ftype='video'
-    elif msg.document: fid=msg.document.file_id; ftype='document'
+    if msg.photo:
+        fid = msg.photo[-1].file_id
+        ftype = 'photo'
+    elif msg.video:
+        fid = msg.video.file_id
+        ftype = 'video'
+    elif msg.document:
+        fid = msg.document.file_id
+        ftype = 'document'
     add_command_content(cid, fid, ftype, msg.caption, txt)
     return WAITING_CMD_CONTENT
 
@@ -1295,11 +1336,19 @@ async def finish_cmd_bind(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def my_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != str(ADMIN_ID): return
+    if str(update.effective_user.id) != str(ADMIN_ID):
+        return
     info = get_system_keys_v7()
-    if not info: refresh_system_keys_v7(); info = get_system_keys_v7()
+    if not info:
+        refresh_system_keys_v7()
+        info = get_system_keys_v7()
+    
     msg = f"👮‍♂️ **密钥管理** ({info[-1]})\n\n"
-    for i in range(1, 8): msg += f"🔑 Key{i}: `{info[(i-1)*2+1]}`\n🔗 Link{i}: {info[(i-1)*2+2] or '❌'}\n\n"
+    for i in range(1, 8):
+        k_idx = (i-1)*2 + 1
+        l_idx = (i-1)*2 + 2
+        msg += f"🔑 Key{i}: `{info[k_idx]}`\n🔗 Link{i}: {info[l_idx] or '❌'}\n\n"
+        
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("✏️ 修改链接 (1-7)", callback_data="edit_links")]])
     await update.message.reply_text(msg, reply_markup=kb, parse_mode='Markdown')
 
@@ -1309,82 +1358,160 @@ async def start_edit_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_LINK_1
 
 async def receive_link_1(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update_key_link_v7(1, update.message.text); await update.message.reply_text("👇 请发送 **第 2 个** (百度) 链接："); return WAITING_LINK_2
+    update_key_link_v7(1, update.message.text)
+    await update.message.reply_text("👇 请发送 **第 2 个** (百度) 链接：")
+    return WAITING_LINK_2
+
 async def receive_link_2(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update_key_link_v7(2, update.message.text); await update.message.reply_text("👇 请发送 **第 3 个** (夸克) 链接："); return WAITING_LINK_3
+    update_key_link_v7(2, update.message.text)
+    await update.message.reply_text("👇 请发送 **第 3 个** (夸克) 链接：")
+    return WAITING_LINK_3
+
 async def receive_link_3(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update_key_link_v7(3, update.message.text); await update.message.reply_text("👇 请发送 **第 4 个** (夸克) 链接："); return WAITING_LINK_4
+    update_key_link_v7(3, update.message.text)
+    await update.message.reply_text("👇 请发送 **第 4 个** (夸克) 链接：")
+    return WAITING_LINK_4
+
 async def receive_link_4(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update_key_link_v7(4, update.message.text); await update.message.reply_text("👇 请发送 **第 5 个** (夸克) 链接："); return WAITING_LINK_5
+    update_key_link_v7(4, update.message.text)
+    await update.message.reply_text("👇 请发送 **第 5 个** (夸克) 链接：")
+    return WAITING_LINK_5
+
 async def receive_link_5(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update_key_link_v7(5, update.message.text); await update.message.reply_text("👇 请发送 **第 6 个** (夸克) 链接："); return WAITING_LINK_6
+    update_key_link_v7(5, update.message.text)
+    await update.message.reply_text("👇 请发送 **第 6 个** (夸克) 链接：")
+    return WAITING_LINK_6
+
 async def receive_link_6(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update_key_link_v7(6, update.message.text); await update.message.reply_text("👇 请发送 **第 7 个** (夸克) 链接："); return WAITING_LINK_7
+    update_key_link_v7(6, update.message.text)
+    await update.message.reply_text("👇 请发送 **第 7 个** (夸克) 链接：")
+    return WAITING_LINK_7
+
 async def receive_link_7(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update_key_link_v7(7, update.message.text); await update.message.reply_text("✅ **7个链接全部更新完成！**"); return ConversationHandler.END
+    update_key_link_v7(7, update.message.text)
+    await update.message.reply_text("✅ **7个链接全部更新完成！**")
+    return ConversationHandler.END
 
 async def start_upload_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer(); kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="back_to_admin")]]); await update.callback_query.edit_message_text("📤 发送图片:", reply_markup=kb); return WAITING_FOR_PHOTO
-async def handle_photo_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != str(ADMIN_ID): return ConversationHandler.END
-    p = update.message.photo[-1]; save_file_id(p.file_id, p.file_unique_id); kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="back_to_admin")]]); await update.message.reply_text(f"✅ ID:\n`{p.file_id}`", parse_mode='Markdown', reply_markup=kb); return WAITING_FOR_PHOTO
-async def view_files_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer(); fs = get_all_files()
+    await update.callback_query.answer()
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="back_to_admin")]])
-    if not fs: await q.edit_message_text("📭 无记录", reply_markup=kb); return ConversationHandler.END
+    await update.callback_query.edit_message_text("📤 发送图片:", reply_markup=kb)
+    return WAITING_FOR_PHOTO
+
+async def handle_photo_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != str(ADMIN_ID):
+        return ConversationHandler.END
+    p = update.message.photo[-1]
+    save_file_id(p.file_id, p.file_unique_id)
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="back_to_admin")]])
+    await update.message.reply_text(f"✅ ID:\n`{p.file_id}`", parse_mode='Markdown', reply_markup=kb)
+    return WAITING_FOR_PHOTO
+
+async def view_files_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    fs = get_all_files()
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="back_to_admin")]])
+    if not fs:
+        await q.edit_message_text("📭 无记录", reply_markup=kb)
+        return ConversationHandler.END
     await q.message.reply_text("📂 **列表:**", parse_mode='Markdown')
     for dbid, fid in fs:
         del_kb = InlineKeyboardMarkup([[InlineKeyboardButton(f"🗑 删除 {dbid}", callback_data=f"pre_del_{dbid}")]])
         await context.bot.send_photo(q.message.chat_id, fid, caption=f"ID: `{dbid}`", reply_markup=del_kb)
     await context.bot.send_message(q.message.chat_id, "--- END ---", reply_markup=kb)
     return ConversationHandler.END
+
 async def pre_delete_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer(); did = q.data.split('_')[-1]
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_{did}"), InlineKeyboardButton("❌ 取消", callback_data="cancel_del")]]); await q.edit_message_caption(f"⚠️ 确认删除 ID {did}?", reply_markup=kb)
+    q = update.callback_query
+    await q.answer()
+    did = q.data.split('_')[-1]
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ 确认", callback_data=f"confirm_del_{did}"), InlineKeyboardButton("❌ 取消", callback_data="cancel_del")]
+    ])
+    await q.edit_message_caption(f"⚠️ 确认删除 ID {did}?", reply_markup=kb)
+
 async def execute_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer(); did = q.data.split('_')[-1]; delete_file_by_id(did); kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="back_to_admin")]]); await q.delete_message(); await context.bot.send_message(q.message.chat_id, "已删除", reply_markup=kb)
+    q = update.callback_query
+    await q.answer()
+    did = q.data.split('_')[-1]
+    delete_file_by_id(did)
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="back_to_admin")]])
+    await q.delete_message()
+    await context.bot.send_message(q.message.chat_id, "已删除", reply_markup=kb)
+
 async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer("取消"); await update.callback_query.edit_message_caption("已取消", reply_markup=None)
+    await update.callback_query.answer("取消")
+    await update.callback_query.edit_message_caption("已取消", reply_markup=None)
+
 async def cancel_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚫 取消"); return ConversationHandler.END
+    await update.message.reply_text("🚫 取消")
+    return ConversationHandler.END
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user; text = update.message.text
-    if not text or text.startswith('/'): return
+    user = update.effective_user
+    text = update.message.text
+    if not text or text.startswith('/'):
+        return
+    
+    # 1. 检查是否为自定义命令 (纯净转发)
     contents = get_command_content(text.strip())
     if contents:
-        sent_msg_ids = []; chat_id = update.effective_chat.id
-        try: await update.message.delete(); except: pass
+        sent_msg_ids = []
+        chat_id = update.effective_chat.id
+        try:
+            await update.message.delete()
+        except:
+            pass
         chunk_size = 10
         for i in range(0, len(contents), chunk_size):
-            chunk = contents[i:i + chunk_size]; media_group = []
+            chunk = contents[i:i + chunk_size]
+            media_group = []
             for item in chunk:
-                if item[2] == 'photo': media_group.append(InputMediaPhoto(media=item[1]))
-                elif item[2] == 'video': media_group.append(InputMediaVideo(media=item[1]))
+                # 修复：移除 caption，实现纯净发送
+                if item[2] == 'photo':
+                    media_group.append(InputMediaPhoto(media=item[1]))
+                elif item[2] == 'video':
+                    media_group.append(InputMediaVideo(media=item[1]))
             if len(media_group) == len(chunk) and len(media_group) > 1:
-                try: msgs = await context.bot.send_media_group(chat_id=chat_id, media=media_group); sent_msg_ids.extend([m.message_id for m in msgs])
-                except: pass
+                try:
+                    msgs = await context.bot.send_media_group(chat_id=chat_id, media=media_group)
+                    sent_msg_ids.extend([m.message_id for m in msgs])
+                except:
+                    pass
             else:
                 for item in chunk:
                     try:
                         m = None
-                        if item[2] == 'text': m = await context.bot.send_message(chat_id, item[4])
-                        elif item[2] == 'photo': m = await context.bot.send_photo(chat_id, item[1]) # 无 caption
-                        elif item[2] == 'video': m = await context.bot.send_video(chat_id, item[1])
-                        elif item[2] == 'document': m = await context.bot.send_document(chat_id, item[1])
-                        if m: sent_msg_ids.append(m.message_id)
-                    except: pass
+                        if item[2] == 'text':
+                            m = await context.bot.send_message(chat_id, item[4])
+                        elif item[2] == 'photo':
+                            m = await context.bot.send_photo(chat_id, item[1]) # 无 caption
+                        elif item[2] == 'video':
+                            m = await context.bot.send_video(chat_id, item[1]) # 无 caption
+                        elif item[2] == 'document':
+                            m = await context.bot.send_document(chat_id, item[1]) # 无 caption
+                        if m:
+                            sent_msg_ids.append(m.message_id)
+                    except:
+                        pass
+        
         success_msg = await context.bot.send_message(chat_id, "✅ **发送完毕**", parse_mode='Markdown')
         sent_msg_ids.append(success_msg.message_id)
         asyncio.create_task(delete_messages_task(chat_id, sent_msg_ids))
         await asyncio.sleep(2)
         await dh_command(update, context)
         return
+    
+    # 2. 密钥验证
     success, msg = check_key_valid(user.id, text)
     if success:
-        await update.message.reply_text("✅ **密钥验证成功！**\n兑换中心已为您解锁。", parse_mode='Markdown'); await jf_command_handler(update, context)
-    elif msg == "used": await update.message.reply_text("⚠️ 此密钥您已使用过，请获取新的密钥。")
-    else: await start(update, context)
+        await update.message.reply_text("✅ **密钥验证成功！**\n兑换中心已为您解锁。", parse_mode='Markdown')
+        await jf_command_handler(update, context)
+    elif msg == "used":
+        await update.message.reply_text("⚠️ 此密钥您已使用过，请获取新的密钥。")
+    else:
+        await start(update, context)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
