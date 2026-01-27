@@ -169,120 +169,165 @@ def init_db():
     cur.close()
     conn.close()
     # ==============================================================================
+# ==============================================================================
 # 业务逻辑函数 (Database Functions)
 # ==============================================================================
 
 def get_session_date():
     now = datetime.now(tz_bj)
-    if now.hour < 10: return (now - timedelta(days=1)).date()
+    if now.hour < 10:
+        return (now - timedelta(days=1)).date()
     return now.date()
 
 def generate_random_key():
     chars = string.ascii_letters + string.digits
-    return ''.join(random.choice(chars) for _ in range(8)) # 8位更佳
+    return ''.join(random.choice(chars) for _ in range(8))
 
 def get_file_id(key):
     fid = CONFIG.get(key)
-    return fid if fid and fid.startswith("AgAC") else None
+    if fid and fid.startswith("AgAC"):
+        return fid
+    return None
 
 def get_group_link():
     return CONFIG.get("GROUP_LINK", "https://t.me/+495j5rWmApsxYzg9")
 
 def ensure_user_exists(user_id, username=None):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("INSERT INTO users_v3 (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username", (user_id, username))
     cur.execute("INSERT INTO user_ads_v3 (user_id, daily_watch_count) VALUES (%s, 0) ON CONFLICT (user_id) DO NOTHING", (user_id,))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 # --- 积分系统 (V5) ---
+
 def update_points(user_id, amount, reason):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("UPDATE users_v3 SET points = points + %s WHERE user_id = %s RETURNING points", (amount, user_id))
     new_total = cur.fetchone()[0]
     cur.execute("INSERT INTO point_logs_v5 (user_id, change_amount, reason) VALUES (%s, %s, %s)", (user_id, amount, reason))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     return new_total
 
 def get_user_data(user_id):
     ensure_user_exists(user_id)
-    conn = get_db_connection(); cur = conn.cursor()
-    # 获取积分、签到、VIP过期时间、今日免费次数、入群验证状态、解锁状态
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT points, last_checkin_date, checkin_count, vip_expire, daily_free_count, last_free_date, verify_done, verify_unlock_date FROM users_v3 WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     return row
 
 def get_point_logs(user_id, limit=5):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT change_amount, reason, created_at FROM point_logs_v5 WHERE user_id = %s ORDER BY id DESC LIMIT %s", (user_id, limit))
-    rows = cur.fetchall(); cur.close(); conn.close(); return rows
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
 
 def process_checkin(user_id):
     ensure_user_exists(user_id)
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     today = datetime.now(tz_bj).date()
     cur.execute("SELECT last_checkin_date, checkin_count FROM users_v3 WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
-    if row[0] == today: cur.close(); conn.close(); return {"status": "already_checked"}
+    
+    if row[0] == today:
+        cur.close()
+        conn.close()
+        return {"status": "already_checked"}
+        
     pts = 10 if row[1] == 0 else random.randint(3, 8)
     cur.execute("UPDATE users_v3 SET points=points+%s, last_checkin_date=%s, checkin_count=checkin_count+1 WHERE user_id=%s RETURNING points", (pts, today, user_id))
-    tot = cur.fetchone()[0]
+    total = cur.fetchone()[0]
     cur.execute("INSERT INTO point_logs_v5 (user_id, change_amount, reason) VALUES (%s, %s, '每日签到')", (user_id, pts))
-    conn.commit(); cur.close(); conn.close(); return {"status": "success", "added": pts, "total": tot}
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"status": "success", "added": pts, "total": total}
 
 # --- 验证/锁 (V3) ---
+
 def check_lock(user_id, type_prefix):
     ensure_user_exists(user_id)
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     fields = f"{type_prefix}_fails, {type_prefix}_lock"
-    # vip_buy 锁不需要 done 字段，verify 需要
-    if type_prefix == 'verify': fields += ", verify_done"
+    if type_prefix == 'verify':
+        fields += ", verify_done"
     cur.execute(f"SELECT {fields} FROM users_v3 WHERE user_id = %s", (user_id,))
-    row = cur.fetchone(); cur.close(); conn.close()
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    
     if row:
         done = row[2] if len(row) > 2 else False
         return row[0], row[1], done
     return 0, None, False
 
 def update_fail(user_id, type_prefix, current_fails, lock_minutes):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     new_fails = current_fails + 1
     if new_fails >= 2:
         lock_until = datetime.now() + timedelta(minutes=lock_minutes)
         cur.execute(f"UPDATE users_v3 SET {type_prefix}_fails = %s, {type_prefix}_lock = %s WHERE user_id = %s", (new_fails, lock_until, user_id))
     else:
         cur.execute(f"UPDATE users_v3 SET {type_prefix}_fails = %s WHERE user_id = %s", (new_fails, user_id))
-    conn.commit(); cur.close(); conn.close(); return new_fails
+    conn.commit()
+    cur.close()
+    conn.close()
+    return new_fails
 
 def mark_success(user_id, type_prefix):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     sql = f"UPDATE users_v3 SET {type_prefix}_fails=0, {type_prefix}_lock=NULL"
-    if type_prefix == 'verify': sql += ", verify_done=TRUE"
+    if type_prefix == 'verify':
+        sql += ", verify_done=TRUE"
     cur.execute(sql + " WHERE user_id=%s", (user_id,))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 # --- VIP 月卡逻辑 ---
+
 def activate_vip(user_id):
-    conn = get_db_connection(); cur = conn.cursor()
-    # 终身会员：设置一个极远的过期时间 (2099年)
+    conn = get_db_connection()
+    cur = conn.cursor()
     expire = datetime(2099, 1, 1)
     cur.execute("UPDATE users_v3 SET vip_expire=%s, vip_buy_fails=0, vip_buy_lock=NULL WHERE user_id=%s", (expire, user_id))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def is_vip(user_id):
     ensure_user_exists(user_id)
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT vip_expire FROM users_v3 WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
-    cur.close(); conn.close()
-    if row and row[0] and row[0] > datetime.now(): return True, row[0]
+    cur.close()
+    conn.close()
+    if row and row[0] and row[0] > datetime.now():
+        return True, row[0]
     return False, None
 
 # --- 七星密钥系统 (V7) ---
+
 def refresh_system_keys_v7():
-    """重置7个密钥，清空链接"""
     keys = [generate_random_key() for _ in range(7)]
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("""
         UPDATE system_keys_v7 SET 
         key_1=%s, link_1=NULL,
@@ -295,139 +340,261 @@ def refresh_system_keys_v7():
         updated_at=CURRENT_TIMESTAMP
         WHERE id=1
     """, tuple(keys))
-    # 清空用户使用记录
     cur.execute("TRUNCATE TABLE user_used_keys_v7")
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     return keys
 
 def get_system_keys_v7():
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("SELECT * FROM system_keys_v7 WHERE id=1") # 返回所有列
-    row = cur.fetchone(); cur.close(); conn.close(); return row
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM system_keys_v7 WHERE id=1")
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row
 
 def update_key_link_v7(index, link):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute(f"UPDATE system_keys_v7 SET link_{index}=%s WHERE id=1", (link,))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
 def check_key_valid(user_id, input_key):
-    """检查密钥是否有效且未被该用户使用"""
-    row = get_system_keys_v7() # id, k1, l1, k2, l2 ...
-    if not row: return False, None
+    row = get_system_keys_v7()
+    if not row:
+        return False, None
     
-    # row索引: 0=id, 1=k1, 2=l1, 3=k2, 4=l2 ... 
-    # 密钥在 1, 3, 5, 7, 9, 11, 13
     found_idx = -1
+    # 数据库列: id, k1, l1, k2, l2 ...
+    # 密钥索引: 1, 3, 5, 7, 9, 11, 13
     for i in range(1, 8):
         db_key_idx = (i-1)*2 + 1
         if row[db_key_idx] == input_key.strip():
             found_idx = i
             break
             
-    if found_idx == -1: return False, "invalid" # 无效密钥
+    if found_idx == -1:
+        return False, "invalid"
     
-    # 检查是否已用
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT id FROM user_used_keys_v7 WHERE user_id=%s AND key_index=%s", (user_id, found_idx))
     used = cur.fetchone()
-    if used: cur.close(); conn.close(); return False, "used"
+    if used:
+        cur.close()
+        conn.close()
+        return False, "used"
     
-    # 标记已用
     cur.execute("INSERT INTO user_used_keys_v7 (user_id, key_index) VALUES (%s, %s)", (user_id, found_idx))
-    # 解锁今日兑换
     cur.execute("UPDATE users_v3 SET verify_unlock_date=%s WHERE user_id=%s", (datetime.now(tz_bj).date(), user_id))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     return True, "success"
 
 def is_exchange_unlocked(user_id):
-    """检查今日兑换是否解锁 (会员永久解锁)"""
     is_v, _ = is_vip(user_id)
-    if is_v: return True
+    if is_v:
+        return True
     
     ensure_user_exists(user_id)
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT verify_unlock_date FROM users_v3 WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     
     today = datetime.now(tz_bj).date()
     return row and row[0] == today
 
-# --- 商品 & 转发 ---
-# (保留原有的 add_product, get_products_list 等，不做删减)
-def get_products_list(limit, offset):
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("SELECT id, name, price FROM products_v5 ORDER BY id DESC LIMIT %s OFFSET %s", (limit, offset))
-    rs = cur.fetchall(); cur.execute("SELECT COUNT(*) FROM products_v5"); t = cur.fetchone()[0]; cur.close(); conn.close(); return rs, t
-def get_product_details(pid):
-    conn = get_db_connection(); cur = conn.cursor(); cur.execute("SELECT id, name, price, content_text, content_file_id, content_type FROM products_v5 WHERE id=%s", (pid,)); row = cur.fetchone(); cur.close(); conn.close(); return row
-def check_purchase(uid, pid):
-    conn = get_db_connection(); cur = conn.cursor(); cur.execute("SELECT id FROM user_purchases_v5 WHERE user_id=%s AND product_id=%s", (uid,pid)); row=cur.fetchone(); cur.close(); conn.close(); return True if row else False
-def record_purchase(uid, pid):
-    conn = get_db_connection(); cur = conn.cursor(); cur.execute("INSERT INTO user_purchases_v5 (user_id, product_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (uid,pid)); conn.commit(); cur.close(); conn.close()
-def add_product(name, price, text, fid, ftype):
-    conn = get_db_connection(); cur = conn.cursor(); cur.execute("INSERT INTO products_v5 (name, price, content_text, content_file_id, content_type) VALUES (%s, %s, %s, %s, %s)", (name, price, text, fid, ftype)); conn.commit(); cur.close(); conn.close()
-def delete_product(pid):
-    conn = get_db_connection(); cur = conn.cursor(); cur.execute("DELETE FROM products_v5 WHERE id=%s", (pid,)); conn.commit(); cur.close(); conn.close()
+# --- 商品 & 转发库 ---
 
-# 会员免费次数逻辑
+def get_products_list(limit, offset):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, price FROM products_v5 ORDER BY id DESC LIMIT %s OFFSET %s", (limit, offset))
+    rs = cur.fetchall()
+    cur.execute("SELECT COUNT(*) FROM products_v5")
+    t = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return rs, t
+
+def get_product_details(pid):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, price, content_text, content_file_id, content_type FROM products_v5 WHERE id=%s", (pid,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row
+
+def check_purchase(uid, pid):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM user_purchases_v5 WHERE user_id=%s AND product_id=%s", (uid, pid))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return True if row else False
+
+def record_purchase(uid, pid):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO user_purchases_v5 (user_id, product_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (uid, pid))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def add_product(name, price, text, fid, ftype):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO products_v5 (name, price, content_text, content_file_id, content_type) VALUES (%s, %s, %s, %s, %s)", (name, price, text, fid, ftype))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def delete_product(pid):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM products_v5 WHERE id=%s", (pid,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
 def check_daily_free(user_id):
-    """返回 (今日已用次数, 是否还有免费次数)"""
     ensure_user_exists(user_id)
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     today = datetime.now(tz_bj).date()
     cur.execute("SELECT daily_free_count, last_free_date FROM users_v3 WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
     count = row[0]
     last_date = row[1]
     
-    if last_date != today: count = 0 # 重置
+    if last_date != today:
+        count = 0
     
-    has_free = count < 5 # 每日5次免费
-    cur.close(); conn.close()
+    has_free = count < 5
+    cur.close()
+    conn.close()
     return count, has_free
 
 def use_free_chance(user_id):
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     today = datetime.now(tz_bj).date()
     cur.execute("SELECT daily_free_count, last_free_date FROM users_v3 WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
     count = row[0]
-    if row[1] != today: count = 0
+    if row[1] != today:
+        count = 0
     
     cur.execute("UPDATE users_v3 SET daily_free_count=%s, last_free_date=%s WHERE user_id=%s", (count+1, today, user_id))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
-# Admin Lists
 def get_all_users_info(l, o):
-    conn = get_db_connection(); cur = conn.cursor()
-    # 增加 vip_expire 查询
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("SELECT user_id, username, points, vip_expire FROM users_v3 ORDER BY points DESC LIMIT %s OFFSET %s", (l, o))
-    rs = cur.fetchall(); cur.execute("SELECT COUNT(*) FROM users_v3"); t = cur.fetchone()[0]; cur.close(); conn.close(); return rs, t
+    rs = cur.fetchall()
+    cur.execute("SELECT COUNT(*) FROM users_v3")
+    t = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return rs, t
 
 def save_file_id(fid, fuid):
-    conn = get_db_connection(); cur = conn.cursor(); cur.execute("INSERT INTO file_ids_v3 (file_id, file_unique_id) VALUES (%s, %s)", (fid, fuid)); conn.commit(); cur.close(); conn.close()
-def get_all_files():
-    conn = get_db_connection(); cur = conn.cursor(); cur.execute("SELECT id, file_id FROM file_ids_v3 ORDER BY id DESC LIMIT 10"); rs=cur.fetchall(); cur.close(); conn.close(); return rs
-def delete_file_by_id(did):
-    conn = get_db_connection(); cur = conn.cursor(); cur.execute("DELETE FROM file_ids_v3 WHERE id=%s", (did,)); conn.commit(); cur.close(); conn.close()
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO file_ids_v3 (file_id, file_unique_id) VALUES (%s, %s)", (fid, fuid))
+    conn.commit()
+    cur.close()
+    conn.close()
 
-# 转发库逻辑 (保持不变)
-def add_custom_command(cmd): conn=get_db_connection(); cur=conn.cursor(); 
-    try: cur.execute("INSERT INTO custom_commands_v4 (command_name) VALUES (%s) RETURNING id", (cmd,)); cid=cur.fetchone()[0]; conn.commit(); cur.close(); conn.close(); return cid
-    except: conn.rollback(); cur.close(); conn.close(); return None
-def add_command_content(cid, fid, ftype, cap, txt): conn=get_db_connection(); cur=conn.cursor(); cur.execute("INSERT INTO command_contents_v4 (command_id,file_id,file_type,caption,message_text) VALUES (%s,%s,%s,%s,%s)", (cid,fid,ftype,cap,txt)); conn.commit(); cur.close(); conn.close()
-def get_commands_list(l, o): conn=get_db_connection(); cur=conn.cursor(); cur.execute("SELECT id, command_name FROM custom_commands_v4 ORDER BY id DESC LIMIT %s OFFSET %s", (l,o)); rs=cur.fetchall(); cur.execute("SELECT COUNT(*) FROM custom_commands_v4"); t=cur.fetchone()[0]; cur.close(); conn.close(); return rs,t
-def delete_command_by_id(cid): conn=get_db_connection(); cur=conn.cursor(); cur.execute("DELETE FROM custom_commands_v4 WHERE id=%s", (cid,)); conn.commit(); cur.close(); conn.close()
-def get_command_content(cmd): conn=get_db_connection(); cur=conn.cursor(); cur.execute("SELECT c.id, c.file_id, c.file_type, c.caption, c.message_text FROM command_contents_v4 c JOIN custom_commands_v4 cmd ON c.command_id=cmd.id WHERE cmd.command_name=%s ORDER BY c.sort_order", (cmd,)); rs=cur.fetchall(); cur.close(); conn.close(); return rs
+def get_all_files():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, file_id FROM file_ids_v3 ORDER BY id DESC LIMIT 10")
+    rs = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rs
+
+def delete_file_by_id(did):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM file_ids_v3 WHERE id=%s", (did,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def add_custom_command(cmd):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("INSERT INTO custom_commands_v4 (command_name) VALUES (%s) RETURNING id", (cmd,))
+        cid = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return cid
+    except:
+        conn.rollback()
+        cur.close()
+        conn.close()
+        return None
+
+def add_command_content(cid, fid, ftype, cap, txt):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO command_contents_v4 (command_id,file_id,file_type,caption,message_text) VALUES (%s,%s,%s,%s,%s)", (cid, fid, ftype, cap, txt))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def get_commands_list(l, o):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, command_name FROM custom_commands_v4 ORDER BY id DESC LIMIT %s OFFSET %s", (l, o))
+    rs = cur.fetchall()
+    cur.execute("SELECT COUNT(*) FROM custom_commands_v4")
+    t = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return rs, t
+
+def delete_command_by_id(cid):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM custom_commands_v4 WHERE id=%s", (cid,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def get_command_content(cmd):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT c.id, c.file_id, c.file_type, c.caption, c.message_text FROM command_contents_v4 c JOIN custom_commands_v4 cmd ON c.command_id=cmd.id WHERE cmd.command_name=%s ORDER BY c.sort_order", (cmd,))
+    rs = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rs
 
 def reset_admin_stats(aid):
-    """全量重置测试数据"""
-    conn = get_db_connection(); cur = conn.cursor()
+    conn = get_db_connection()
+    cur = conn.cursor()
     cur.execute("UPDATE user_ads_v3 SET daily_watch_count=0 WHERE user_id=%s", (aid,))
     cur.execute("DELETE FROM user_key_claims_v3 WHERE user_id=%s", (aid,))
     cur.execute("DELETE FROM user_purchases_v5 WHERE user_id=%s", (aid,))
-    cur.execute("DELETE FROM user_used_keys_v7 WHERE user_id=%s", (aid,)) # 重置已用密钥
+    cur.execute("DELETE FROM user_used_keys_v7 WHERE user_id=%s", (aid,))
     cur.execute("""
         UPDATE users_v3 SET 
         verify_fails=0, verify_lock=NULL, verify_done=FALSE,
@@ -436,7 +603,9 @@ def reset_admin_stats(aid):
         vip_expire=NULL, daily_free_count=0, vip_buy_fails=0, vip_buy_lock=NULL, verify_unlock_date=NULL
         WHERE user_id=%s
     """, (aid,))
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
     # ==============================================================================
 # 定时任务 (Handlers 之前)
 # ==============================================================================
