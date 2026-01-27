@@ -773,18 +773,58 @@ async def activity_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
-async def quark_key_btn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_quark_key_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """七星密钥入口"""
     query = update.callback_query
     await query.answer()
-    uid = update.effective_user.id
-    info = get_system_keys_v7()
     
-    if not info:
-        await query.message.reply_text("⏳ 初始化中...")
+    row = get_system_keys_v7()
+    if not row:
+        await query.message.reply_text("⏳ 系统初始化中，请稍后再试。")
         return
-        
-    # V7逻辑：这里不再发放单个密钥，而是跳转到7密钥选择界面
-    # 此函数仅为了兼容旧按钮
+
+    kb = []
+    # 百度 x 2
+    row1 = []
+    for i in range(1, 3):
+        if row[i*2]:
+            row1.append(InlineKeyboardButton(f"百度 {i}", url=f"https://{RAILWAY_DOMAIN}/jump?key_index={i}"))
+        else:
+            row1.append(InlineKeyboardButton(f"百度 {i} (空)", callback_data="noop_empty"))
+    kb.append(row1)
+    
+    # 夸克 x 5
+    row2 = []
+    for i in range(3, 6):
+        if row[i*2]:
+            row2.append(InlineKeyboardButton(f"夸克 {i}", url=f"https://{RAILWAY_DOMAIN}/jump?key_index={i}"))
+        else:
+            row2.append(InlineKeyboardButton(f"夸克 {i} (空)", callback_data="noop_empty"))
+    kb.append(row2)
+    
+    row3 = []
+    for i in range(6, 8):
+        if row[i*2]:
+            row3.append(InlineKeyboardButton(f"夸克 {i}", url=f"https://{RAILWAY_DOMAIN}/jump?key_index={i}"))
+        else:
+            row3.append(InlineKeyboardButton(f"夸克 {i} (空)", callback_data="noop_empty"))
+    kb.append(row3)
+    
+    kb.append([InlineKeyboardButton("🔙 返回积分中心", callback_data="my_points")])
+    
+    text = (
+        "🔑 **免费获取解锁密钥**\n\n"
+        "1. 点击下方按钮跳转网盘\n"
+        "2. 保存文件，文件名即为密钥 (如 `KEY123.zip`)\n"
+        "3. 复制文件名 (去掉后缀) 发送给机器人\n"
+        "4. **任意一个密钥** 即可解锁今日兑换权限！\n\n"
+        "⚠️ 注意：每个密钥 7 天内只能使用一次。"
+    )
+    
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+async def quark_key_btn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """旧的单个密钥入口 (保留以防报错，逻辑转接)"""
     await get_quark_key_entry(update, context)
 
 async def cz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -985,7 +1025,40 @@ async def check_vip_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ **订单号错误，请重试。**\n剩余机会：{2 - new_fails}次", parse_mode='Markdown')
             return WAITING_VIP_ORDER
             # ==============================================================================
-# 兑换系统 (V5) /dh
+# Admin Handlers
+# ==============================================================================
+
+async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != str(ADMIN_ID):
+        return
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🖼 File ID 管理", callback_data="start_upload")],
+        [InlineKeyboardButton("📚 频道转发库", callback_data="manage_cmds_entry")],
+        [InlineKeyboardButton("🛍 商品管理", callback_data="manage_products_entry")],
+        [InlineKeyboardButton("👥 用户与记录", callback_data="list_users")]
+    ])
+    if update.callback_query:
+        await update.callback_query.edit_message_text("⚙️ **管理员后台**", reply_markup=kb, parse_mode='Markdown')
+    else:
+        await update.message.reply_text("⚙️ **管理员后台**", reply_markup=kb, parse_mode='Markdown')
+    return ConversationHandler.END
+
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != str(ADMIN_ID):
+        return
+    rows, _ = get_all_users_info(20, 0)
+    msg = "👥 **用户列表 (Top 20)**\n\n"
+    for r in rows:
+        mark = "👑" if r[3] and r[3] > datetime.now() else ""
+        msg += f"ID: `{r[0]}` {mark} | 分: {r[2]}\n"
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回后台", callback_data="back_to_admin")]])
+    if update.callback_query:
+        await update.callback_query.edit_message_text(msg, reply_markup=kb, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(msg, reply_markup=kb, parse_mode='Markdown')
+
+# ==============================================================================
+# 兑换中心与七星密钥
 # ==============================================================================
 
 async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1012,9 +1085,12 @@ async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     daily_used, has_free = check_daily_free(user_id)
     
     kb = []
+    # 始终存在的测试按钮
     kb.append([InlineKeyboardButton("🎁 测试商品 (0积分)", callback_data="confirm_buy_test")])
     
+    # 数据库商品
     for r in rows:
+        # r: id, name, price
         is_bought = check_purchase(user_id, r[0])
         if is_bought:
             btn_text = f"✅ {r[1]} (已兑换)"
@@ -1027,6 +1103,7 @@ async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             callback = f"confirm_buy_{r[0]}"
         kb.append([InlineKeyboardButton(btn_text, callback_data=callback)])
         
+    # 翻页
     nav = []
     if offset > 0:
         nav.append(InlineKeyboardButton("⬅️ 上一页", callback_data=f"list_prod_{offset-10}"))
@@ -1069,15 +1146,20 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not prod:
             await query.answer("商品不存在", show_alert=True)
             return
+        
         content = prod[3] or "无文本"
         fid = prod[4]
         ftype = prod[5]
+        
         await query.message.reply_text(f"📦 **已购内容：**\n`{content}`", parse_mode='Markdown')
         if fid:
             try:
-                if ftype == 'photo': await context.bot.send_photo(uid, fid)
-                elif ftype == 'video': await context.bot.send_video(uid, fid)
-            except: pass
+                if ftype == 'photo':
+                    await context.bot.send_photo(uid, fid)
+                elif ftype == 'video':
+                    await context.bot.send_video(uid, fid)
+            except:
+                pass
         return
 
     if "confirm_buy_" in data:
@@ -1085,10 +1167,13 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not prod:
             await query.answer("商品已下架", show_alert=True)
             return
+        
         is_v, _ = is_vip(uid)
         _, has_free = check_daily_free(uid)
         cost_text = f"{prod[2]} 积分"
-        if is_v and has_free: cost_text = "0 积分 (会员特权)"
+        if is_v and has_free:
+            cost_text = "0 积分 (会员特权)"
+            
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ 确认兑换", callback_data=f"do_buy_{pid}"), InlineKeyboardButton("❌ 取消", callback_data="list_prod_0")]])
         await query.edit_message_text(f"❓ **确认兑换**\n商品：{prod[1]}\n价格：{cost_text}", reply_markup=kb, parse_mode='Markdown')
         return
@@ -1098,58 +1183,91 @@ async def exchange_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not prod:
             await query.answer("商品已下架", show_alert=True)
             return
+        
         is_v, _ = is_vip(uid)
         _, has_free = check_daily_free(uid)
         price = prod[2]
+        
         if is_v and has_free:
             use_free_chance(uid)
         else:
-            if get_user_data(uid)[0] < price:
-                await query.edit_message_text("❌ **余额不足！**", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="list_prod_0")]]))
+            user_pts = get_user_data(uid)[0]
+            if user_pts < price:
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="list_prod_0")]])
+                await query.edit_message_text("❌ **余额不足！**\n请充值或赚取更多积分。", reply_markup=kb, parse_mode='Markdown')
                 return
             update_points(uid, -price, f"兑换-{prod[1]}")
+            
         record_purchase(uid, pid)
+        
         await query.message.reply_text(f"🎉 **兑换成功！**\n消耗 {price if not (is_v and has_free) else 0} 积分。\n\n📦 **内容：**\n`{prod[3] or ''}`", parse_mode='Markdown')
         if prod[4]:
             try:
-                if prod[5]=='photo': await context.bot.send_photo(uid, prod[4])
-                elif prod[5]=='video': await context.bot.send_video(uid, prod[4])
-            except: pass
+                if prod[5] == 'photo':
+                    await context.bot.send_photo(uid, prod[4])
+                elif prod[5] == 'video':
+                    await context.bot.send_video(uid, prod[4])
+            except:
+                pass
+            
         await asyncio.sleep(1)
-        await dh_command(update, context)
+        await dh_command(update, context) # 刷新列表
 
-# ==============================================================================
-# Admin Handlers
-# ==============================================================================
-
-async def admin_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != str(ADMIN_ID):
+async def get_quark_key_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """七星密钥入口"""
+    query = update.callback_query
+    await query.answer()
+    
+    row = get_system_keys_v7()
+    if not row:
+        await query.message.reply_text("⏳ 系统初始化中，请稍后再试。")
         return
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🖼 File ID 管理", callback_data="start_upload")],
-        [InlineKeyboardButton("📚 频道转发库", callback_data="manage_cmds_entry")],
-        [InlineKeyboardButton("🛍 商品管理", callback_data="manage_products_entry")],
-        [InlineKeyboardButton("👥 用户与记录", callback_data="list_users")]
-    ])
-    if update.callback_query:
-        await update.callback_query.edit_message_text("⚙️ **管理员后台**", reply_markup=kb, parse_mode='Markdown')
-    else:
-        await update.message.reply_text("⚙️ **管理员后台**", reply_markup=kb, parse_mode='Markdown')
-    return ConversationHandler.END
 
-async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != str(ADMIN_ID):
-        return
-    rows, _ = get_all_users_info(20, 0)
-    msg = "👥 **用户列表 (Top 20)**\n\n"
-    for r in rows:
-        mark = "👑" if r[3] and r[3] > datetime.now() else ""
-        msg += f"ID: `{r[0]}` {mark} | 分: {r[2]}\n"
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回后台", callback_data="back_to_admin")]])
-    if update.callback_query:
-        await update.callback_query.edit_message_text(msg, reply_markup=kb, parse_mode='Markdown')
-    else:
-        await update.message.reply_text(msg, reply_markup=kb, parse_mode='Markdown')
+    kb = []
+    # 百度 x 2
+    row1 = []
+    for i in range(1, 3):
+        if row[i*2]:
+            row1.append(InlineKeyboardButton(f"百度 {i}", url=f"https://{RAILWAY_DOMAIN}/jump?key_index={i}"))
+        else:
+            row1.append(InlineKeyboardButton(f"百度 {i} (空)", callback_data="noop_empty"))
+    kb.append(row1)
+    
+    # 夸克 x 5
+    row2 = []
+    for i in range(3, 6):
+        if row[i*2]:
+            row2.append(InlineKeyboardButton(f"夸克 {i}", url=f"https://{RAILWAY_DOMAIN}/jump?key_index={i}"))
+        else:
+            row2.append(InlineKeyboardButton(f"夸克 {i} (空)", callback_data="noop_empty"))
+    kb.append(row2)
+    
+    row3 = []
+    for i in range(6, 8):
+        if row[i*2]:
+            row3.append(InlineKeyboardButton(f"夸克 {i}", url=f"https://{RAILWAY_DOMAIN}/jump?key_index={i}"))
+        else:
+            row3.append(InlineKeyboardButton(f"夸克 {i} (空)", callback_data="noop_empty"))
+    kb.append(row3)
+    
+    kb.append([InlineKeyboardButton("🔙 返回积分中心", callback_data="my_points")])
+    
+    text = (
+        "🔑 **免费获取解锁密钥**\n\n"
+        "1. 点击下方按钮跳转网盘\n"
+        "2. 保存文件，文件名即为密钥 (如 `KEY123.zip`)\n"
+        "3. 复制文件名 (去掉后缀) 发送给机器人\n"
+        "4. **任意一个密钥** 即可解锁今日兑换权限！\n\n"
+        "⚠️ 注意：每个密钥 7 天内只能使用一次。"
+    )
+    
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+async def quark_key_btn_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """旧的单个密钥入口 (兼容处理)"""
+    await get_quark_key_entry(update, context)
+
+# --- Admin Products Handlers ---
 
 async def manage_products_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1238,8 +1356,6 @@ async def confirm_del_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回", callback_data="manage_products_entry")]])
     await query.edit_message_text("🗑 已下架。", reply_markup=kb)
 
-# --- Admin Handlers Continued ---
-
 async def manage_cmds_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1316,6 +1432,7 @@ async def receive_cmd_content(update: Update, context: ContextTypes.DEFAULT_TYPE
     fid = None
     ftype = 'text'
     txt = msg.text or msg.caption
+    
     if msg.photo:
         fid = msg.photo[-1].file_id
         ftype = 'photo'
@@ -1325,6 +1442,7 @@ async def receive_cmd_content(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif msg.document:
         fid = msg.document.file_id
         ftype = 'document'
+    
     add_command_content(cid, fid, ftype, msg.caption, txt)
     return WAITING_CMD_CONTENT
 
@@ -1454,7 +1572,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not text or text.startswith('/'):
         return
     
-    # 1. 检查是否为自定义命令 (纯净转发)
     contents = get_command_content(text.strip())
     if contents:
         sent_msg_ids = []
@@ -1468,7 +1585,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             chunk = contents[i:i + chunk_size]
             media_group = []
             for item in chunk:
-                # 修复：移除 caption，实现纯净发送
                 if item[2] == 'photo':
                     media_group.append(InputMediaPhoto(media=item[1]))
                 elif item[2] == 'video':
@@ -1488,9 +1604,9 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                         elif item[2] == 'photo':
                             m = await context.bot.send_photo(chat_id, item[1]) # 无 caption
                         elif item[2] == 'video':
-                            m = await context.bot.send_video(chat_id, item[1]) # 无 caption
+                            m = await context.bot.send_video(chat_id, item[1])
                         elif item[2] == 'document':
-                            m = await context.bot.send_document(chat_id, item[1]) # 无 caption
+                            m = await context.bot.send_document(chat_id, item[1])
                         if m:
                             sent_msg_ids.append(m.message_id)
                     except:
@@ -1503,7 +1619,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await dh_command(update, context)
         return
     
-    # 2. 密钥验证
     success, msg = check_key_valid(user.id, text)
     if success:
         await update.message.reply_text("✅ **密钥验证成功！**\n兑换中心已为您解锁。", parse_mode='Markdown')
@@ -1513,10 +1628,19 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         await start(update, context)
 
+# ==============================================================================
+# Main App & Web Server (Lifespan + Routes)
+# ==============================================================================
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print(f"--- DOMAIN: {RAILWAY_DOMAIN} ---"); init_db(); print("DB OK.")
-    if not get_system_keys_v7(): refresh_system_keys_v7()
+    print(f"--- DOMAIN: {RAILWAY_DOMAIN} ---")
+    init_db()
+    print("DB OK.")
+    
+    if not get_system_keys_v7():
+        refresh_system_keys_v7()
+    
     scheduler.add_job(weekly_reset_task, 'cron', day_of_week='mon', hour=0, timezone=tz_bj)
     scheduler.add_job(daily_reset_task, 'cron', hour=0, minute=0, timezone=tz_bj)
     scheduler.start()
@@ -1524,73 +1648,189 @@ async def lifespan(app: FastAPI):
     global bot_app
     bot_app = Application.builder().token(BOT_TOKEN).build()
     
-    # Handlers
+    # Handlers Registration
     verify_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(verify_entry, pattern="^start_verify_flow$")],
         states={WAITING_START_ORDER: [CallbackQueryHandler(ask_start_order, pattern="^paid_start$"), MessageHandler(filters.TEXT & ~filters.COMMAND, check_start_order)]},
         fallbacks=[CommandHandler("start", start), CommandHandler("c", cancel_command)], per_message=False
     )
+    
     vip_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(buy_vip_card, pattern="^buy_vip_card$")],
         states={WAITING_VIP_ORDER: [CallbackQueryHandler(ask_vip_order, pattern="^paid_vip$"), MessageHandler(filters.TEXT & ~filters.COMMAND, check_vip_order)]},
         fallbacks=[CommandHandler("jf", jf_command_handler), CommandHandler("c", cancel_command)], per_message=False
     )
+    
     recharge_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(recharge_menu, pattern="^go_recharge$"), CallbackQueryHandler(recharge_entry, pattern="^pay_wx|pay_ali$")],
         states={WAITING_RECHARGE_ORDER: [CallbackQueryHandler(ask_recharge_order, pattern="^paid_recharge$"), MessageHandler(filters.TEXT & ~filters.COMMAND, check_recharge_order)]},
         fallbacks=[CommandHandler("jf", jf_command_handler), CallbackQueryHandler(jf_command_handler, pattern="^my_points$"), CommandHandler("c", cancel_command)], per_message=False
     )
+    
     cmd_add_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_cmd_start, pattern="^add_new_cmd$")],
-        states={WAITING_CMD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_cmd_name)], WAITING_CMD_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND, receive_cmd_content), CallbackQueryHandler(finish_cmd_bind, pattern="^finish_cmd_bind$")]},
+        states={
+            WAITING_CMD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_cmd_name)],
+            WAITING_CMD_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND, receive_cmd_content), CallbackQueryHandler(finish_cmd_bind, pattern="^finish_cmd_bind$")]
+        },
         fallbacks=[CallbackQueryHandler(manage_cmds_entry, pattern="^manage_cmds_entry$"), CommandHandler("c", cancel_command)], per_message=False
     )
+    
     key_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_edit_links, pattern="^edit_links$")],
-        states={WAITING_LINK_1: [MessageHandler(filters.TEXT, receive_link_1)], WAITING_LINK_2: [MessageHandler(filters.TEXT, receive_link_2)], WAITING_LINK_3: [MessageHandler(filters.TEXT, receive_link_3)], WAITING_LINK_4: [MessageHandler(filters.TEXT, receive_link_4)], WAITING_LINK_5: [MessageHandler(filters.TEXT, receive_link_5)], WAITING_LINK_6: [MessageHandler(filters.TEXT, receive_link_6)], WAITING_LINK_7: [MessageHandler(filters.TEXT, receive_link_7)]},
+        states={
+            WAITING_LINK_1: [MessageHandler(filters.TEXT, receive_link_1)],
+            WAITING_LINK_2: [MessageHandler(filters.TEXT, receive_link_2)],
+            WAITING_LINK_3: [MessageHandler(filters.TEXT, receive_link_3)],
+            WAITING_LINK_4: [MessageHandler(filters.TEXT, receive_link_4)],
+            WAITING_LINK_5: [MessageHandler(filters.TEXT, receive_link_5)],
+            WAITING_LINK_6: [MessageHandler(filters.TEXT, receive_link_6)],
+            WAITING_LINK_7: [MessageHandler(filters.TEXT, receive_link_7)],
+        },
         fallbacks=[CommandHandler("cancel", cancel_admin), CommandHandler("c", cancel_command)]
     )
+    
     admin_up_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_upload_flow, pattern="^start_upload$")],
         states={WAITING_FOR_PHOTO:[MessageHandler(filters.PHOTO, handle_photo_upload), CallbackQueryHandler(admin_entry, pattern="^back_to_admin$")]},
         fallbacks=[CommandHandler("admin", admin_entry), CommandHandler("c", cancel_command)]
     )
+    
     prod_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_product_start, pattern="^add_product_start$")],
-        states={WAITING_PROD_NAME: [MessageHandler(filters.TEXT, receive_prod_name)], WAITING_PROD_PRICE: [MessageHandler(filters.TEXT, receive_prod_price)], WAITING_PROD_CONTENT: [MessageHandler(filters.ALL, receive_prod_content)]},
+        states={
+            WAITING_PROD_NAME: [MessageHandler(filters.TEXT, receive_prod_name)],
+            WAITING_PROD_PRICE: [MessageHandler(filters.TEXT, receive_prod_price)],
+            WAITING_PROD_CONTENT: [MessageHandler(filters.ALL, receive_prod_content)]
+        },
         fallbacks=[CallbackQueryHandler(manage_products_entry, pattern="^manage_products_entry$"), CommandHandler("c", cancel_command)], per_message=False
     )
 
-    bot_app.add_handler(verify_conv); bot_app.add_handler(vip_conv); bot_app.add_handler(recharge_conv)
-    bot_app.add_handler(cmd_add_conv); bot_app.add_handler(key_conv); bot_app.add_handler(admin_up_conv); bot_app.add_handler(prod_conv)
+    bot_app.add_handler(verify_conv)
+    bot_app.add_handler(vip_conv)
+    bot_app.add_handler(recharge_conv)
+    bot_app.add_handler(cmd_add_conv)
+    bot_app.add_handler(key_conv)
+    bot_app.add_handler(admin_up_conv)
+    bot_app.add_handler(prod_conv)
     
-    bot_app.add_handler(CommandHandler("start", start)); bot_app.add_handler(CallbackQueryHandler(start, pattern="^back_to_home$"))
-    bot_app.add_handler(CommandHandler("jf", jf_command_handler)); bot_app.add_handler(CallbackQueryHandler(jf_command_handler, pattern="^my_points$")); bot_app.add_handler(CallbackQueryHandler(noop_handler, pattern="^noop_")); bot_app.add_handler(CallbackQueryHandler(view_balance, pattern="^view_balance$"))
-    bot_app.add_handler(CommandHandler("hd", activity_handler)); bot_app.add_handler(CallbackQueryHandler(activity_handler, pattern="^open_activity$")); bot_app.add_handler(CallbackQueryHandler(checkin_handler, pattern="^do_checkin$")); bot_app.add_handler(CallbackQueryHandler(quark_key_btn_handler, pattern="^get_quark_key$")); bot_app.add_handler(CallbackQueryHandler(get_quark_key_entry, pattern="^get_quark_key_v7$"))
-    bot_app.add_handler(CommandHandler("dh", dh_command)); bot_app.add_handler(CallbackQueryHandler(dh_command, pattern="^go_exchange$")); bot_app.add_handler(CallbackQueryHandler(dh_command, pattern="^list_prod_")); bot_app.add_handler(CallbackQueryHandler(exchange_handler, pattern="^confirm_buy_|do_buy_|view_bought_"))
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(CallbackQueryHandler(start, pattern="^back_to_home$"))
     
-    bot_app.add_handler(CommandHandler("admin", admin_entry)); bot_app.add_handler(CallbackQueryHandler(admin_entry, pattern="^back_to_admin$"))
-    bot_app.add_handler(CallbackQueryHandler(manage_cmds_entry, pattern="^manage_cmds_entry$")); bot_app.add_handler(CallbackQueryHandler(list_cmds, pattern="^list_cmds_")); bot_app.add_handler(CallbackQueryHandler(ask_del_cmd, pattern="^ask_del_cmd_")); bot_app.add_handler(CallbackQueryHandler(confirm_del_cmd, pattern="^confirm_del_cmd_"))
-    bot_app.add_handler(CallbackQueryHandler(manage_products_entry, pattern="^manage_products_entry$")); bot_app.add_handler(CallbackQueryHandler(list_admin_prods, pattern="^list_admin_prods_")); bot_app.add_handler(CallbackQueryHandler(ask_del_prod, pattern="^ask_del_prod_")); bot_app.add_handler(CallbackQueryHandler(confirm_del_prod, pattern="^confirm_del_prod_"))
-    bot_app.add_handler(CommandHandler("my", my_command)); bot_app.add_handler(CommandHandler("cz", cz_command)); bot_app.add_handler(CommandHandler("users", list_users))
+    bot_app.add_handler(CommandHandler("jf", jf_command_handler))
+    bot_app.add_handler(CallbackQueryHandler(jf_command_handler, pattern="^my_points$"))
+    bot_app.add_handler(CallbackQueryHandler(noop_handler, pattern="^noop_"))
+    bot_app.add_handler(CallbackQueryHandler(view_balance, pattern="^view_balance$"))
+    
+    bot_app.add_handler(CommandHandler("hd", activity_handler))
+    bot_app.add_handler(CallbackQueryHandler(activity_handler, pattern="^open_activity$"))
+    bot_app.add_handler(CallbackQueryHandler(checkin_handler, pattern="^do_checkin$"))
+    bot_app.add_handler(CallbackQueryHandler(quark_key_btn_handler, pattern="^get_quark_key$"))
+    bot_app.add_handler(CallbackQueryHandler(get_quark_key_entry, pattern="^get_quark_key_v7$"))
+    
+    bot_app.add_handler(CommandHandler("dh", dh_command))
+    bot_app.add_handler(CallbackQueryHandler(dh_command, pattern="^go_exchange$"))
+    bot_app.add_handler(CallbackQueryHandler(dh_command, pattern="^list_prod_"))
+    bot_app.add_handler(CallbackQueryHandler(exchange_handler, pattern="^confirm_buy_|do_buy_|view_bought_"))
+    
+    bot_app.add_handler(CommandHandler("admin", admin_entry))
+    bot_app.add_handler(CallbackQueryHandler(admin_entry, pattern="^back_to_admin$"))
+    bot_app.add_handler(CallbackQueryHandler(manage_cmds_entry, pattern="^manage_cmds_entry$"))
+    bot_app.add_handler(CallbackQueryHandler(list_cmds, pattern="^list_cmds_"))
+    bot_app.add_handler(CallbackQueryHandler(ask_del_cmd, pattern="^ask_del_cmd_"))
+    bot_app.add_handler(CallbackQueryHandler(confirm_del_cmd, pattern="^confirm_del_cmd_"))
+    
+    bot_app.add_handler(CallbackQueryHandler(manage_products_entry, pattern="^manage_products_entry$"))
+    bot_app.add_handler(CallbackQueryHandler(list_admin_prods, pattern="^list_admin_prods_"))
+    bot_app.add_handler(CallbackQueryHandler(ask_del_prod, pattern="^ask_del_prod_"))
+    bot_app.add_handler(CallbackQueryHandler(confirm_del_prod, pattern="^confirm_del_prod_"))
+    
+    bot_app.add_handler(CommandHandler("my", my_command))
+    bot_app.add_handler(CommandHandler("cz", cz_command))
+    bot_app.add_handler(CommandHandler("users", list_users))
     bot_app.add_handler(CallbackQueryHandler(list_users, pattern="^list_users$"))
+    
+    # 通用取消命令
     bot_app.add_handler(CommandHandler("c", cancel_command))
+    
+    # 文本处理放在最后
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
-    await bot_app.initialize(); await bot_app.start(); await bot_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    await bot_app.initialize()
+    await bot_app.start()
+    await bot_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     
     yield
-    if bot_app: await bot_app.stop(); await bot_app.shutdown()
+    if bot_app:
+        await bot_app.stop()
+        await bot_app.shutdown()
     scheduler.shutdown()
 
 app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
-async def health(): return {"status": "ok"}
+async def health():
+    return {"status": "ok"}
 
 @app.get("/watch_ad/{token}")
 async def wad(token: str):
-    html = """<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>视频任务</title><script src="https://telegram.org/js/telegram-web-app.js"></script><script src='https://libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script><style>body{font-family:sans-serif;text-align:center;padding:20px;background:#f4f4f9}.btn{padding:15px;background:#0088cc;color:white;border:none;border-radius:8px;width:100%}</style></head><body><h2>📺 观看广告</h2><button id="btn" class="btn" onclick="start()">▶️ 开始</button><div id="s" style="margin-top:20px"></div><script>const token="TOKEN_VAL";const s=document.getElementById('s'),btn=document.getElementById('btn');if(window.Telegram&&window.Telegram.WebApp)window.Telegram.WebApp.ready();function start(){btn.disabled=!0;s.innerText="⏳ 加载中...";if(typeof show_10489957==='function'){show_10489957().then(()=>{s.innerText="✅ 验证中...";fetch('/api/verify_ad',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:token})}).then(r=>r.json()).then(d=>{if(d.success){s.innerHTML="🎉 成功! +"+d.points+"分";setTimeout(()=>{if(window.Telegram&&window.Telegram.WebApp)window.Telegram.WebApp.close();else window.close()},2000)}else{s.innerText="❌ "+d.message;btn.disabled=!1}}).catch(e=>{s.innerText="❌ 网络错误";btn.disabled=!1})}).catch(e=>{console.log(e);s.innerText="❌ 广告失败:"+e;btn.disabled=!1})}else{s.innerText="❌ SDK Error";btn.disabled=!1}}</script></body></html>"""
+    html = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Task</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src='https://libtl.com/sdk.js' data-zone='10489957' data-sdk='show_10489957'></script>
+<style>body{font-family:sans-serif;text-align:center;padding:20px;background:#f4f4f9}.btn{padding:15px;background:#0088cc;color:white;border:none;border-radius:8px;width:100%}</style>
+</head>
+<body>
+<h2>📺 观看广告</h2>
+<button id="btn" class="btn" onclick="start()">▶️ 开始</button>
+<div id="s" style="margin-top:20px"></div>
+<script>
+const token = "TOKEN_VAL";
+const s = document.getElementById('s');
+const btn = document.getElementById('btn');
+if(window.Telegram && window.Telegram.WebApp) window.Telegram.WebApp.ready();
+
+function start() {
+    btn.disabled = true;
+    s.innerText = "⏳ 加载中...";
+    if (typeof show_10489957 === 'function') {
+        show_10489957().then(() => {
+            s.innerText = "✅ 验证中...";
+            fetch('/api/verify_ad', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({token: token})
+            }).then(r => r.json()).then(d => {
+                if(d.success) {
+                    s.innerHTML = "🎉 成功! +"+d.points+"分";
+                    setTimeout(() => {
+                        if(window.Telegram && window.Telegram.WebApp) window.Telegram.WebApp.close();
+                        else window.close();
+                    }, 2000);
+                } else {
+                    s.innerText = "❌ " + d.message;
+                    btn.disabled = false;
+                }
+            }).catch(e => { s.innerText = "❌ 网络错误"; btn.disabled = false; });
+        }).catch(e => { 
+            console.log(e);
+            s.innerText = "❌ 广告失败: " + e; 
+            btn.disabled = false; 
+        });
+    } else {
+        s.innerText = "❌ SDK Error";
+        btn.disabled = false;
+    }
+}
+</script>
+</body>
+</html>
+"""
     return HTMLResponse(content=html.replace("TOKEN_VAL", token))
 
 @app.post("/api/verify_ad")
@@ -1599,8 +1839,10 @@ async def vad(p: dict):
     if not uid: return JSONResponse({"success": False, "message": "Expired"})
     res = process_ad_reward(uid)
     if res["status"] == "success":
-        try: await bot_app.bot.send_message(chat_id=uid, text=f"🎉 **恭喜！** 观看完成，获得 {res['added']} 积分！", parse_mode='Markdown')
-        except: pass
+        try:
+            await bot_app.bot.send_message(chat_id=uid, text=f"🎉 **恭喜！** 观看完成，获得 {res['added']} 积分！", parse_mode='Markdown')
+        except:
+            pass
     return JSONResponse({"success": True, "points": res.get("added", 0), "message": res.get("status")})
 
 @app.get("/jump")
@@ -1610,8 +1852,20 @@ async def jump(key_index: int = 1):
     link_idx = key_index * 2; raw_target = row[link_idx]
     if not raw_target: return HTMLResponse("<h1>Link Not Set</h1>")
     target = raw_target if raw_target.startswith("http") else "https://" + raw_target
-    html = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>跳转中</title></head><body><h2 style="text-align:center">🚀 跳转中...</h2><iframe src="https://otieu.com/4/10489994" style="width:1px;height:1px;opacity:0;border:none"></iframe><script>setTimeout(()=>window.location.href="TARGET_URL",3000)</script></body></html>"""
-    return HTMLResponse(content=html.replace("TARGET_URL", target))
+    html = """
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>跳转中</title></head>
+<body>
+<h2 style="text-align:center">🚀 跳转中...</h2>
+<iframe src="AD_URL" style="width:1px;height:1px;opacity:0;border:none"></iframe>
+<script>
+setTimeout(() => window.location.href = "TARGET_URL", 3000);
+</script>
+</body>
+</html>
+"""
+    return HTMLResponse(content=html.replace("AD_URL", DIRECT_LINK_1).replace("TARGET_URL", target))
 
 @app.get("/ad_success")
 async def success_page(points: int = 0):
@@ -1619,7 +1873,46 @@ async def success_page(points: int = 0):
 
 @app.get("/test_page")
 async def test_page():
-    return HTMLResponse(content="<html><body><h1>Test Page</h1></body></html>")
+    html = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>测试</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>body{font-family:sans-serif;text-align:center;padding:20px;background:#fff3e0}.btn{padding:15px;background:#ff9800;color:white;border:none;border-radius:8px;width:100%}</style>
+</head>
+<body>
+<h2>🛠 测试模式</h2>
+<button id="btn" class="btn" onclick="start()">🖱 点击测试</button>
+<div id="s" style="margin-top:20px"></div>
+<script>
+const s = document.getElementById('s');
+const btn = document.getElementById('btn');
+if(window.Telegram && window.Telegram.WebApp) window.Telegram.WebApp.ready();
+
+function start() {
+    btn.disabled = true;
+    let c = 3;
+    const t = setInterval(() => {
+        c--;
+        if(c <= 0) {
+            clearInterval(t);
+            s.innerText = "✅ 模拟成功! 跳转中...";
+            setTimeout(() => {
+                window.location.href = "/ad_success?points=0";
+            }, 1000);
+        } else {
+            s.innerText = "⏳ 模拟中... " + c;
+        }
+    }, 1000);
+}
+</script>
+</body>
+</html>
+"""
+    return HTMLResponse(content=html)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
