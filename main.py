@@ -41,12 +41,12 @@ from telegram.error import BadRequest
 # ==============================================================================
 CONFIG = {
     "GROUP_LINK": "https://t.me/+495j5rWmApsxYzg9",
-    "START_VIP_INFO": "AgACAgEAAxkBAAIC...", 
-    "START_TUTORIAL": "AgACAgEAAxkBAAIC...",
+    "START_VIP_INFO": "AgACAgUAAxkBAAIVKWlyKb6fuQp8_OCY9iqHY2LpA-K8AALVDWsb7fmZVyj0hAor7z5qAQADAgADeAADOAQ", 
+    "START_TUTORIAL": "AgACAgUAAxkBAAIVK2lyKcoH-dXKyUPLPowQBaQoJV27AALWDWsb7fmZVxKPhSqFdvd_AQADAgADeQADOAQ",
     "WX_PAY_QR": "AgACAgEAAxkBAAIC...",
     "WX_ORDER_TUTORIAL": "AgACAgEAAxkBAAIC...",
-    "ALI_PAY_QR": "AgACAgEAAxkBAAIC...",
-    "ALI_ORDER_TUTORIAL": "AgACAgEAAxkBAAIC...",
+    "ALI_PAY_QR": "AgACAgUAAxkBAAIVMWlyKePU_j7deGJK3nUGCeht5GsEAALaDWsb7fmZV3d4LED5eZmyAQADAgADeAADOAQ",
+    "ALI_ORDER_TUTORIAL": "AgACAgUAAxkBAAIVM2lyKeYuZoMDeKHeUYSvB_I5RhClAALcDWsb7fmZV0LzJA0aoR8tAQADAgADeQADOAQ",
 }
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -1004,7 +1004,7 @@ async def dh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_unlocked:
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔑 去获取密钥解锁", callback_data="get_quark_key_v7")]])
         if update.callback_query:
-            await update.callback_query.answer("🔒 请先解锁！", show_alert=True)
+            await update.callback_query.answer("🔒 请先解锁！点击下方获取密钥解锁！！", show_alert=True)
             return
         else:
             # 修复文案
